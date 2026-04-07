@@ -23,13 +23,18 @@ SNOWFLAKE_DB_LOWER="$(printf "%s" "${SNOWFLAKE_DATABASE}" | tr '[:upper:]' '[:lo
 SNOWFLAKE_SCHEMA_LOWER="$(printf "%s" "${SNOWFLAKE_SCHEMA}" | tr '[:upper:]' '[:lower:]')"
 SNOWFLAKE_BASE="${SNOWFLAKE_REGISTRY_HOST}/${SNOWFLAKE_DB_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_REPO_LOWER}"
 BLOCKING_SEVERITIES="${BLOCKING_SEVERITIES:-CRITICAL}"
+ECR_SCAN_WAIT_ATTEMPTS="${ECR_SCAN_WAIT_ATTEMPTS:-60}"
+ECR_SCAN_WAIT_DELAY_SECONDS="${ECR_SCAN_WAIT_DELAY_SECONDS:-15}"
+
+mkdir -p "${ROOT_DIR}/artifacts"
+printf "IMAGE_TAG=%s\n" "${IMAGE_TAG}" > "${ROOT_DIR}/artifacts/image.env"
 
 wait_for_scan() {
   local repository="$1"
   local attempt
   local status=""
 
-  for attempt in {1..20}; do
+  for ((attempt=1; attempt<=ECR_SCAN_WAIT_ATTEMPTS; attempt++)); do
     status="$(aws ecr describe-image-scan-findings \
       --region "${AWS_REGION}" \
       --repository-name "${repository}" \
@@ -41,7 +46,12 @@ wait_for_scan() {
       return 0
     fi
 
-    sleep 15
+    if [[ "${status}" == "FAILED" ]]; then
+      echo "ECR scan failed for ${repository}:${IMAGE_TAG}" >&2
+      return 1
+    fi
+
+    sleep "${ECR_SCAN_WAIT_DELAY_SECONDS}"
   done
 
   echo "Timed out waiting for ECR scan on ${repository}:${IMAGE_TAG}" >&2
@@ -108,6 +118,3 @@ docker tag "${ECR_REGISTRY}/${ECR_NGINX_REPO}:${IMAGE_TAG}" "${SNOWFLAKE_BASE}/n
 docker push "${SNOWFLAKE_BASE}/backend:${IMAGE_TAG}"
 docker push "${SNOWFLAKE_BASE}/frontend:${IMAGE_TAG}"
 docker push "${SNOWFLAKE_BASE}/nginx:${IMAGE_TAG}"
-
-mkdir -p "${ROOT_DIR}/artifacts"
-printf "IMAGE_TAG=%s\n" "${IMAGE_TAG}" > "${ROOT_DIR}/artifacts/image.env"

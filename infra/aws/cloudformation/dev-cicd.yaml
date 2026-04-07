@@ -146,6 +146,7 @@ Resources:
                   - ecr:UploadLayerPart
                   - ecr:PutImage
                   - ecr:DescribeImages
+                  - ecr:DescribeImageScanFindings
                 Resource: "*"
               - Effect: Allow
                 Action:
@@ -203,6 +204,7 @@ Resources:
                   - codebuild:StartBuild
                 Resource:
                   - !GetAtt ValidateProject.Arn
+                  - !GetAtt BuildImagesProject.Arn
                   - !GetAtt PromoteProject.Arn
                   - !GetAtt DeployProject.Arn
               - Effect: Allow
@@ -248,6 +250,37 @@ Resources:
         Type: CODEPIPELINE
         BuildSpec: buildspecs/validate.yml
 
+  BuildImagesProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${PipelineName}-build-images
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Cache:
+        Type: LOCAL
+        Modes:
+          - LOCAL_DOCKER_LAYER_CACHE
+          - LOCAL_SOURCE_CACHE
+      Environment:
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: ECR_FRONTEND_REPO
+            Type: PLAINTEXT
+            Value: !Sub ${EcrRepoPrefix}/frontend
+          - Name: ECR_BACKEND_REPO
+            Type: PLAINTEXT
+            Value: !Sub ${EcrRepoPrefix}/backend
+          - Name: ECR_NGINX_REPO
+            Type: PLAINTEXT
+            Value: !Sub ${EcrRepoPrefix}/nginx
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspecs/build-images-dev.yml
+
   PromoteProject:
     Type: AWS::CodeBuild::Project
     Properties:
@@ -256,7 +289,7 @@ Resources:
       Artifacts:
         Type: CODEPIPELINE
       Environment:
-        ComputeType: BUILD_GENERAL1_LARGE
+        ComputeType: BUILD_GENERAL1_MEDIUM
         Image: aws/codebuild/standard:7.0
         PrivilegedMode: true
         Type: LINUX_CONTAINER
@@ -276,9 +309,12 @@ Resources:
           - Name: BLOCKING_SEVERITIES
             Type: PLAINTEXT
             Value: CRITICAL
+          - Name: SCAN_GATE_MODE
+            Type: PLAINTEXT
+            Value: advisory
       Source:
         Type: CODEPIPELINE
-        BuildSpec: buildspecs/build-and-promote-dev.yml
+        BuildSpec: buildspecs/promote-images-dev.yml
 
   DeployProject:
     Type: AWS::CodeBuild::Project
@@ -358,9 +394,9 @@ Resources:
                 - Name: ValidateOutput
               Configuration:
                 ProjectName: !Ref ValidateProject
-        - Name: BuildAndPromote
+        - Name: BuildImages
           Actions:
-            - Name: BuildAndPromote
+            - Name: BuildImages
               ActionTypeId:
                 Category: Build
                 Owner: AWS
@@ -369,9 +405,25 @@ Resources:
               InputArtifacts:
                 - Name: SourceOutput
               OutputArtifacts:
+                - Name: ImageBuildOutput
+              Configuration:
+                ProjectName: !Ref BuildImagesProject
+        - Name: PromoteImages
+          Actions:
+            - Name: PromoteImages
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              InputArtifacts:
+                - Name: SourceOutput
+                - Name: ImageBuildOutput
+              OutputArtifacts:
                 - Name: PromoteOutput
               Configuration:
                 ProjectName: !Ref PromoteProject
+                PrimarySource: SourceOutput
         - Name: DeployDev
           Actions:
             - Name: DeployDev
@@ -385,6 +437,7 @@ Resources:
                 - Name: PromoteOutput
               Configuration:
                 ProjectName: !Ref DeployProject
+                PrimarySource: SourceOutput
 
   CodeCommitBranchRule:
     Type: AWS::Events::Rule

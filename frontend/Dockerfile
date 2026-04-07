@@ -1,4 +1,5 @@
-FROM node:22-alpine AS deps
+ARG NODE_BASE_IMAGE=public.ecr.aws/docker/library/node:22-alpine
+FROM ${NODE_BASE_IMAGE} AS deps
 
 WORKDIR /app
 
@@ -11,7 +12,7 @@ WORKDIR /app
 COPY . .
 RUN npm run build
 
-FROM node:22-alpine AS runner
+FROM ${NODE_BASE_IMAGE} AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -25,4 +26,3 @@ COPY --from=builder /app/.next/static ./.next/static
 EXPOSE 3000
 
 CMD ["node", "server.js"]
-

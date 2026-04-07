@@ -11,7 +11,6 @@ load_snowflake_secret
 AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 AWS_ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(aws sts get-caller-identity --query Account --output text)}"
 IMAGE_TAG="${IMAGE_TAG:-$(short_sha)}"
-IMAGE_LATEST_TAG="${IMAGE_LATEST_TAG:-dev-latest}"
 
 ECR_FRONTEND_REPO="${ECR_FRONTEND_REPO:-bbi-mig-ai-workbench/frontend}"
 ECR_BACKEND_REPO="${ECR_BACKEND_REPO:-bbi-mig-ai-workbench/backend}"
@@ -89,19 +88,13 @@ aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AW
 echo "${SNOWFLAKE_REGISTRY_PASSWORD}" | docker login --username "${SNOWFLAKE_REGISTRY_USERNAME}" --password-stdin "${SNOWFLAKE_REGISTRY_HOST}"
 
 docker build --platform linux/amd64 -t "${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}" "${ROOT_DIR}/backend"
-docker tag "${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}" "${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_LATEST_TAG}"
 docker push "${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}"
-docker push "${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_LATEST_TAG}"
 
 docker build --platform linux/amd64 -t "${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}" "${ROOT_DIR}/frontend"
-docker tag "${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}" "${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_LATEST_TAG}"
 docker push "${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}"
-docker push "${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_LATEST_TAG}"
 
 docker build --platform linux/amd64 -t "${ECR_REGISTRY}/${ECR_NGINX_REPO}:${IMAGE_TAG}" "${ROOT_DIR}/nginx"
-docker tag "${ECR_REGISTRY}/${ECR_NGINX_REPO}:${IMAGE_TAG}" "${ECR_REGISTRY}/${ECR_NGINX_REPO}:${IMAGE_LATEST_TAG}"
 docker push "${ECR_REGISTRY}/${ECR_NGINX_REPO}:${IMAGE_TAG}"
-docker push "${ECR_REGISTRY}/${ECR_NGINX_REPO}:${IMAGE_LATEST_TAG}"
 
 wait_for_scan "${ECR_BACKEND_REPO}"
 wait_for_scan "${ECR_FRONTEND_REPO}"

@@ -1,0 +1,422 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CI/CD pipeline for the BBI AI Migration Workbench shared dev environment.
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: bbi-mig-ai-workbench
+  BranchName:
+    Type: String
+    Default: develop
+  NotificationEmail:
+    Type: String
+    Default: ""
+  SnowflakeSecretArn:
+    Type: String
+  EcrRepoPrefix:
+    Type: String
+    Default: bbi-mig-ai-workbench
+  PipelineName:
+    Type: String
+    Default: bbi-ai-workbench-dev
+  SnowflakeServiceName:
+    Type: String
+    Default: AI_WORKBENCH_DEV_WEBAPP
+  SnowflakeDatabase:
+    Type: String
+    Default: AI_WORKBENCH_DEV
+  SnowflakeSchema:
+    Type: String
+    Default: APP_RUNTIME
+  SnowflakeComputePool:
+    Type: String
+    Default: AI_WORKBENCH_DEV_POOL
+  SnowflakeImageRepository:
+    Type: String
+    Default: AI_WORKBENCH_DEV_IMAGES
+
+Resources:
+  ArtifactKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: KMS key for CodePipeline artifacts
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: EnableRootPermissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub arn:aws:iam::${AWS::AccountId}:root
+            Action: "kms:*"
+            Resource: "*"
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref ArtifactKey
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  NotificationTopic:
+    Type: AWS::SNS::Topic
+  NotificationSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasNotificationEmail
+    Properties:
+      Endpoint: !Ref NotificationEmail
+      Protocol: email
+      TopicArn: !Ref NotificationTopic
+
+  FrontendRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${EcrRepoPrefix}/frontend
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+
+  BackendRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${EcrRepoPrefix}/backend
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+
+  NginxRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Sub ${EcrRepoPrefix}/nginx
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      ImageTagMutability: IMMUTABLE
+
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: codebuild-inline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetObjectVersion
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - codecommit:GitPull
+                Resource: !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}
+              - Effect: Allow
+                Action:
+                  - ecr:GetAuthorizationToken
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchGetImage
+                  - ecr:CompleteLayerUpload
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:PutImage
+                  - ecr:DescribeImages
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:Encrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt ArtifactKey.Arn
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref SnowflakeSecretArn
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: !Ref NotificationTopic
+              - Effect: Allow
+                Action:
+                  - sts:GetCallerIdentity
+                Resource: "*"
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: codepipeline-inline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:GetObjectVersion
+                  - s3:PutObject
+                Resource:
+                  - !GetAtt ArtifactBucket.Arn
+                  - !Sub ${ArtifactBucket.Arn}/*
+              - Effect: Allow
+                Action:
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:UploadArchive
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:CancelUploadArchive
+                Resource: !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource:
+                  - !GetAtt ValidateProject.Arn
+                  - !GetAtt PromoteProject.Arn
+                  - !GetAtt DeployProject.Arn
+              - Effect: Allow
+                Action:
+                  - kms:Decrypt
+                  - kms:Encrypt
+                  - kms:GenerateDataKey
+                Resource: !GetAtt ArtifactKey.Arn
+
+  EventBridgeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: eventbridge-start-pipeline
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - codepipeline:StartPipelineExecution
+                Resource: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${PipelineName}
+
+  ValidateProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${PipelineName}-validate
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: false
+        Type: LINUX_CONTAINER
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspecs/validate.yml
+
+  PromoteProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${PipelineName}-promote
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_LARGE
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: true
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: SNOWFLAKE_SECRET_ARN
+            Type: PLAINTEXT
+            Value: !Ref SnowflakeSecretArn
+          - Name: ECR_FRONTEND_REPO
+            Type: PLAINTEXT
+            Value: !Sub ${EcrRepoPrefix}/frontend
+          - Name: ECR_BACKEND_REPO
+            Type: PLAINTEXT
+            Value: !Sub ${EcrRepoPrefix}/backend
+          - Name: ECR_NGINX_REPO
+            Type: PLAINTEXT
+            Value: !Sub ${EcrRepoPrefix}/nginx
+          - Name: BLOCKING_SEVERITIES
+            Type: PLAINTEXT
+            Value: CRITICAL
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspecs/build-and-promote-dev.yml
+
+  DeployProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub ${PipelineName}-deploy
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:7.0
+        PrivilegedMode: false
+        Type: LINUX_CONTAINER
+        EnvironmentVariables:
+          - Name: SNOWFLAKE_SECRET_ARN
+            Type: PLAINTEXT
+            Value: !Ref SnowflakeSecretArn
+          - Name: NOTIFICATION_TOPIC_ARN
+            Type: PLAINTEXT
+            Value: !Ref NotificationTopic
+          - Name: SERVICE_NAME
+            Type: PLAINTEXT
+            Value: !Ref SnowflakeServiceName
+          - Name: SNOWFLAKE_DATABASE
+            Type: PLAINTEXT
+            Value: !Ref SnowflakeDatabase
+          - Name: SNOWFLAKE_SCHEMA
+            Type: PLAINTEXT
+            Value: !Ref SnowflakeSchema
+          - Name: SNOWFLAKE_COMPUTE_POOL
+            Type: PLAINTEXT
+            Value: !Ref SnowflakeComputePool
+          - Name: SNOWFLAKE_IMAGE_REPOSITORY
+            Type: PLAINTEXT
+            Value: !Ref SnowflakeImageRepository
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: buildspecs/deploy-dev.yml
+
+  DevPipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref PipelineName
+      RoleArn: !GetAtt PipelineRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+        EncryptionKey:
+          Id: !GetAtt ArtifactKey.Arn
+          Type: KMS
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: "1"
+              OutputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                RepositoryName: !Ref RepositoryName
+                BranchName: !Ref BranchName
+                PollForSourceChanges: false
+        - Name: Validate
+          Actions:
+            - Name: Validate
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: ValidateOutput
+              Configuration:
+                ProjectName: !Ref ValidateProject
+        - Name: BuildAndPromote
+          Actions:
+            - Name: BuildAndPromote
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              InputArtifacts:
+                - Name: SourceOutput
+              OutputArtifacts:
+                - Name: PromoteOutput
+              Configuration:
+                ProjectName: !Ref PromoteProject
+        - Name: DeployDev
+          Actions:
+            - Name: DeployDev
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: "1"
+              InputArtifacts:
+                - Name: SourceOutput
+                - Name: PromoteOutput
+              Configuration:
+                ProjectName: !Ref DeployProject
+
+  CodeCommitBranchRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Description: Trigger the dev pipeline on pushes to the configured branch.
+      EventPattern:
+        source:
+          - aws.codecommit
+        detail-type:
+          - CodeCommit Repository State Change
+        resources:
+          - !Sub arn:aws:codecommit:${AWS::Region}:${AWS::AccountId}:${RepositoryName}
+        detail:
+          event:
+            - referenceCreated
+            - referenceUpdated
+          referenceType:
+            - branch
+          referenceName:
+            - !Ref BranchName
+      Targets:
+        - Arn: !Sub arn:aws:codepipeline:${AWS::Region}:${AWS::AccountId}:${PipelineName}
+          Id: StartDevPipeline
+          RoleArn: !GetAtt EventBridgeRole.Arn
+
+Outputs:
+  PipelineName:
+    Value: !Ref DevPipeline
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket
+  NotificationTopicArn:
+    Value: !Ref NotificationTopic
+
+Conditions:
+  HasNotificationEmail: !Not [!Equals [!Ref NotificationEmail, ""]]

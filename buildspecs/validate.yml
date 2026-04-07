@@ -1,0 +1,21 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+      python: 3.12
+    commands:
+      - python -m pip install --upgrade pip
+      - python -m pip install ./backend[dev]
+      - cd frontend && npm ci && cd ..
+  build:
+    commands:
+      - pytest backend/tests
+      - cd frontend && npm run lint && npm run build && cd ..
+
+artifacts:
+  files:
+    - frontend/.next/**/*
+    - backend/tests/**/*
+

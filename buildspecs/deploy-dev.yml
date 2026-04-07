@@ -1,0 +1,24 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - python -m pip install --upgrade pip
+      - python -m pip install snowflake-connector-python
+  pre_build:
+    commands:
+      - chmod +x scripts/deploy_spcs_dev.sh scripts/common.sh scripts/send_deploy_notification.sh
+      - if [ -f artifacts/image.env ]; then . artifacts/image.env; fi
+  build:
+    commands:
+      - ./scripts/deploy_spcs_dev.sh
+  post_build:
+    commands:
+      - ./scripts/send_deploy_notification.sh
+
+artifacts:
+  files:
+    - artifacts/webapp.dev.yaml
+    - artifacts/endpoints.txt

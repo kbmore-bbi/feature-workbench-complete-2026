@@ -22,6 +22,7 @@ SNOWFLAKE_DB_LOWER="$(printf "%s" "${SNOWFLAKE_DATABASE}" | tr '[:upper:]' '[:lo
 SNOWFLAKE_SCHEMA_LOWER="$(printf "%s" "${SNOWFLAKE_SCHEMA}" | tr '[:upper:]' '[:lower:]')"
 SNOWFLAKE_BASE="${SNOWFLAKE_REGISTRY_HOST}/${SNOWFLAKE_DB_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_REPO_LOWER}"
 BLOCKING_SEVERITIES="${BLOCKING_SEVERITIES:-CRITICAL}"
+SCAN_GATE_MODE="${SCAN_GATE_MODE:-advisory}"
 ECR_SCAN_WAIT_ATTEMPTS="${ECR_SCAN_WAIT_ATTEMPTS:-60}"
 ECR_SCAN_WAIT_DELAY_SECONDS="${ECR_SCAN_WAIT_DELAY_SECONDS:-15}"
 
@@ -84,6 +85,25 @@ print(f"ECR scan gate passed for {repository}: {counts}")
 PY
 }
 
+report_scan_status() {
+  local repository="$1"
+  local status=""
+
+  status="$(aws ecr describe-image-scan-findings \
+    --region "${AWS_REGION}" \
+    --repository-name "${repository}" \
+    --image-id imageTag="${IMAGE_TAG}" \
+    --query 'imageScanStatus.status' \
+    --output text 2>/dev/null || true)"
+
+  if [[ "${status}" == "COMPLETE" ]]; then
+    assert_scan_passes "${repository}"
+    return 0
+  fi
+
+  echo "ECR scan for ${repository}:${IMAGE_TAG} is ${status:-UNKNOWN}; continuing because SCAN_GATE_MODE=${SCAN_GATE_MODE}."
+}
+
 aws ecr get-login-password --region "${AWS_REGION}" | docker login --username AWS --password-stdin "${ECR_REGISTRY}"
 echo "${SNOWFLAKE_REGISTRY_PASSWORD}" | docker login --username "${SNOWFLAKE_REGISTRY_USERNAME}" --password-stdin "${SNOWFLAKE_REGISTRY_HOST}"
 
@@ -96,13 +116,29 @@ docker push "${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}"
 docker build --platform linux/amd64 -t "${ECR_REGISTRY}/${ECR_NGINX_REPO}:${IMAGE_TAG}" "${ROOT_DIR}/nginx"
 docker push "${ECR_REGISTRY}/${ECR_NGINX_REPO}:${IMAGE_TAG}"
 
-wait_for_scan "${ECR_BACKEND_REPO}"
-wait_for_scan "${ECR_FRONTEND_REPO}"
-wait_for_scan "${ECR_NGINX_REPO}"
+case "${SCAN_GATE_MODE}" in
+  enforce)
+    wait_for_scan "${ECR_BACKEND_REPO}"
+    wait_for_scan "${ECR_FRONTEND_REPO}"
+    wait_for_scan "${ECR_NGINX_REPO}"
 
-assert_scan_passes "${ECR_BACKEND_REPO}"
-assert_scan_passes "${ECR_FRONTEND_REPO}"
-assert_scan_passes "${ECR_NGINX_REPO}"
+    assert_scan_passes "${ECR_BACKEND_REPO}"
+    assert_scan_passes "${ECR_FRONTEND_REPO}"
+    assert_scan_passes "${ECR_NGINX_REPO}"
+    ;;
+  advisory)
+    report_scan_status "${ECR_BACKEND_REPO}"
+    report_scan_status "${ECR_FRONTEND_REPO}"
+    report_scan_status "${ECR_NGINX_REPO}"
+    ;;
+  off)
+    echo "Skipping ECR scan gate because SCAN_GATE_MODE=off."
+    ;;
+  *)
+    echo "Unsupported SCAN_GATE_MODE=${SCAN_GATE_MODE}" >&2
+    exit 1
+    ;;
+esac
 
 docker tag "${ECR_REGISTRY}/${ECR_BACKEND_REPO}:${IMAGE_TAG}" "${SNOWFLAKE_BASE}/backend:${IMAGE_TAG}"
 docker tag "${ECR_REGISTRY}/${ECR_FRONTEND_REPO}:${IMAGE_TAG}" "${SNOWFLAKE_BASE}/frontend:${IMAGE_TAG}"

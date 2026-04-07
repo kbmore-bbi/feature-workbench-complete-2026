@@ -6,8 +6,7 @@ phases:
       nodejs: 22
       python: 3.12
     commands:
-      - python -m pip install --upgrade pip
-      - cd frontend && npm ci && cd ..
+      - echo "Using CodeBuild runtimes for container promotion"
   pre_build:
     commands:
       - chmod +x scripts/publish_images.sh scripts/common.sh

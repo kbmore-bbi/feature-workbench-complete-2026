@@ -29,9 +29,11 @@ PY
 
 load_snowflake_secret() {
   require_var SNOWFLAKE_SECRET_ARN
+  local aws_region="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 
   local secret_json
   secret_json="$(aws secretsmanager get-secret-value \
+    --region "${aws_region}" \
     --secret-id "${SNOWFLAKE_SECRET_ARN}" \
     --query SecretString \
     --output text)"
@@ -56,4 +58,3 @@ short_sha() {
   local ref="${CODEBUILD_RESOLVED_SOURCE_VERSION:-$(git rev-parse HEAD)}"
   printf "%s" "${ref}" | cut -c1-12
 }
-

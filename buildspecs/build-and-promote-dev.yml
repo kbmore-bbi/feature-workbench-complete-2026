@@ -1,0 +1,21 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+      python: 3.12
+    commands:
+      - echo "Using CodeBuild runtimes for container promotion"
+  pre_build:
+    commands:
+      - chmod +x scripts/publish_images.sh scripts/common.sh
+      - export IMAGE_TAG="$(echo "${CODEBUILD_RESOLVED_SOURCE_VERSION}" | cut -c1-12)"
+      - mkdir -p artifacts
+  build:
+    commands:
+      - ./scripts/publish_images.sh
+
+artifacts:
+  files:
+    - artifacts/image.env

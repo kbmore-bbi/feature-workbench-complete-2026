@@ -1,0 +1,15 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+  build:
+    commands:
+      - chmod +x scripts/create_release_bundle.sh
+      - ./scripts/create_release_bundle.sh
+
+artifacts:
+  files:
+    - release/**/*
+

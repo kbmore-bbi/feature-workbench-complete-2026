@@ -1,0 +1,20 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - echo "Preparing Snowflake image promotion"
+  pre_build:
+    commands:
+      - chmod +x scripts/promote_images.sh scripts/common.sh
+      - if [ -n "${CODEBUILD_SRC_DIR_ImageBuildOutput:-}" ] && [ -f "${CODEBUILD_SRC_DIR_ImageBuildOutput}/artifacts/image.env" ]; then . "${CODEBUILD_SRC_DIR_ImageBuildOutput}/artifacts/image.env"; else export IMAGE_TAG="$(echo "${CODEBUILD_RESOLVED_SOURCE_VERSION}" | cut -c1-12)"; fi
+      - mkdir -p artifacts
+  build:
+    commands:
+      - ./scripts/promote_images.sh
+
+artifacts:
+  files:
+    - artifacts/image.env

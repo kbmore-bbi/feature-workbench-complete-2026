@@ -1,0 +1,55 @@
+spec:
+  containers:
+    - name: backend
+      image: /${SNOWFLAKE_DATABASE_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_IMAGE_REPOSITORY_LOWER}/backend:${IMAGE_TAG}
+      env:
+        APP_ENV: dev
+        APP_NAME: BBI AI Migration Workbench API
+        APP_VERSION: ${IMAGE_TAG}
+        PORT: "8000"
+        CORS_ALLOWED_ORIGINS: https://localhost.invalid
+      resources:
+        requests:
+          cpu: "0.5"
+          memory: "1Gi"
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+      readinessProbe:
+        port: 8000
+
+    - name: frontend
+      image: /${SNOWFLAKE_DATABASE_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_IMAGE_REPOSITORY_LOWER}/frontend:${IMAGE_TAG}
+      env:
+        NODE_ENV: production
+        NEXT_PUBLIC_APP_ENV: dev
+        PORT: "3000"
+      resources:
+        requests:
+          cpu: "0.5"
+          memory: "1Gi"
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+      readinessProbe:
+        port: 3000
+
+    - name: nginx
+      image: /${SNOWFLAKE_DATABASE_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_IMAGE_REPOSITORY_LOWER}/nginx:${IMAGE_TAG}
+      env:
+        FRONTEND_UPSTREAM: 127.0.0.1:3000
+        BACKEND_UPSTREAM: 127.0.0.1:8000
+      resources:
+        requests:
+          cpu: "0.25"
+          memory: "512Mi"
+        limits:
+          cpu: "0.5"
+          memory: "1Gi"
+      readinessProbe:
+        port: 8080
+
+  endpoints:
+    - name: app
+      port: 8080
+      public: true

@@ -1,0 +1,15 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - chmod +x scripts/build_images.sh scripts/common.sh
+      - export IMAGE_TAG="$(echo "${CODEBUILD_RESOLVED_SOURCE_VERSION}" | cut -c1-12)"
+      - mkdir -p artifacts
+  build:
+    commands:
+      - ./scripts/build_images.sh
+
+artifacts:
+  files:
+    - artifacts/image.env

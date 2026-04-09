@@ -1,7 +1,8 @@
 export default function Page() {
     return (
         <>
-            <h1>STTM BUILDER</h1>
+            <h1>dashboard screen</h1>
+
         </>
     )
 }

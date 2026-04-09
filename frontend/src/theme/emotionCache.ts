@@ -1,0 +1,8 @@
+import createCache from '@emotion/cache';
+
+export function createEmotionCache() {
+  return createCache({
+    key: 'mui',
+    prepend: true, // ✅ fixes hydration order
+  });
+}

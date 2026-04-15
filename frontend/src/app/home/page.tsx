@@ -1,7 +1,5 @@
+import BuilderLayout from "@/components/sttm-builder/BuilderLayout";
+
 export default function Page() {
-    return (
-        <>
-            <h1>Home screen</h1>
-        </>
-    )
+    return <BuilderLayout/> ;   
 }

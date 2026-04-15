@@ -4,7 +4,7 @@ import Button from '@mui/material/Button';
 import SourceTree from '../../../components/SourceTree';
 
 import SourceDialog from '../../../components/SourceDialog';
-import SttmLayout from '../../../components/sttm-components/SttmLayout';
+import SttmLayout from '../../../components/sttm-builder/SttmLayout';
 
 
 export default function Page() {

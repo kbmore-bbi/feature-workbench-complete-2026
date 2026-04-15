@@ -1,6 +1,6 @@
 'use client';
 
-import CardList from './CardList';
+import CardList from './SourceTargetList';
 
 
 export default function SttmTarget() {

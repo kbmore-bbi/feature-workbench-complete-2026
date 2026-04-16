@@ -1,21 +1,19 @@
 'use client';
-
 import React, { useState } from 'react';
-
-
 import SourceTargetList from './SourceTargetList';
 import AddSourcePlaceholder from "./AddSourcePlaceholder";
 import DbSchemaSelection from "./DbSchemaSelection";
-
-import { Box, Typography, Button, TextField, Paper, InputAdornment, Stack, InputBase, Divider } from '@mui/material';
+import {
+    Box, Typography, Button, TextField,
+    Paper, InputAdornment, Stack, InputBase, Divider
+} from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
-import { useDataContext } from '../../contexts/DataContext';
-
+import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
 
 export default function SourceTargetPanel({ type }: any) {
-    const { clearSources, clearTargets }: any = useDataContext();
+    const { clearSources, clearTargets }: any = useSttmBuilderContext();
 
     const title = type === 'source' ? 'SOURCE TABLES' : 'TARGET TABLES';
 

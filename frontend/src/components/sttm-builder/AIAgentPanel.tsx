@@ -1,5 +1,9 @@
+'use client';
 import React from 'react';
-import { Box, Paper, Typography, Avatar, TextField, InputAdornment, IconButton, Stack, InputBase } from '@mui/material';
+import {
+    Box, Paper, Typography, Avatar, TextField,
+    InputAdornment, IconButton, Stack, InputBase
+} from '@mui/material';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import TableChartIcon from '@mui/icons-material/TableChart';

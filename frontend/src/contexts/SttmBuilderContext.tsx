@@ -1,9 +1,8 @@
 'use client';
-
 import { createContext, useContext, useState } from 'react';
 import { DB_SCHEMA_TABLE_SELECTION } from '../components/sttm-builder/source';
 
-const DataContext = createContext<any>({});
+const SttmBuilderContext = createContext<any>({});
 
 export function DataProvider({ children }: any) {
   const [fullData, setFullData] = useState(DB_SCHEMA_TABLE_SELECTION);
@@ -145,13 +144,13 @@ export function DataProvider({ children }: any) {
 
 
   return (
-    <DataContext.Provider value={{
+    <SttmBuilderContext.Provider value={{
       fullData, sources, targets, sourceInfo, targetInfo,
       toggleSource, selectTarget, selectSchema, clearTargets, clearSources
     }}>
       {children}
-    </DataContext.Provider>
+    </SttmBuilderContext.Provider>
   );
 }
 
-export const useDataContext = () => useContext(DataContext);
+export const useSttmBuilderContext = () => useContext(SttmBuilderContext);

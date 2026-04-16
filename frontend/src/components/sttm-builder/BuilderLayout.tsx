@@ -7,7 +7,7 @@ import BuilderHeader from "./BuilderHeader";
 import DataSelectionPanel from "./DataSelectionPanel";
 import SourceTargetPanel from "./SourceTargetPanel";
 import AddSourcePlaceholder from "./AddSourcePlaceholder";
-import { DataProvider } from '../../contexts/DataContext';
+import { DataProvider } from '../../contexts/SttmBuilderContext';
 
 export default function BuilderLayout() {
     const [mounted, setMounted] = useState(false);

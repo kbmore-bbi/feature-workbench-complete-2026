@@ -1,22 +1,16 @@
 'use client';
 
 import Card from '@mui/material/Card';
-import Checkbox from '@mui/material/Checkbox';
-import Radio from '@mui/material/Radio';
 import Box from '@mui/material/Box';
-import Stack from '@mui/material/Stack';
 import Typography from '@mui/material/Typography';
-import Chip from '@mui/material/Chip';
 import TableChartOutlinedIcon from '@mui/icons-material/TableChartOutlined';
-// Checkbox, Typography, Stack, Box, Chip
-
 import { FocusCheckbox } from '../shared/FocusCheckbox';
 import { FocusRadio } from '../shared/FocusRadio';
-import { useDataContext } from '../../contexts/DataContext';
+import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
 
 
 export default function SourceTargetItem({ type = 'source', item, selectHandler }: any) {
-  const { sourceInfo, targetInfo }: any = useDataContext();
+  const { sourceInfo, targetInfo }: any = useSttmBuilderContext();
   return (
     <>
       <Card

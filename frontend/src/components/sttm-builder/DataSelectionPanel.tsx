@@ -13,12 +13,12 @@ import SchemaRoundedIcon from "@mui/icons-material/SchemaRounded"; // Updated Ic
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
 import { Database, Schema } from "./source";
-import { useDataContext } from '../../contexts/DataContext';
+import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
 
 type SectionType = "source" | "target";
 
 export default function DataSelectionPanel() {
-  const { fullData, selectSchema } = useDataContext();
+  const { fullData, selectSchema } = useSttmBuilderContext();
   const [searchText, setSearchText] = useState("");
 
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({

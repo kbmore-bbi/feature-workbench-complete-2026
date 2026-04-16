@@ -1,8 +1,9 @@
+'use client';
 import SourceTargetItem from './SourceTargetItem';
-import { useDataContext } from '../../contexts/DataContext';
+import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
 
 export default function SourceTargetList({ type }: any) {
-  const { sources, targets, selectTarget, toggleSource   }: any = useDataContext();
+  const { sources, targets, selectTarget, toggleSource   }: any = useSttmBuilderContext();
   const items = type === 'source' ? sources : targets;
 
   const selectHandler = (id:number | string) => {

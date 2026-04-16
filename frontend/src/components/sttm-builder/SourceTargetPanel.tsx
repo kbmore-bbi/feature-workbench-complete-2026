@@ -21,7 +21,7 @@ export default function SourceTargetPanel({ type }: any) {
 
     return (
         <Paper elevation={0} sx={{
-            width: '100%', maxWidth: 400, borderRadius: '8px', border: '1px solid #e0e0e0', backgroundColor: '#f9f9f9', p: 2
+            width: '100%', maxWidth: '100%', height:'100%', borderRadius: '8px', border: '1px solid #e0e0e0', backgroundColor: '#f9f9f9', p: 2
         }}>
             {/* HEADER */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
@@ -102,53 +102,7 @@ export default function SourceTargetPanel({ type }: any) {
             </Stack>
         </Paper>
     );
-    // const [title, setTitle] = useState(type == 'source' ? 'Source' : 'Target')
-
-    // const setItems = (e: any) => {
-    //     console.log(e)
-    // }
+    //    <DbSchemaSelection />
 
 
-    // return (
-    //     <div className="relative w-full border border-blue-200 rounded-xl p-4" 
-    //     style={{'backgroundColor': '#e8e8e8'}}>
-
-    //         <div className="flex justify-between items-center mb-2">
-    //             <h2 className="font-semibold text-sm">{title}</h2>
-    //             <button
-    //                 className="text-xs text-blue-600"
-
-    //             >
-    //                 Clear all
-    //             </button>
-
-    //         </div>
-
-
-    //         <DbSchemaSelection />
-
-
-    //         <div className="flex gap-2 mb-4">
-    //             <input
-    //                 className="flex-1 border rounded-md px-3 py-1 text-sm"
-    //                 placeholder="Search tables, schemas, or tags..."
-    //             />
-    //             <button className="border rounded-md px-3 py-1 text-sm">
-    //                 Filters
-    //             </button>
-    //         </div>
-
-
-    //         <SourceTargetList
-    //             type={type}
-    //             items={SOURCE_TABLES}
-    //             setItems={setItems}
-
-    //         />
-
-
-
-
-    //     </div>
-    // );
 }

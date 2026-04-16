@@ -21,8 +21,9 @@ export default function SourceTargetPanel({ type }: any) {
 
     return (
         <Paper elevation={0} sx={{
-            width: '100%', maxWidth: '100%', height:'100%', borderRadius: '8px', border: '1px solid #e0e0e0', backgroundColor: '#f9f9f9', p: 2
+            width: '100%', maxWidth: '100%', height: '100%', borderRadius: '8px', border: '1px solid #e0e0e0', backgroundColor: '#f9f9f9', p: 2
         }}>
+
             {/* HEADER */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                 <Typography variant="overline" sx={{ fontWeight: 700, color: 'text.secondary', letterSpacing: 1 }}>
@@ -44,7 +45,7 @@ export default function SourceTargetPanel({ type }: any) {
                     Clear all
                 </Button>
             </Box>
-
+            {/* <DbSchemaSelection /> */}
             {/* SEARCH & FILTERS */}
             <Paper
                 variant="outlined"

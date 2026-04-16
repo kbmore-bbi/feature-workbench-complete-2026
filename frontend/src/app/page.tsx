@@ -1,6 +1,10 @@
 import { ApiStatusCard } from "../components/api-status";
+import LandingPage from '../features/LandingPage';
 
 export default function Home() {
+  return (
+    <LandingPage />
+  )
   return (
     <main className="mx-auto flex min-h-screen w-full max-w-6xl flex-col px-6 py-10 sm:px-10">
       <section className="grid gap-8 rounded-[2rem] border border-white/60 bg-[var(--panel)] p-8 shadow-[0_24px_80px_rgba(17,24,39,0.12)] backdrop-blur sm:p-12">

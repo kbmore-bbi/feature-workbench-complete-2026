@@ -18,7 +18,11 @@ const FocusRadio = (props: any) => {
                 props.checkHandler(e.target.checked)
             }}
             onClick={(e) => e.stopPropagation()}
-            sx={{ p: 0.5 }}
+             sx={{
+                color: 'black',
+                '&.Mui-checked': { color: 'black' },
+                p: 0.5 // Reducing internal padding of checkbox helps too
+            }}
         />
     )
 

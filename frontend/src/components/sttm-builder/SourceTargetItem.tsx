@@ -29,7 +29,8 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
           mb: 0.75,
           gap: 0, // Reduced from 2 to 1 for a tighter look
           cursor: 'pointer',
-          borderRadius: 2 // Matches the rounded corners in your image
+          borderRadius: 2, // Matches the rounded corners in your image
+          backgroundColor: item.isSelected && '#e0e0e0'
         }}
       >
         {/* The table icon */}

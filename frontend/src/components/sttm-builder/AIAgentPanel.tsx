@@ -1,8 +1,9 @@
 import React from 'react';
-import { Box, Paper, Typography, Avatar, TextField, InputAdornment, IconButton, Stack } from '@mui/material';
+import { Box, Paper, Typography, Avatar, TextField, InputAdornment, IconButton, Stack, InputBase } from '@mui/material';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import VolumeUpIcon from '@mui/icons-material/VolumeUp';
 import TableChartIcon from '@mui/icons-material/TableChart';
+import SendIcon from '@mui/icons-material/Send';
 
 export default function AIAgentPanel() {
     return (
@@ -92,6 +93,41 @@ export default function AIAgentPanel() {
                         </Typography>
                     </Paper>
                 </Stack>
+            </Box>
+            {/* CHAT INPUT AREA */}
+            <Box sx={{ p: 1, backgroundColor: '#fff', borderTop: '1px solid #e0e0e0' }}>
+                <Paper
+                    elevation={0}
+                    sx={{
+                        p: '2px 12px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        borderRadius: '16px',
+                        backgroundColor: '#f9f9f9',
+                        border: '1px solid #e0e0e0',
+                        height: '32px', // Forces it to be very small
+                    }}
+                >
+                    <InputBase
+                        sx={{
+                            ml: 1,
+                            flex: 1,
+                            fontSize: '0.75rem', // Smaller text
+                            '& .MuiInputBase-input::placeholder': { opacity: 0.6 }
+                        }}
+                        placeholder="Ask STTM AI..."
+                    />
+                    <IconButton
+                        size="small"
+                        sx={{
+                            p: '2px',
+                            color: 'red', // Matches the red icon in your screenshot
+                            '&:hover': { backgroundColor: 'transparent' }
+                        }}
+                    >
+                        <SendIcon sx={{ fontSize: 16 }} />
+                    </IconButton>
+                </Paper>
             </Box>
         </Paper>
     );

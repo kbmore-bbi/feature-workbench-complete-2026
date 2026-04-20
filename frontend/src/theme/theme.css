@@ -1,7 +1,7 @@
 /* ========== Light theme (MUI default) ========== */
 :root {
   /* ---------- Primary ---------- */
-  --aba: red;
+  --aba: rgb(24, 84, 188);
   --mui-palette-primary-main: var(--aba);
   --mui-palette-primary-light: #42a5f5;
   --mui-palette-primary-dark: #1565c0;

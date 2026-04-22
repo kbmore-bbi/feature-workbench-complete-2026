@@ -27,16 +27,16 @@ export default function BuilderLayout() {
                         <DataSelectionPanel />
                         <div style={{ flex: 1, padding: "16px" }}>
                             <div style={{ display: "flex", gap: "16px", height: "90%" }}>
-                                <Box sx={{ flex: 0.9 }}>
+                                <Box sx={{ flex: 1 }}>
                                     <Stack direction="row" spacing={2} sx={{ height: '100%' }}>
                                         <SourceTargetPanel type="source" />
                                         <SourceTargetPanel type="target" />
                                         {/* <AddSourcePlaceholder onAdd={(e: { e: any }) => { console.log(e) }} /> */}
                                     </Stack>
                                 </Box>
-                                <Box sx={{ flex: 0.1, minWidth: '300px' }}>
+                                {/* <Box sx={{ flex: 0.1, minWidth: '300px' }}>
                                     <AIAgentPanel />
-                                </Box>
+                                </Box> */}
                             </div>
                         </div>
                     </div>

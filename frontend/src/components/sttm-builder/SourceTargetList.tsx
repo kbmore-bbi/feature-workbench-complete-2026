@@ -17,7 +17,7 @@ export default function SourceTargetList({ type }: any) {
 
   return (
     <div>
-      {items.map((item: any) => (
+      {items && items.map((item: any) => (
         <SourceTargetItem
           type={type}
           key={item.tableId}

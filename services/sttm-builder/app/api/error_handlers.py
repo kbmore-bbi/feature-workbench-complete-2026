@@ -1,0 +1,64 @@
+import logging
+
+from fastapi import Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from app.core.error_codes import ErrorCode
+from app.core.exceptions import AppError
+from app.schema.errors import ErrorDetail, ErrorResponse
+
+logger = logging.getLogger(__name__)
+
+
+async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
+    """Handles all AppError subclasses — maps code, status, and details to JSON."""
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=ErrorResponse(
+            code=exc.code,
+            message=exc.message,
+            details=[ErrorDetail(**d) for d in exc.details],
+        ).model_dump(),
+    )
+
+
+async def request_validation_error_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """
+    Handles Pydantic / FastAPI request-parsing failures (422).
+    Flattens each error's `loc` into a dot-path field name.
+    """
+    details = [
+        ErrorDetail(
+            field=".".join(str(loc) for loc in err["loc"]),
+            message=err["msg"],
+        )
+        for err in exc.errors()
+    ]
+    return JSONResponse(
+        status_code=422,
+        content=ErrorResponse(
+            code=ErrorCode.VALIDATION_ERROR,
+            message="Request validation failed",
+            details=details,
+        ).model_dump(),
+    )
+
+
+async def unhandled_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Catch-all for any exception that escapes the handler chain.
+    Logs the full traceback server-side; returns a safe generic message to the caller.
+    """
+    logger.exception(
+        "Unhandled exception [%s %s]", request.method, request.url.path
+    )
+    return JSONResponse(
+        status_code=500,
+        content=ErrorResponse(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="An unexpected error occurred.",
+        ).model_dump(),
+    )

@@ -1,72 +1,70 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Stack, Box } from "@mui/material";
+import { Stack, Box, Paper } from "@mui/material";
 import AIAgentPanel from "./AIAgentPanel";
-import BuilderHeader from "./BuilderHeader";
+import BuilderContentHeader from "./BuilderContentHeader";
 import DataSelectionPanel from "./DataSelectionPanel";
 import SourceTargetPanel from "./SourceTargetPanel";
-import AddSourcePlaceholder from "./AddSourcePlaceholder";
-import { DataProvider } from '../../contexts/SttmBuilderContext';
+import { DataProvider } from "../../contexts/SttmBuilderContext";
+import { useRouter } from "next/navigation";
+import AppHeader from "../layout/AppHeader";
 
 export default function BuilderLayout() {
     const [mounted, setMounted] = useState(false);
+    const router = useRouter();
 
     useEffect(() => {
-        setMounted(true)
+        setMounted(true);
     }, []);
 
     if (!mounted) return null;
 
     return (
-        <>
-            <DataProvider>
-                <div style={{ minHeight: "100vh" }}>
-                    <BuilderHeader currentStep={1} />
-                    <div style={{ display: "flex", minHeight: "calc(100vh-72px)", backgroundColor: '#f9f9f9' }}>
+        <Box className="h-screen overflow-hidden bg-[#F7F8FA]">
+            <Paper
+                elevation={0}
+                className="mx-auto flex min-h-[calc(100vh-32px)] max-w-[1600px] flex-col overflow-hidden rounded-[24px] border border-[#E8ECF4] bg-white"
+            >
+                <AppHeader />
+
+                <DataProvider>
+                    <Box className="flex min-h-0 flex-1 bg-[#F9F9F9]">
                         <DataSelectionPanel />
-                        <div style={{ flex: 1, padding: "16px" }}>
-                            <div style={{ display: "flex", gap: "16px", height: "90%" }}>
-                                <Box sx={{ flex: 0.9 }}>
-                                    <Stack direction="row" spacing={2} sx={{ height: '100%' }}>
+
+                        <Box className="flex min-w-0 flex-1 flex-col">
+
+                            <BuilderContentHeader
+                                currentStep={1}
+                                tableCount={2}
+                                mappingCount={0}
+                                onProceed={() => router.push("/sttm/mapping")}
+                            />
+
+                            {/* <BuilderContentHeader
+                                currentStep={2}
+                                tableCount={2}
+                                mappingCount={9}
+                                onRunValidation={() => console.log("run validation")}
+                                onPublish={() => console.log("publish mapping")}
+                            /> */}
+
+                            <Box className="flex min-h-0 flex-1 gap-4 p-4">
+                                <Box sx={{ flex: 1, minWidth: 0 }}>
+                                    <Stack direction="row" spacing={2} sx={{ height: "100%" }}>
                                         <SourceTargetPanel type="source" />
                                         <SourceTargetPanel type="target" />
-                                        {/* <AddSourcePlaceholder onAdd={(e: { e: any }) => { console.log(e) }} /> */}
                                     </Stack>
                                 </Box>
-                                <Box sx={{ flex: 0.1, minWidth: '300px' }}>
+
+                                <Box sx={{ width: 300, flexShrink: 0 }}>
                                     <AIAgentPanel />
                                 </Box>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </DataProvider>
-
-
-        </>
-        // <>
-        //     <DataProvider>
-        //         <div style={{ display: "flex", minHeight: "100vh" }}>
-        //             <DataSelectionPanel />
-        //             <div style={{ flex: 1, padding: "16px" }}>
-        //                 <BuilderHeader  currentStep={1}/>
-        //                 <div style={{display:"flex", minHeight:"calc(100vh-72px)"}}>
-        //                     <Box sx={{ flex: 0.9 }}>
-        //                         <Stack direction="row" spacing={2} sx={{ height: '100%' }}>
-        //                             <SourceTargetPanel type="target" />
-        //                             <SourceTargetPanel type="source" />
-        //                             {/* <AddSourcePlaceholder onAdd={(e: { e: any }) => { console.log(e) }} /> */}
-        //                         </Stack>
-        //                     </Box>
-        //                     <Box sx={{ flex: 0.1, minWidth: '300px' }}>
-        //                         <AIAgentPanel />
-        //                     </Box>
-        //                 </div>
-        //             </div>
-        //         </div>
-        //     </DataProvider>
-
-        // </>
-    )
+                            </Box>
+                        </Box>
+                    </Box>
+                </DataProvider>
+            </Paper>
+        </Box>
+    );
 }

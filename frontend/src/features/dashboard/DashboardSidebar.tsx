@@ -31,24 +31,9 @@ export default function DashboardSidebar() {
     return (
         <Box className="flex w-[260px] shrink-0 flex-col border-r border-[#E8ECF4] bg-white px-5 py-6">
             <Box className="flex items-center gap-3">
-                <Box className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white">
-                    <Image
-                        src="/images/focus_logo.png"
-                        alt="STTM Builder Logo"
-                        width={40}
-                        height={40}
-                        className="object-contain"
-                    />
-                </Box>
+                
 
-                <Box>
-                    <Typography className="text-[20px] font-semibold text-[#111827]">
-                        STTM Builder
-                    </Typography>
-                    <Typography className="text-[12px] text-[#6B7280]">
-                        Data Team
-                    </Typography>
-                </Box>
+               
             </Box>
 
             <Box className="mt-10">
@@ -94,29 +79,7 @@ export default function DashboardSidebar() {
                 + New Mapping
             </Button>
 
-            <Box className="mt-auto flex items-center gap-3 pt-6">
-                <Avatar
-                    sx={{
-                        width: 28,
-                        height: 28,
-                        bgcolor: "#F3F4F6",
-                        color: "#111827",
-                        fontSize: 12,
-                        fontWeight: 700,
-                    }}
-                >
-                    SW
-                </Avatar>
-
-                <Box>
-                    <Typography className="text-[12px] font-medium text-[#111827]">
-                        Shane Watson
-                    </Typography>
-                    <Typography className="text-[11px] text-[#6B7280]">
-                        Publisher
-                    </Typography>
-                </Box>
-            </Box>
+           
         </Box>
     );
 }

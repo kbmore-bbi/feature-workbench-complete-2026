@@ -3,7 +3,7 @@
 .env.local
 .venv/
 venv/
-*.idea/
+.idea/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
@@ -12,6 +12,7 @@ __pycache__/
 *.pyo
 *.pyd
 *.log
+*.md
 node_modules/
 frontend/node_modules/
 frontend/.next/
@@ -20,4 +21,7 @@ dist/
 coverage/
 artifacts/
 release/
+
+# Snowflake deploy envs
+infra/snowflake/env/*.env
 

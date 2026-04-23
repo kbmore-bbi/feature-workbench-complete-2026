@@ -1,0 +1,25 @@
+spec:
+  containers:
+    - name: sttm-builder
+      image: /${SNOWFLAKE_DATABASE_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_IMAGE_REPOSITORY_LOWER}/sttm-builder:${IMAGE_TAG}
+      env:
+        PORT: "8000"
+        SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+        SNOWFLAKE_HOST: ${SNOWFLAKE_HOST}
+        SNOWFLAKE_AUTO_MAP_AGENT: ${SNOWFLAKE_AUTO_MAP_AGENT}
+        SNOWFLAKE_AGENT_ORCHESTRATION_MODEL: ${SNOWFLAKE_AGENT_ORCHESTRATION_MODEL}
+      resources:
+        requests:
+          cpu: "0.5"
+          memory: "1Gi"
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+      readinessProbe:
+        port: 8000
+        path: /health
+
+  endpoints:
+    - name: api
+      port: 8000
+      public: false

@@ -63,11 +63,11 @@ export default function DataSelectionPanel() {
           }}
         >
           {/* Schema Icon */}
-          <SchemaRoundedIcon 
-            sx={{ 
-              fontSize: 14, 
-              color: schema.isSelected ? "#3B82F6" : "#64748B" 
-            }} 
+          <SchemaRoundedIcon
+            sx={{
+              fontSize: 14,
+              color: schema.isSelected ? "#3B82F6" : "#64748B"
+            }}
           />
 
           <Typography
@@ -130,11 +130,11 @@ export default function DataSelectionPanel() {
                   <KeyboardArrowRightRoundedIcon sx={{ fontSize: 16, color: "#6B7280" }} />
                 )}
 
-                <StorageRoundedIcon 
-                  sx={{ 
-                    fontSize: 15, 
-                    color: db.isSelected ? "#3B82F6" : "#334155" 
-                  }} 
+                <StorageRoundedIcon
+                  sx={{
+                    fontSize: 15,
+                    color: db.isSelected ? "#3B82F6" : "#334155"
+                  }}
                 />
 
                 <Typography
@@ -175,9 +175,17 @@ export default function DataSelectionPanel() {
       }}
     >
       <Box sx={{ px: 2, py: 2 }}>
-        <Typography sx={{ fontSize: 16, fontWeight: 700, color: "#111827", mb: 2 }}>
-          Cortex Explorer
+        <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#111827", mb: 2 }}>
+          STTM Builder
         </Typography>
+        
+
+        <Box className="flex h-[38px] items-center justify-between rounded-full bg-[#F3F4F6] px-4">
+          <Typography className="text-[13px] font-medium text-[var(--color-text)]">
+            Cortex
+          </Typography>
+          <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#4B5563" }} />
+        </Box>
 
         <Box
           sx={{
@@ -189,7 +197,7 @@ export default function DataSelectionPanel() {
             borderRadius: "8px",
             backgroundColor: "#F3F4F6",
             border: "1px solid transparent",
-            "&:focus-within": { 
+            "&:focus-within": {
               backgroundColor: "#FFF",
               borderColor: "#3B82F6",
               boxShadow: "0 0 0 2px rgba(59, 130, 246, 0.1)"

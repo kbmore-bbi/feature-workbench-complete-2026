@@ -29,7 +29,7 @@ const navItems = [
 export default function DashboardSidebar() {
     const route = useRouter();
     return (
-        <Box className="flex w-[260px] shrink-0 flex-col border-r border-[#E8ECF4] bg-white px-5 py-6">
+        <Box className="flex w-[260px] shrink-0 flex-col border-r border-[var(--color-soft-border)] bg-[var(--color-surface)] px-5 py-6">
             <Box className="flex items-center gap-3">
                 
 
@@ -37,12 +37,10 @@ export default function DashboardSidebar() {
             </Box>
 
             <Box className="mt-10">
-                <Typography className="mb-2 text-[12px] font-medium text-[#6B7280]">
-                    LLM Model
-                </Typography>
+                
 
                 <Box className="flex h-[38px] items-center justify-between rounded-full bg-[#F3F4F6] px-4">
-                    <Typography className="text-[13px] font-medium text-[#111827]">
+                    <Typography className="text-[13px] font-medium text-[var(--color-text)]">
                         Cortex
                     </Typography>
                     <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#4B5563" }} />
@@ -74,7 +72,7 @@ export default function DashboardSidebar() {
 
             <Button
                 variant="contained"
-                className="mt-6 h-[36px] w-fit rounded-xl bg-black px-4 text-[13px] normal-case shadow-none hover:bg-[#111827]"
+              sx={{ bgcolor: '#007bb2', textTransform: 'none', px: 5, py: 1.5, borderRadius: '10px', fontWeight: 700 }}
         onClick={()=> route.push('./home')}    >
                 + New Mapping
             </Button>

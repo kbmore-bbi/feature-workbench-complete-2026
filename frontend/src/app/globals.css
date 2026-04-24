@@ -1,41 +1,181 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f7f7f2;;
-  --foreground: #172033;
-  --panel: rgba(255, 255, 255, 0.82);
-  --accent: #d17f2f;
-  --muted: #5d6a81;
+  --font-body: museo-sans, sans-serif;
+  --font-title: Gilroy-ExtraBold, museo-sans, sans-serif;
+
+  --color-header-bg: #F1F1F1;
+  --color-header-text: #121111;
+
+  --color-app-bg: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-surface-muted: #f5f7fa;
+
+  --color-text: #2d2d2d;
+  --color-title: #1c1c1c;
+  --color-muted: #6b7280;
+
+  --color-primary: #0082b5;
+  --color-primary-save: #0073a0;
+  --color-primary-hover: #035c7f;
+
+  --color-transparent-button-text: #9fd1ef;
+  --color-transparent-button-border: #9fd1ef;
+
+  --color-link: #5fb3e4;
+  --color-border: #cccccc;
+  --color-soft-border: #e8ecf4;
+
+  --radius-none: 0px;
+  --radius-input: 3px;
+  --radius-action: 4px;
+  --radius-panel: 12px;
 }
 
+[data-theme="dark"] {
+  --color-header-bg: #717171;
+  --color-header-text: #ffffff;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-app-bg: #383737;
+ --color-surface: #727176;
+  --color-surface-muted: #cbc8c8;
+
+  --color-text: #f3f4f6;
+  --color-title: #ffffff;
+  --color-muted: #b8b8b8;
+
+  --color-primary: #0082b5;
+  --color-primary-save: #0073a0;
+  --color-primary-hover: #035c7f;
+
+  --color-link: #5fb3e4;
+  --color-border: #444444;
+  --color-soft-border: #333333;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  font-family: var(--font-body);
+  background: var(--color-app-bg);
+  color: var(--color-text);
+}
+
+body {
+  overflow: hidden;
 }
 
 * {
   box-sizing: border-box;
 }
 
-html {
-  min-height: 100%;
-  background:
-    radial-gradient(circle at top left, rgba(209, 127, 47, 0.24), transparent 28%),
-    radial-gradient(circle at bottom right, rgba(24, 76, 116, 0.22), transparent 30%),
-    linear-gradient(180deg, #f5f1e8 0%, #eef3f8 100%);
+button,
+input,
+textarea,
+select {
+  font-family: var(--font-body);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), sans-serif;
-  min-height: 100vh;
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-title);
+  color: var(--color-title);
 }
 
 a {
-  color: inherit;
-  text-decoration: none;
+  color: var(--color-link);
+  text-decoration: underline;
+}
+
+.app-page {
+  height: 100vh;
+  overflow: hidden;
+  background: var(--color-app-bg);
+}
+
+.app-surface {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border-color: var(--color-soft-border);
+}
+
+.app-title {
+  font-family: var(--font-title);
+  color: var(--color-title);
+}
+
+.app-text {
+  font-family: var(--font-body);
+  color: var(--color-text);
+}
+
+.app-btn-transparent {
+  background: transparent;
+  color: var(--color-transparent-button-text);
+  border: 1px solid var(--color-transparent-button-border);
+  border-radius: var(--radius-none);
+  font-family: var(--font-body);
+}
+
+.app-btn-primary {
+  background: var(--color-primary);
+  color: #ffffff;
+  border: 1px solid var(--color-primary);
+  border-radius: var(--radius-none);
+  font-family: var(--font-body);
+}
+
+.app-btn-save {
+  background: var(--color-primary-save);
+  color: #ffffff;
+  border: 1px solid var(--color-primary-save);
+  border-radius: var(--radius-action);
+  font-family: var(--font-body);
+}
+
+.app-btn-save:hover {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+  color: #ffffff;
+}
+
+.app-btn-cancel {
+  background: transparent;
+  color: var(--color-text);
+  border: 1px solid var(--color-primary-save);
+  border-radius: var(--radius-action);
+  font-family: var(--font-body);
+}
+
+.app-btn-cancel:hover {
+  background: transparent;
+  color: var(--color-text);
+  border-color: var(--color-primary-hover);
+}
+
+.app-input {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-input);
+  font-family: var(--font-body);
+}
+
+.app-label {
+  color: #000000;
+  font-family: var(--font-body);
+}
+
+[data-theme="dark"] .app-label {
+  color: #ffffff;
+}
+
+.app-popup {
+  background: var(--color-surface);
+  color: var(--color-text);
+  border: 1px solid var(--color-soft-border);
+  border-radius: var(--radius-panel);
 }

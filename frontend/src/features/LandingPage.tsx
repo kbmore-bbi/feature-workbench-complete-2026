@@ -10,6 +10,7 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import CloseIcon from '@mui/icons-material/Close';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import { useRouter } from 'next/navigation';
+import AppHeader from '@/components/layout/AppHeader';
 
 /* --- FEATURE CARD SUB-COMPONENT --- */
 const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
@@ -39,6 +40,9 @@ const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
 export default function LandingPage() {
   const router = useRouter();
   return (
+  <>
+     <AppHeader/>
+
     <Box sx={{ minHeight: '100vh', bgcolor: '#fff', position: 'relative', p: 4 }}>
 
       {/* 1. TOP HEADER (Welcome Message) */}
@@ -130,25 +134,7 @@ export default function LandingPage() {
         </Box>
       </Container>
 
-      {/* FLOATING AI WIDGET (Bottom Right) */}
-      <Box sx={{ position: 'fixed', bottom: 70, right: 24 }}>
-        <Paper elevation={4} sx={{ bgcolor: '#000', color: '#fff', borderRadius: '12px', px: 2, py: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Stack
-            sx={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: 1
-            }}
-          >
-            <SmartToyIcon sx={{ fontSize: 18 }} />
-            <Typography sx={{ fontSize: '0.8rem', fontWeight: 600 }}>AI Assistant</Typography>
-          </Stack>
-          <Stack direction="row" spacing={1}>
-            <OpenInFullIcon sx={{ fontSize: 14, cursor: 'pointer' }} />
-            <CloseIcon sx={{ fontSize: 14, cursor: 'pointer' }} />
-          </Stack>
-        </Paper>
-      </Box>
+
 
       {/* FOOTER */}
       <Box sx={{ position: 'absolute', bottom: 24, left: 32, right: 32, display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #eee', pt: 2 }}>
@@ -160,5 +146,6 @@ export default function LandingPage() {
         </Stack>
       </Box>
     </Box>
+    </>   
   );
 }

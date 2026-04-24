@@ -19,9 +19,7 @@ export SNOWFLAKE_DATABASE_LOWER="${SNOWFLAKE_DATABASE,,}"
 export SNOWFLAKE_SCHEMA_LOWER="${SNOWFLAKE_SCHEMA,,}"
 export SNOWFLAKE_IMAGE_REPOSITORY_LOWER="${SNOWFLAKE_IMAGE_REPOSITORY,,}"
 export IMAGE_TAG
-
-# SPCS DNS for sttm-builder so api-gateway can reach it
-export STTM_BUILDER_SERVICE_HOST="${STTM_BUILDER_SERVICE_NAME,,}.${SNOWFLAKE_SCHEMA_LOWER}.${SNOWFLAKE_DATABASE_LOWER}.snowflakecomputing.internal"
+export STTM_BUILDER_SERVICE_HOST
 
 if ! command -v snow &>/dev/null; then
   echo "ERROR: Snowflake CLI ('snow') not found." >&2

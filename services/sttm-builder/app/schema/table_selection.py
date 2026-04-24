@@ -3,10 +3,7 @@ from typing import Optional
 
 from pydantic import BaseModel
 
-
-class DatabaseItem(BaseModel):
-    database_name: str
-    created: datetime
+from app.schema.common import TableRef
 
 
 class SchemaItem(BaseModel):
@@ -14,10 +11,14 @@ class SchemaItem(BaseModel):
     created: datetime
 
 
+class DatabaseItem(BaseModel):
+    database_name: str
+    created: datetime
+    schemas: list[SchemaItem]
+
+
 class TableItem(BaseModel):
     table_name: str
-    table_type: str
-    row_count: Optional[int]
 
 
 class ColumnItem(BaseModel):
@@ -26,3 +27,8 @@ class ColumnItem(BaseModel):
     is_nullable: str
     ordinal_position: int
     comment: Optional[str]
+
+
+class TableAttributes(BaseModel):
+    table: TableRef
+    columns: list[ColumnItem]

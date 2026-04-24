@@ -37,25 +37,22 @@ class Settings(BaseSettings):
     snowflake_host: str = ""
 
     # Agent registry
-    snowflake_auto_map_agent: str = ""
+    snowflake_sttm_builder_agent: str = ""
     snowflake_agent_orchestration_model: str = "claude-sonnet-4"
 
     @computed_field
     @property
     def agents(self) -> list[AgentConfig]:
-        """
-        Single source of truth for all Cortex Agents in this service.
-        Add new agents here as the feature set grows.
-        """
         return [
             AgentConfig(
-                id="auto_map",
-                display_name="Auto Map Agent",
+                id="sttm_builder",
+                display_name="STTM Builder Agent",
                 description=(
-                    "Suggests and auto-fills source-to-target attribute mappings. "
-                    "Fetches DDL from Snowflake and returns per-attribute confidence scores."
+                    "Orchestration agent that routes requests to SOURCE_MAPPING_AGENT "
+                    "or TRANSFORMATION_AGENT based on the interface (AUTO_MAP, CHAT, TRANSFORM). "
+                    "Handles attribute mapping suggestions, refinements, and transformation rule generation."
                 ),
-                snowflake_name=self.snowflake_auto_map_agent,
+                snowflake_name=self.snowflake_sttm_builder_agent,
                 default_model=self.snowflake_agent_orchestration_model,
             ),
         ]

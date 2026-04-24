@@ -4,11 +4,11 @@ from typing import Annotated, Optional
 from fastapi import Depends, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from app.core.auto_mapping import AutoMappingService
 from app.core.snowflake import SnowflakeClient
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.core.table_selection import TableSelectionService
 from app.core.user import UserService
+from app.core.sttm_builder import STTMBuilderService
 
 _bearer = HTTPBearer()
 
@@ -42,10 +42,10 @@ def get_table_selection_service(
     return TableSelectionService(client)
 
 
-def get_auto_mapping_service(
+def get_sttm_builder_service(
     agent_client: Annotated[SnowflakeAgentClient, Depends(get_snowflake_agent_client)],
-) -> AutoMappingService:
-    return AutoMappingService(agent_client)
+) -> STTMBuilderService:
+    return STTMBuilderService(agent_client)
 
 
 def get_user_service(

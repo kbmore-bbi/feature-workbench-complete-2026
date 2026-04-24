@@ -1,42 +1,34 @@
-from fastapi import APIRouter, Depends
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_table_selection_service
 from app.core.table_selection import TableSelectionService
-from app.schema.table_selection import ColumnItem, DatabaseItem, SchemaItem, TableItem
+from app.schema.table_selection import DatabaseItem, TableAttributes, TableItem
 
 router = APIRouter(prefix="/table-selection", tags=["table-selection"])
 
 
 @router.get("/databases", response_model=list[DatabaseItem])
 def get_databases(svc: TableSelectionService = Depends(get_table_selection_service)):
-    return svc.list_databases()
+    return svc.list_databases_with_schemas()
 
 
-@router.get("/databases/{db_name}/schemas", response_model=list[SchemaItem])
-def get_schemas(db_name: str, svc: TableSelectionService = Depends(get_table_selection_service)):
-    return svc.list_schemas(db_name)
-
-
-@router.get(
-    "/databases/{db_name}/schemas/{schema_name}/tables",
-    response_model=list[TableItem],
-)
+@router.get("/tables", response_model=list[TableItem])
 def get_tables(
-    db_name: str,
-    schema_name: str,
+    database: Annotated[str, Query(description="Snowflake database name")],
+    schema: Annotated[str, Query(description="Snowflake schema name")],
     svc: TableSelectionService = Depends(get_table_selection_service),
 ):
-    return svc.list_tables(db_name, schema_name)
+    return svc.list_tables(database, schema)
 
 
-@router.get(
-    "/databases/{db_name}/schemas/{schema_name}/tables/{table_name}/columns",
-    response_model=list[ColumnItem],
-)
-def get_columns(
-    db_name: str,
-    schema_name: str,
-    table_name: str,
+@router.get("/attributes", response_model=list[TableAttributes])
+def get_attributes(
+    tables: Annotated[
+        list[str],
+        Query(description="Fully-qualified table references in DATABASE.SCHEMA.TABLE format"),
+    ],
     svc: TableSelectionService = Depends(get_table_selection_service),
 ):
-    return svc.list_columns(db_name, schema_name, table_name)
+    return svc.list_attributes_for_tables(tables)

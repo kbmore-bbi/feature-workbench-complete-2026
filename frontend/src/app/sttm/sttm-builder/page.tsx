@@ -1,28 +1,20 @@
-'use client';
-import {useState} from 'react'
-import Button from '@mui/material/Button';
-import SourceTree from '../../../components/SourceTree';
-
-import SourceDialog from '../../../components/SourceDialog';
-import SttmLayout from '../../../components/sttm-builder/SttmLayout';
+import SourceTargetAttributeList from "@/components/sttm-builder/SourceTargetAttributeList";
+import SourceTargetAttributeMapping from "@/components/sttm-builder/SourceTargetAttributeMapping";
 
 
-export default function Page() {
-    const [isDialogOpen, setIsDialogOpen] = useState(false);
-    const toggleDialog = () => {
-        setIsDialogOpen(!isDialogOpen);
-    };
-
+export default function SttmBuilderPage() {   
     return (
-        <div style={{ padding: '20px' }}>
-            {/* <Button variant="outlined" onClick={toggleDialog}>
-                Open Child Dialog
-            </Button>
-
-            <SourceDialog open={isDialogOpen} handleClose={toggleDialog} />
-            <SourceTree /> */}
-
-            <SttmLayout />
-        </div>
+       <>
+       <div style={{display: 'flex'}}>
+            <div style={{width: '20%'}}>
+<SourceTargetAttributeList />
+            </div>
+            <div style={{width: '80%'}}>
+<SourceTargetAttributeMapping />
+            </div>
+       </div>
+        
+        
+       </>
     );
 }

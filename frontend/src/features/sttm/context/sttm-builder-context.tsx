@@ -1,10 +1,10 @@
 'use client';
 import { createContext, useContext, useState } from 'react';
-import { DB_SCHEMA_TABLE_SELECTION } from '../components/sttm-builder/source';
+import { DB_SCHEMA_TABLE_SELECTION } from '@/data/source';
 
 const SttmBuilderContext = createContext<any>({});
 
-export function DataProvider({ children }: any) {
+export function SttmBuilderProvider({ children }: any) {
   const [fullData, setFullData] = useState(DB_SCHEMA_TABLE_SELECTION);
   const [sources, setSources] = useState<any[]>([]);
   const [targets, setTargets] = useState<any[]>([]);

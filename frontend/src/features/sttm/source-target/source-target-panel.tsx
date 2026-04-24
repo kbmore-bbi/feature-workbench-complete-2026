@@ -1,8 +1,8 @@
 'use client';
 import React, { useState } from 'react';
-import SourceTargetList from './SourceTargetList';
-import AddSourcePlaceholder from "./AddSourcePlaceholder";
-import DbSchemaSelection from "./DbSchemaSelection";
+import SourceTargetList from './source-target-list';
+// import AddSourcePlaceholder from "./AddSourcePlaceholder";
+// import DbSchemaSelection from "./DbSchemaSelection";
 import {
     Box, Typography, Button, TextField,
     Paper, InputAdornment, Stack, InputBase, Divider
@@ -10,9 +10,9 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
-import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
-import {FocusButton} from '../ui/focus-button';
-import {FocusSelect} from '../ui/focus-select';
+import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
+import {FocusButton} from '@/components/ui/focus-button';
+import {FocusSelect} from '@/components/ui/focus-select';
 
 export default function SourceTargetPanel({ type }: any) {
     const { clearSources, clearTargets }: any = useSttmBuilderContext();

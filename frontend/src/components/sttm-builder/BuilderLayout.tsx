@@ -7,7 +7,8 @@ import BuilderHeader from "./BuilderHeader";
 import DataSelectionPanel from "./DataSelectionPanel";
 import SourceTargetPanel from "./SourceTargetPanel";
 import AddSourcePlaceholder from "./AddSourcePlaceholder";
-import { DataProvider } from '../../contexts/SttmBuilderContext';
+
+import { SttmBuilderProvider } from "@/features/sttm/context/sttm-builder-context";
 
 export default function BuilderLayout() {
     const [mounted, setMounted] = useState(false);
@@ -20,7 +21,7 @@ export default function BuilderLayout() {
 
     return (
         <>
-            <DataProvider>
+            <SttmBuilderProvider>
                 <div style={{ minHeight: "100vh" }}>
                     <BuilderHeader currentStep={1} />
                     <div style={{ display: "flex", minHeight: "calc(100vh-72px)", backgroundColor: '#f9f9f9' }}>
@@ -41,7 +42,7 @@ export default function BuilderLayout() {
                         </div>
                     </div>
                 </div>
-            </DataProvider>
+            </SttmBuilderProvider>
 
 
         </>

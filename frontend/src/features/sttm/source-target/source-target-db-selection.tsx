@@ -12,12 +12,12 @@ import StorageRoundedIcon from "@mui/icons-material/StorageRounded";
 import SchemaRoundedIcon from "@mui/icons-material/SchemaRounded"; // Updated Icon
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
-import { Database, Schema } from "../../data/source";
-import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
+import { Database, Schema } from "@/data/source";
+import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 
 type SectionType = "source" | "target";
 
-export default function DataSelectionPanel() {
+export default function SourceTargetDbSelection() {
   const { fullData, selectSchema } = useSttmBuilderContext();
   const [searchText, setSearchText] = useState("");
 

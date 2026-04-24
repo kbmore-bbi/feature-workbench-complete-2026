@@ -34,6 +34,7 @@ export default function AIAgentPopover() {
                 aria-describedby={id}
                 onClick={handleClick}
                 sx={{
+                    borderRadius: '8px',
                     position: 'fixed',
                     bottom: 24,
                     right: 24,
@@ -53,7 +54,7 @@ export default function AIAgentPopover() {
                 onClose={handleClose}
                 anchorOrigin={{
                     vertical: 'top',
-                    horizontal: 'left',
+                    horizontal: 'right',
                 }}
                 transformOrigin={{
                     vertical: 'bottom',

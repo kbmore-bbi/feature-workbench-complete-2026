@@ -20,6 +20,7 @@ export SNOWFLAKE_SCHEMA_LOWER="${SNOWFLAKE_SCHEMA,,}"
 export SNOWFLAKE_IMAGE_REPOSITORY_LOWER="${SNOWFLAKE_IMAGE_REPOSITORY,,}"
 export IMAGE_TAG
 export STTM_BUILDER_SERVICE_HOST
+export API_GATEWAY_SERVICE_NAME
 
 if ! command -v snow &>/dev/null; then
   echo "ERROR: Snowflake CLI ('snow') not found." >&2

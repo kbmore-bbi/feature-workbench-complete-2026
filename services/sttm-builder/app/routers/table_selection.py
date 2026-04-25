@@ -6,7 +6,7 @@ from app.api.deps import get_table_selection_service
 from app.core.table_selection import TableSelectionService
 from app.schema.table_selection import DatabaseItem, TableAttributes, TableItem
 
-router = APIRouter(prefix="/table-selection", tags=["table-selection"])
+router = APIRouter(prefix="/table-selection", tags=["Table Selection"])
 
 
 @router.get("/databases", response_model=list[DatabaseItem])

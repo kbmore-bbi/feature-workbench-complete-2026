@@ -9,47 +9,22 @@ services:
     environment:
       PORT: 8000
 
+  frontend:
+    build:
+      context: ./services/frontend
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOSTNAME: 0.0.0.0
+
   api-gateway:
     build:
       context: ./services/api-gateway
     environment:
       STTM_BUILDER_UPSTREAM: sttm-builder:8000
+      FRONTEND_UPSTREAM: frontend:3000
     depends_on:
       - sttm-builder
+      - frontend
     ports:
       - "9000:9000"
-
-  backend:
-    build:
-      context: ./backend
-    environment:
-      APP_ENV: docker
-      APP_NAME: BBI AI Migration Workbench API
-      APP_VERSION: 0.1.0
-      PORT: 8000
-      CORS_ALLOWED_ORIGINS: http://localhost:3000,http://127.0.0.1:3000,http://localhost:8080,http://127.0.0.1:8080
-    ports:
-      - "8000:8000"
-
-  frontend:
-    build:
-      context: ./frontend
-    environment:
-      NODE_ENV: production
-      PORT: 3000
-      NEXT_PUBLIC_APP_ENV: docker
-    depends_on:
-      - backend
-
-  nginx:
-    build:
-      context: ./nginx
-    environment:
-      FRONTEND_UPSTREAM: frontend:3000
-      BACKEND_UPSTREAM: backend:8000
-    depends_on:
-      - frontend
-      - backend
-    ports:
-      - "8080:8080"
-

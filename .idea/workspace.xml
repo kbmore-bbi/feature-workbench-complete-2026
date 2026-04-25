@@ -6,21 +6,41 @@
   <component name="ChangeListManager">
     <list default="true" id="1ed05f52-ea0c-4eca-b833-13651fc3d5b0" name="Changes" comment="Initial Directory Setup.">
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docker-compose.yml" beforeDir="false" afterPath="$PROJECT_DIR$/docker-compose.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/.dockerignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/.gitignore" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/AGENTS.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/CLAUDE.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/Dockerfile" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/README.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/eslint.config.mjs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/middleware.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/next.config.ts" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/package-lock.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/package.json" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/postcss.config.mjs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/public/file.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/public/globe.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/public/next.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/public/vercel.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/public/window.svg" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/app/favicon.ico" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/app/globals.css" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/app/layout.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/app/page.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/src/components/api-status.tsx" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/frontend/tsconfig.json" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/infra/snowflake/env/dev.env.example" beforeDir="false" afterPath="$PROJECT_DIR$/infra/snowflake/env/dev.env.example" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/infra/snowflake/scripts/deploy.sh" beforeDir="false" afterPath="$PROJECT_DIR$/infra/snowflake/scripts/deploy.sh" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/infra/snowflake/service-specs/api-gateway.yaml.tmpl" beforeDir="false" afterPath="$PROJECT_DIR$/infra/snowflake/service-specs/api-gateway.yaml.tmpl" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/services/api-gateway/conf.d/default.conf" beforeDir="false" afterPath="$PROJECT_DIR$/services/api-gateway/conf.d/default.conf" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/services/sttm-builder/Dockerfile" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/Dockerfile" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/api/__init__.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/app/api/__init__.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/api/deps.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/app/api/deps.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/core/auto_mapping.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/core/config.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/app/core/config.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/core/table_selection.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/app/core/table_selection.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/main.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/app/main.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/routers/auto_mapping.py" beforeDir="false" />
       <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/routers/table_selection.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/app/routers/table_selection.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/schema/auto_mapping.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/services/sttm-builder/app/schema/table_selection.py" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/app/schema/table_selection.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/services/sttm-builder/pyproject.toml" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/pyproject.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/services/sttm-builder/static/swagger-ui/swagger-ui-bundle.js" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/services/sttm-builder/static/swagger-ui/swagger-ui.css" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/services/sttm-builder/uv.lock" beforeDir="false" afterPath="$PROJECT_DIR$/services/sttm-builder/uv.lock" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

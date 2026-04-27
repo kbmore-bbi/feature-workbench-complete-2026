@@ -1,5 +1,3 @@
-from snowflake.snowpark.functions import col
-
 from app.core.exceptions import SnowflakeQueryError
 from app.core.snowflake import SnowflakeClient
 from app.schema.common import TableRef
@@ -16,57 +14,73 @@ class TableSelectionService:
     def __init__(self, client: SnowflakeClient) -> None:
         self._session = client.session
 
+    @staticmethod
+    def _quote_identifier(identifier: str) -> str:
+        return '"' + identifier.replace('"', '""') + '"'
+
+    @staticmethod
+    def _row_value(row, *names: str):
+        values = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+        for name in names:
+            for candidate in (name, name.upper(), name.lower()):
+                if candidate in values:
+                    return values[candidate]
+        return None
+
     def list_databases_with_schemas(self) -> list[DatabaseItem]:
         try:
-            db_rows = (
-                self._session.table("SNOWFLAKE.INFORMATION_SCHEMA.DATABASES")
-                .select("DATABASE_NAME", "CREATED")
-                .sort("DATABASE_NAME")
-                .collect()
-            )
+            db_rows = self._session.sql("SHOW DATABASES").collect()
         except Exception as e:
             raise SnowflakeQueryError(f"Failed to list databases: {e}") from e
 
         result = []
         for row in db_rows:
-            db_name = row["DATABASE_NAME"]
+            db_name = self._row_value(row, "name", "database_name")
+            if not db_name:
+                continue
             try:
-                schema_rows = (
-                    self._session.table(f"{db_name}.INFORMATION_SCHEMA.SCHEMATA")
-                    .select("SCHEMA_NAME", "CREATED")
-                    .sort("SCHEMA_NAME")
-                    .collect()
+                schema_rows = self._session.sql(
+                    f"SHOW SCHEMAS IN DATABASE {self._quote_identifier(str(db_name))}"
+                ).collect()
+                schemas = sorted(
+                    [
+                        SchemaItem(
+                            schema_name=str(self._row_value(r, "name", "schema_name")),
+                            created=self._row_value(r, "created_on", "created"),
+                        )
+                        for r in schema_rows
+                        if self._row_value(r, "name", "schema_name")
+                    ],
+                    key=lambda item: item.schema_name,
                 )
-                schemas = [
-                    SchemaItem(schema_name=r["SCHEMA_NAME"], created=r["CREATED"])
-                    for r in schema_rows
-                ]
             except Exception:
                 schemas = []
 
             result.append(
                 DatabaseItem(
-                    database_name=db_name,
-                    created=row["CREATED"],
+                    database_name=str(db_name),
+                    created=self._row_value(row, "created_on", "created"),
                     schemas=schemas,
                 )
             )
-        return result
+        return sorted(result, key=lambda item: item.database_name)
 
     def list_tables(self, db_name: str, schema_name: str) -> list[TableItem]:
         try:
-            rows = (
-                self._session.table(f"{db_name}.INFORMATION_SCHEMA.TABLES")
-                .select("TABLE_NAME")
-                .filter(col("TABLE_SCHEMA") == schema_name.upper())
-                .sort("TABLE_NAME")
-                .collect()
+            rows = self._session.sql(
+                "SHOW TABLES IN SCHEMA "
+                f"{self._quote_identifier(db_name)}.{self._quote_identifier(schema_name)}"
+            ).collect()
+            names = sorted(
+                str(name)
+                for row in rows
+                if (name := self._row_value(row, "name", "table_name"))
             )
         except Exception as e:
             raise SnowflakeQueryError(
                 f"Failed to list tables in {db_name!r}.{schema_name!r}: {e}"
             ) from e
-        return [TableItem(table_name=r["TABLE_NAME"]) for r in rows]
+        return [TableItem(table_name=name) for name in names]
 
     def list_attributes_for_tables(self, qualified_names: list[str]) -> list[TableAttributes]:
         from app.core.exceptions import AppValidationError

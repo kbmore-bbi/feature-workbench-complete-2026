@@ -8,7 +8,7 @@ from snowflake.connector import DictCursor
 from app.auth.models import AppPersona, CurrentPrincipal
 from app.auth.persona.permissions import get_permissions
 from app.config import Settings
-from app.core.snowflake import get_user_connection
+from app.core.snowflake import get_service_connection, get_user_connection
 
 
 def resolve_persona(row: dict[str, Any]) -> AppPersona:
@@ -48,7 +48,12 @@ def resolve_and_upsert(context: dict[str, Any], settings: Settings) -> CurrentPr
         snowflake_user = str(role_row["CURRENT_USER"])
         email = context["email"] or snowflake_user
         display_name = snowflake_user
+        cursor.close()
 
+    # App metadata is owned by the service. Caller-rights still determines the
+    # persona above, but users should not need direct write grants on TBL_USERS.
+    with get_service_connection(settings) as connection:
+        cursor = connection.cursor(DictCursor)
         cursor.execute(
             f"""
             SELECT USER_ID, ROLE, IS_ACTIVE

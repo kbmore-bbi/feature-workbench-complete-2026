@@ -13,6 +13,7 @@ import {
   TableChart as TableIcon,
   FiberManualRecord as DotIcon
 } from '@mui/icons-material';
+import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 
 const SourceTargetAttributeList = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -63,11 +64,22 @@ const SourceTargetAttributeList = () => {
       
       {/* 1. HEADER & SEARCH */}
       <Box sx={{ p: 2 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+        <Box sx={{justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
+           <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#111827", mb: 2 }}>
+          STTM Builder
+        </Typography>
+        
+
+        <Box className="flex h-[38px] items-center justify-between rounded-full bg-[#F3F4F6] px-4">
+          <Typography className="text-[13px] font-medium text-[var(--color-text)]">
+            Cortex
+          </Typography>
+          <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#4B5563" }} />
+        </Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem', color: '#333' }}>
             Source Columns
           </Typography>
-          <Button 
+          {/* <Button 
             size="small" 
             variant="text" 
             startIcon={<AutoIcon sx={{ fontSize: 16 }} />} 
@@ -81,7 +93,7 @@ const SourceTargetAttributeList = () => {
             }}
           >
             Auto
-          </Button>
+          </Button> */}
         </Box>
         <TextField
           fullWidth
@@ -148,7 +160,7 @@ const SourceTargetAttributeList = () => {
       <Divider />
 
       {/* 3. TARGET TABLE SECTION (Fixed at bottom) */}
-      <Box sx={{ p: 2, bgcolor: '#fafafa' }}>
+      <Box className="bg-[var(--color-header-bg)]" sx={{ p: 2}}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem', display: 'flex', alignItems: 'center', gap: 1 }}>
             <TableIcon sx={{ fontSize: 18 }} /> Target Table
@@ -170,7 +182,7 @@ const SourceTargetAttributeList = () => {
         <Typography variant="overline" sx={{ color: '#bbb', fontSize: '0.65rem', display: 'block', mb: 0.5 }}>
           TARGET COLUMNS
         </Typography>
-        <Box sx={{ maxHeight: 250, overflowY: 'auto' }}>
+        <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
           {targetColumns.map((col) => (
             <Box key={col.name} sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

@@ -11,6 +11,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import { useRouter } from 'next/navigation';
 import Footer from '@/components/footer';
+import AppHeader from '@/components/layout/AppHeader';
 
 /* --- FEATURE CARD SUB-COMPONENT --- */
 const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
@@ -40,6 +41,9 @@ const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
 export default function LandingPage() {
   const router = useRouter();
   return (
+  <>
+     <AppHeader/>
+
     <Box sx={{ minHeight: '100vh', bgcolor: '#fff', position: 'relative', p: 4 }}>
 
       {/* 1. TOP HEADER (Welcome Message) */}
@@ -151,8 +155,10 @@ export default function LandingPage() {
         </Paper>
       </Box> */}
 
+
       {/* FOOTER */}
         <Footer />
     </Box>
+    </>   
   );
 }

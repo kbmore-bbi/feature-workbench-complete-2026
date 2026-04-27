@@ -41,7 +41,7 @@ export default function AIAgentPanel() {
                             <SmartToyIcon sx={{ fontSize: 20 }} />
                         </Avatar>
                         <Box>
-                            <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+                            <Typography variant="subtitle2" sx={{ fontWeight: 700, lineHeight: 1.2, color:'white' }}>
                                 STTM AI Agent
                             </Typography>
                             <Typography variant="caption" sx={{ color: '#888', display: 'flex', alignItems: 'center', gap: 0.5 }}>

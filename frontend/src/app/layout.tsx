@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import '@/theme/theme.css';
 import ThemeProvider from '@/theme/ThemeProvider';
+import Providers from "./Providers";
 import ChatWidget from '@/features/ai-agent/ChatWidget';
 
 export const metadata: Metadata = {
@@ -20,10 +21,9 @@ export default function RootLayout({
         <meta name="emotion-insertion-point" content="" />
       </head>
       <body>
-        <ThemeProvider>
-          {children}
-          <ChatWidget /> 
-        </ThemeProvider>
+        <Providers>{children}
+          <ChatWidget />
+        </Providers>
       </body>
     </html>
 

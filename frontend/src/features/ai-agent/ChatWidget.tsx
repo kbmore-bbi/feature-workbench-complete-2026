@@ -5,10 +5,6 @@ import {
     Fab, Popover
 } from '@mui/material';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import VolumeUpIcon from '@mui/icons-material/VolumeUp';
-import TableChartIcon from '@mui/icons-material/TableChart';
-import SendIcon from '@mui/icons-material/Send';
-import CloseIcon from '@mui/icons-material/Close';
 import AIAgentPanel from '@/components/sttm-builder/AIAgentPanel';
 
 export default function AIAgentPopover() {
@@ -27,7 +23,6 @@ export default function AIAgentPopover() {
 
     return (
         <>
-            {/* 1. TRIGGER BUTTON (FAB) */}
             <Fab
             variant="extended"
                 color="primary"
@@ -46,7 +41,6 @@ export default function AIAgentPopover() {
                 {'AI Assistant'}
             </Fab>
 
-            {/* 2. POPOVER CONTAINER */}
             <Popover
                 id={id}
                 open={open}
@@ -71,7 +65,6 @@ export default function AIAgentPopover() {
                     }
                 }}
             >
-                {/* 3. YOUR PANEL CONTENT */}
                 <AIAgentPanel />
             </Popover>
         </>

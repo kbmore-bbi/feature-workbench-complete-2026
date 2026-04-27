@@ -15,18 +15,12 @@ set -a; source "${ENV_FILE}"; set +a
 
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 
-DB_LOWER="${SNOWFLAKE_DATABASE,,}"
-SCHEMA_LOWER="${SNOWFLAKE_SCHEMA,,}"
-REPO_LOWER="${SNOWFLAKE_IMAGE_REPOSITORY,,}"
+DB_LOWER="$(printf "%s" "${SNOWFLAKE_DATABASE}" | tr '[:upper:]' '[:lower:]')"
+SCHEMA_LOWER="$(printf "%s" "${SNOWFLAKE_SCHEMA}" | tr '[:upper:]' '[:lower:]')"
+REPO_LOWER="$(printf "%s" "${SNOWFLAKE_IMAGE_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
 REGISTRY="${SNOWFLAKE_REGISTRY_HOST}/${DB_LOWER}/${SCHEMA_LOWER}/${REPO_LOWER}"
 
-declare -A SERVICE_CONTEXTS=(
-  [sttm-builder]="${REPO_ROOT}/services/sttm-builder"
-  [frontend]="${REPO_ROOT}/frontend"
-  [nginx]="${REPO_ROOT}/nginx"
-)
-
-AVAILABLE="$(IFS="|"; echo "${!SERVICE_CONTEXTS[*]}")"
+AVAILABLE="sttm-builder|frontend|nginx"
 
 usage() {
   echo "Usage: $0 <service>" >&2
@@ -37,11 +31,15 @@ usage() {
 [[ $# -lt 1 ]] && usage
 
 TARGET="$1"
-CONTEXT="${SERVICE_CONTEXTS[${TARGET}]:-}"
-if [[ -z "${CONTEXT}" ]]; then
-  echo "ERROR: unknown service '${TARGET}'. Available: ${AVAILABLE}" >&2
-  exit 1
-fi
+case "${TARGET}" in
+  sttm-builder) CONTEXT="${REPO_ROOT}/services/sttm-builder" ;;
+  frontend) CONTEXT="${REPO_ROOT}/frontend" ;;
+  nginx) CONTEXT="${REPO_ROOT}/nginx" ;;
+  *)
+    echo "ERROR: unknown service '${TARGET}'. Available: ${AVAILABLE}" >&2
+    exit 1
+    ;;
+esac
 
 REMOTE_IMAGE="${REGISTRY}/${TARGET}:${IMAGE_TAG}"
 

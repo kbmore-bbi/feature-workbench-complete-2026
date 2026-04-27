@@ -15,26 +15,31 @@ set -a; source "${ENV_FILE}"; set +a
 
 IMAGE_TAG="${IMAGE_TAG:-latest}"
 
-export SNOWFLAKE_DATABASE_LOWER="${SNOWFLAKE_DATABASE,,}"
-export SNOWFLAKE_SCHEMA_LOWER="${SNOWFLAKE_SCHEMA,,}"
-export SNOWFLAKE_IMAGE_REPOSITORY_LOWER="${SNOWFLAKE_IMAGE_REPOSITORY,,}"
+export SNOWFLAKE_DATABASE_LOWER="$(printf "%s" "${SNOWFLAKE_DATABASE}" | tr '[:upper:]' '[:lower:]')"
+export SNOWFLAKE_SCHEMA_LOWER="$(printf "%s" "${SNOWFLAKE_SCHEMA}" | tr '[:upper:]' '[:lower:]')"
+export SNOWFLAKE_IMAGE_REPOSITORY_LOWER="$(printf "%s" "${SNOWFLAKE_IMAGE_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
 export IMAGE_TAG
 
-if ! command -v snow &>/dev/null; then
-  echo "ERROR: Snowflake CLI ('snow') not found." >&2
-  echo "       Install: pip install snowflake-cli  or  brew install snowflake-cli" >&2
+if ! command -v snowsql &>/dev/null; then
+  echo "ERROR: SnowSQL ('snowsql') not found." >&2
+  echo "       Install SnowSQL and ensure it is available on PATH." >&2
   exit 1
 fi
 
 : "${SNOWFLAKE_PASSWORD:?SNOWFLAKE_PASSWORD is required}"
 
 run_sql() {
-  snow sql \
-    --account "${SNOWFLAKE_ACCOUNT}" \
-    --user "${SNOWFLAKE_USER:-$(whoami)}" \
-    --authenticator snowflake \
-    --role "${SNOWFLAKE_ROLE:?SNOWFLAKE_ROLE is required}" \
-    --query "$1"
+  SNOWSQL_PWD="${SNOWFLAKE_PASSWORD}" snowsql \
+    -a "${SNOWFLAKE_ACCOUNT}" \
+    -u "${SNOWFLAKE_USER:-$(whoami)}" \
+    -r "${SNOWFLAKE_ROLE:?SNOWFLAKE_ROLE is required}" \
+    -w "${SNOWFLAKE_WAREHOUSE:?SNOWFLAKE_WAREHOUSE is required}" \
+    -d "${SNOWFLAKE_DATABASE:?SNOWFLAKE_DATABASE is required}" \
+    -s "${SNOWFLAKE_SCHEMA:?SNOWFLAKE_SCHEMA is required}" \
+    -o friendly=false \
+    -o header=false \
+    -o output_format=plain \
+    -q "$1"
 }
 
 render_spec() {
@@ -73,12 +78,7 @@ ${spec}
 
 : "${SNOWFLAKE_EGRESS_INTEGRATION:?SNOWFLAKE_EGRESS_INTEGRATION is required — run setup-egress.sql first}"
 
-declare -A SERVICE_SPECS=(
-  [sttm-builder]="${SPECS_DIR}/sttm-builder.yaml.tmpl:${STTM_BUILDER_SERVICE_NAME}"
-  [webapp]="${SPECS_DIR}/webapp.yaml.tmpl:${WEBAPP_SERVICE_NAME}"
-)
-
-AVAILABLE="$(IFS="|"; echo "${!SERVICE_SPECS[*]}")"
+AVAILABLE="sttm-builder|webapp"
 
 usage() {
   echo "Usage: $0 <service>" >&2
@@ -89,14 +89,20 @@ usage() {
 [[ $# -lt 1 ]] && usage
 
 TARGET="$1"
-ENTRY="${SERVICE_SPECS[${TARGET}]:-}"
-if [[ -z "${ENTRY}" ]]; then
-  echo "ERROR: unknown service '${TARGET}'. Available: ${AVAILABLE}" >&2
-  exit 1
-fi
-
-SPEC_FILE="${ENTRY%%:*}"
-SERVICE_NAME="${ENTRY##*:}"
+case "${TARGET}" in
+  sttm-builder)
+    SPEC_FILE="${SPECS_DIR}/sttm-builder.yaml.tmpl"
+    SERVICE_NAME="${STTM_BUILDER_SERVICE_NAME}"
+    ;;
+  webapp)
+    SPEC_FILE="${SPECS_DIR}/webapp.yaml.tmpl"
+    SERVICE_NAME="${WEBAPP_SERVICE_NAME}"
+    ;;
+  *)
+    echo "ERROR: unknown service '${TARGET}'. Available: ${AVAILABLE}" >&2
+    exit 1
+    ;;
+esac
 
 # sttm-builder needs egress to Snowflake for Snowpark SQL + Cortex Agents REST API.
 # webapp is frontend + nginx only — no direct Snowflake egress required.
@@ -109,4 +115,4 @@ fi
 echo "✓ ${SERVICE_NAME} deployed to compute pool ${SNOWFLAKE_COMPUTE_POOL}"
 echo ""
 echo "Check status:"
-echo "  snow sql -q \"SHOW SERVICES IN SCHEMA ${SNOWFLAKE_DATABASE}.${SNOWFLAKE_SCHEMA};\""
+echo "  snowsql -a ${SNOWFLAKE_ACCOUNT} -u ${SNOWFLAKE_USER:-$(whoami)} -q \"SHOW SERVICES IN SCHEMA ${SNOWFLAKE_DATABASE}.${SNOWFLAKE_SCHEMA};\""

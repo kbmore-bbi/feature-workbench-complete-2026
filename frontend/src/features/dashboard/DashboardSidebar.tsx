@@ -73,7 +73,7 @@ export default function DashboardSidebar() {
             <Button
                 variant="contained"
               sx={{ bgcolor: '#007bb2', textTransform: 'none', px: 5, py: 1.5, borderRadius: '10px', fontWeight: 700 }}
-        onClick={()=> route.push('./home')}    >
+        onClick={()=> route.push('/sttm/builder/new')}    >
                 + New Mapping
             </Button>
 

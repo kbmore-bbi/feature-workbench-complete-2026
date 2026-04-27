@@ -1,5 +1,35 @@
 spec:
   containers:
+    - name: sttm-builder
+      image: /${SNOWFLAKE_DATABASE_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_IMAGE_REPOSITORY_LOWER}/sttm-builder:${IMAGE_TAG}
+      env:
+        APP_NAME: ${APP_NAME}
+        APP_ENV: ${APP_ENV}
+        APP_VERSION: ${IMAGE_TAG}
+        PORT: "8000"
+        USERS_TABLE: ${USERS_TABLE}
+        APP_ROLE_ADMIN: ${APP_ROLE_ADMIN}
+        APP_ROLE_PUBLISHER: ${APP_ROLE_PUBLISHER}
+        APP_ROLE_VIEWER: ${APP_ROLE_VIEWER}
+        SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
+        SNOWFLAKE_HOST: ${SNOWFLAKE_HOST}
+        SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+        SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+        SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}
+        SNOWFLAKE_STTM_BUILDER_AGENT: ${SNOWFLAKE_STTM_BUILDER_AGENT}
+        SNOWFLAKE_AGENT_ORCHESTRATION_MODEL: ${SNOWFLAKE_AGENT_ORCHESTRATION_MODEL}
+        CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
+      resources:
+        requests:
+          cpu: "0.5"
+          memory: "1Gi"
+        limits:
+          cpu: "1"
+          memory: "2Gi"
+      readinessProbe:
+        port: 8000
+        path: /health
+
     - name: frontend
       image: /${SNOWFLAKE_DATABASE_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_IMAGE_REPOSITORY_LOWER}/frontend:${IMAGE_TAG}
       env:
@@ -20,7 +50,7 @@ spec:
       image: /${SNOWFLAKE_DATABASE_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_IMAGE_REPOSITORY_LOWER}/nginx:${IMAGE_TAG}
       env:
         FRONTEND_UPSTREAM: 127.0.0.1:3000
-        BACKEND_UPSTREAM: ${BACKEND_UPSTREAM}
+        BACKEND_UPSTREAM: 127.0.0.1:8000
       resources:
         requests:
           cpu: "0.25"

@@ -104,9 +104,9 @@ case "${TARGET}" in
     ;;
 esac
 
-# sttm-builder needs egress to Snowflake for Snowpark SQL + Cortex Agents REST API.
-# webapp is frontend + nginx only — no direct Snowflake egress required.
-if [[ "${TARGET}" == "sttm-builder" ]]; then
+# sttm-builder and the integrated webapp both need egress to Snowflake for
+# Snowpark SQL + Cortex Agents REST API from the backend container.
+if [[ "${TARGET}" == "sttm-builder" || "${TARGET}" == "webapp" ]]; then
   deploy_service "${SERVICE_NAME}" "${SPEC_FILE}" "${SNOWFLAKE_EGRESS_INTEGRATION}"
 else
   deploy_service "${SERVICE_NAME}" "${SPEC_FILE}"

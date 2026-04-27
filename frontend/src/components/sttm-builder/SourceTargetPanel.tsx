@@ -10,7 +10,7 @@ import {
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
-import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
+import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import {FocusButton} from '../ui/focus-button';
 import {FocusSelect} from '../ui/focus-select';
 

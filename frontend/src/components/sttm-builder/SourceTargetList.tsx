@@ -1,6 +1,6 @@
 'use client';
 import SourceTargetItem from './SourceTargetItem';
-import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
+import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 
 export default function SourceTargetList({ type }: any) {
   const { sources, targets, selectTarget, toggleSource   }: any = useSttmBuilderContext();

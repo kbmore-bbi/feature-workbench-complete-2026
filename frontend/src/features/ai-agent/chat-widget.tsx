@@ -5,7 +5,7 @@ import {
     Fab, Popover
 } from '@mui/material';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
-import AIAgentPanel from '@/components/sttm-builder/AIAgentPanel';
+import AIAgentPanel from '@/features/ai-agent/ai-agent-panel';
 
 export default function AIAgentPopover() {
     const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);

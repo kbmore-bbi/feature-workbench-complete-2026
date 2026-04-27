@@ -10,8 +10,8 @@ import SmartToyIcon from '@mui/icons-material/SmartToy';
 import CloseIcon from '@mui/icons-material/Close';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import { useRouter } from 'next/navigation';
-import Footer from '@/components/footer';
-import AppHeader from '@/components/layout/AppHeader';
+import Footer from '@/features/layout/app-footer';
+import AppHeader from '@/features/layout/app-header';
 
 /* --- FEATURE CARD SUB-COMPONENT --- */
 const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (

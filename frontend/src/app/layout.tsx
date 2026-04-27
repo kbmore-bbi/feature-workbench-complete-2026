@@ -3,7 +3,7 @@ import "./globals.css";
 import '@/theme/theme.css';
 import ThemeProvider from '@/theme/ThemeProvider';
 import Providers from "./Providers";
-import ChatWidget from '@/features/ai-agent/ChatWidget';
+import ChatWidget from '@/features/ai-agent/chat-widget';
 
 export const metadata: Metadata = {
   title: "Focus AI Migration Workbench",

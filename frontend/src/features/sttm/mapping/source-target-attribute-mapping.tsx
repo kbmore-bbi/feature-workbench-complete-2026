@@ -35,7 +35,7 @@ const mappingData = [
 const SourceTargetAttributeMapping = () => {
   return (
     <TableContainer 
-      component={Paper} 
+      component={Paper}   
       elevation={0} 
       sx={{ 
         width: '100%', // Occupies full container width
@@ -57,7 +57,7 @@ const SourceTargetAttributeMapping = () => {
             <TableCell sx={{ color: '#bbb', fontWeight: 600, fontSize: '0.7rem' }} align="right">STATUS</TableCell>
           </TableRow>
         </TableHead>
-        <TableBody>
+        <TableBody >
           {mappingData.map((row) => (
             <TableRow key={row.id} sx={{ '&:last-child td, &:last-child th': { border: 0 }, height: 60 }}>
               <TableCell sx={{ color: '#ccc', fontSize: '0.75rem' }}>{row.id}</TableCell>
@@ -91,7 +91,7 @@ const SourceTargetAttributeMapping = () => {
                   <Chip
                     label={row.sourceType}
                     size="small"
-                    sx={{ bgcolor: '#1a1a1a', color: '#fff', borderRadius: '4px', fontSize: '0.65rem', height: 20 }}
+                    sx={{ bgcolor: '#494747', color: '#fff', borderRadius: '4px', fontSize: '0.65rem', height: 20 }}
                   />
                 )}
               </TableCell>
@@ -113,7 +113,7 @@ const SourceTargetAttributeMapping = () => {
                   size="small"
                   startIcon={<StarIcon sx={{ fontSize: '10px !important' }} />}
                   sx={{
-                    bgcolor: '#1a1a1a',
+                    bgcolor: '#494747',
                     color: '#fff',
                     textTransform: 'none',
                     fontSize: '0.75rem',

@@ -13,7 +13,7 @@ import SchemaRoundedIcon from "@mui/icons-material/SchemaRounded"; // Updated Ic
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
 import { Database, Schema } from "../../data/source";
-import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
+import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 
 type SectionType = "source" | "target";
 

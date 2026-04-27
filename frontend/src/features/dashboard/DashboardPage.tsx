@@ -1,7 +1,7 @@
 "use client";
 
 import { Box, Paper } from "@mui/material";
-import AppHeader from "@/components/layout/AppHeader";
+import AppHeader from "@/features/layout/app-header";
 import DashboardSidebar from "./DashboardSidebar";
 import DashboardStats from "./DashboardStats";
 import QuickStatsPanel from "./QuickStatsPanel";

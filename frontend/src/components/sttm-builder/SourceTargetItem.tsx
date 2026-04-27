@@ -6,7 +6,7 @@ import Typography from '@mui/material/Typography';
 import TableChartOutlinedIcon from '@mui/icons-material/TableChartOutlined';
 import { FocusCheckbox } from '../ui/focus-checkbox';
 import { FocusRadio } from '../ui/focus-radio';
-import { useSttmBuilderContext } from '../../contexts/SttmBuilderContext';
+import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 
 
 export default function SourceTargetItem({ type = 'source', item, selectHandler }: any) {

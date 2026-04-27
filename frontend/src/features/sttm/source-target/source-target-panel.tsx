@@ -1,18 +1,15 @@
 'use client';
 import React, { useState } from 'react';
 import SourceTargetList from './source-target-list';
-// import AddSourcePlaceholder from "./AddSourcePlaceholder";
-// import DbSchemaSelection from "./DbSchemaSelection";
 import {
-    Box, Typography, Button, TextField,
-    Paper, InputAdornment, Stack, InputBase, Divider
+    Box, Typography,
+    Paper, Stack, InputBase, Divider
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import FilterListIcon from '@mui/icons-material/FilterList';
 import DeleteSweepIcon from '@mui/icons-material/DeleteSweep';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import {FocusButton} from '@/components/ui/focus-button';
-import {FocusSelect} from '@/components/ui/focus-select';
 
 export default function SourceTargetPanel({ type }: any) {
     const { clearSources, clearTargets }: any = useSttmBuilderContext();
@@ -23,8 +20,6 @@ export default function SourceTargetPanel({ type }: any) {
         <Paper elevation={0} sx={{
             width: '100%', maxWidth: '100%', height: '100%', borderRadius: '8px', border: '1px solid #e0e0e0', backgroundColor: '#f9f9f9', p: 2
         }}>
-
-
             {/* HEADER */}
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                 <Typography variant="overline" sx={{ fontWeight: 700, color: 'text.secondary', letterSpacing: 1 }}>
@@ -42,21 +37,7 @@ export default function SourceTargetPanel({ type }: any) {
                             clearTargets();
                         }
                     }}>Clear all</FocusButton>
-                {/* <Button
-                    
-                    onClick={() => {
-                        if (type === 'source') {
-                            clearSources();
-                        } else {
-                            clearTargets();
-                        }
-                    }}
-                    sx={{ textTransform: 'none', color: 'text.disabled', fontSize: '0.75rem' }}
-                >
-                    Clear all
-                </Button> */}
             </Box>
-            {/* <DbSchemaSelection /> */}
             {/* SEARCH & FILTERS */}
             <Paper
                 variant="outlined"
@@ -114,7 +95,5 @@ export default function SourceTargetPanel({ type }: any) {
             </Stack>
         </Paper>
     );
-    //    <DbSchemaSelection />
-
-
+  
 }

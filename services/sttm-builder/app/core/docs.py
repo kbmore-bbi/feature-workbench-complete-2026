@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI
 from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
@@ -12,6 +14,11 @@ def setup_docs(app: FastAPI) -> None:
             return app.openapi_schema
         app.openapi_schema = get_openapi(title=app.title, version=app.version, routes=app.routes)
         app.openapi_schema["openapi"] = "3.0.0"
+        # Override the server URL when running behind a reverse proxy (e.g. local dev).
+        # Not set in SPCS where the service is accessed directly via public ingress.
+        server_url = os.getenv("SWAGGER_SERVER_URL")
+        if server_url:
+            app.openapi_schema["servers"] = [{"url": server_url}]
         return app.openapi_schema
 
     app.openapi = _openapi

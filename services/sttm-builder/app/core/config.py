@@ -40,6 +40,9 @@ class Settings(BaseSettings):
     snowflake_sttm_builder_agent: str = ""
     snowflake_agent_orchestration_model: str = "claude-sonnet-4"
 
+    # CORS — comma-separated list of allowed origins, or "*" for all
+    cors_allowed_origins: str = ""
+
     @computed_field
     @property
     def agents(self) -> list[AgentConfig]:

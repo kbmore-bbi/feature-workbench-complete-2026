@@ -6,8 +6,9 @@ spec:
         PORT: "8000"
         SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
         SNOWFLAKE_HOST: ${SNOWFLAKE_HOST}
-        SNOWFLAKE_AUTO_MAP_AGENT: ${SNOWFLAKE_AUTO_MAP_AGENT}
+        SNOWFLAKE_STTM_BUILDER_AGENT: ${SNOWFLAKE_STTM_BUILDER_AGENT}
         SNOWFLAKE_AGENT_ORCHESTRATION_MODEL: ${SNOWFLAKE_AGENT_ORCHESTRATION_MODEL}
+        CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
       resources:
         requests:
           cpu: "0.5"
@@ -20,6 +21,24 @@ spec:
         path: /health
 
   endpoints:
-    - name: api
+    - name: sttm-builder
       port: 8000
-      public: false
+      public: true
+      corsSettings:
+        Access-Control-Allow-Origin:
+          - "${CORS_ALLOWED_ORIGINS}"
+        Access-Control-Allow-Methods:
+          - GET
+          - POST
+          - PUT
+          - PATCH
+          - DELETE
+        Access-Control-Allow-Headers:
+          - "Content-Type"
+          - "Authorization"
+          - "Accept"
+          - "Sf-Context-Current-User-Token"
+
+capabilities:
+  securityContext:
+    executeAsCaller: true

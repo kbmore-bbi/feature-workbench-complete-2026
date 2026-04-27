@@ -19,8 +19,6 @@ export SNOWFLAKE_DATABASE_LOWER="${SNOWFLAKE_DATABASE,,}"
 export SNOWFLAKE_SCHEMA_LOWER="${SNOWFLAKE_SCHEMA,,}"
 export SNOWFLAKE_IMAGE_REPOSITORY_LOWER="${SNOWFLAKE_IMAGE_REPOSITORY,,}"
 export IMAGE_TAG
-export STTM_BUILDER_SERVICE_HOST
-export API_GATEWAY_SERVICE_NAME
 
 if ! command -v snow &>/dev/null; then
   echo "ERROR: Snowflake CLI ('snow') not found." >&2
@@ -47,14 +45,21 @@ render_spec() {
 deploy_service() {
   local service_name="$1"
   local spec_file="$2"
+  local eai="${3:-}"   # optional External Access Integration name
 
   local spec
   spec="$(render_spec "${spec_file}")"
 
-  echo "→ Deploying ${service_name}"
+  local eai_clause=""
+  if [[ -n "${eai}" ]]; then
+    eai_clause="EXTERNAL_ACCESS_INTEGRATIONS = (${eai})"
+  fi
+
+  echo "→ Deploying ${service_name}${eai:+ (egress: ${eai})}"
   run_sql "
     CREATE SERVICE IF NOT EXISTS ${SNOWFLAKE_DATABASE}.${SNOWFLAKE_SCHEMA}.${service_name}
       IN COMPUTE POOL ${SNOWFLAKE_COMPUTE_POOL}
+      ${eai_clause}
       FROM SPECIFICATION \$\$
 ${spec}
       \$\$;
@@ -66,9 +71,11 @@ ${spec}
   "
 }
 
+: "${SNOWFLAKE_EGRESS_INTEGRATION:?SNOWFLAKE_EGRESS_INTEGRATION is required — run setup-egress.sql first}"
+
 declare -A SERVICE_SPECS=(
   [sttm-builder]="${SPECS_DIR}/sttm-builder.yaml.tmpl:${STTM_BUILDER_SERVICE_NAME}"
-  [api-gateway]="${SPECS_DIR}/api-gateway.yaml.tmpl:${API_GATEWAY_SERVICE_NAME}"
+  [frontend]="${SPECS_DIR}/frontend.yaml.tmpl:${FRONTEND_SERVICE_NAME}"
 )
 
 AVAILABLE="$(IFS="|"; echo "${!SERVICE_SPECS[*]}")"
@@ -91,7 +98,13 @@ fi
 SPEC_FILE="${ENTRY%%:*}"
 SERVICE_NAME="${ENTRY##*:}"
 
-deploy_service "${SERVICE_NAME}" "${SPEC_FILE}"
+# sttm-builder needs egress to Snowflake for Snowpark SQL + Cortex Agents REST API.
+# frontend is a static Next.js app — no Snowflake connections, no EAI needed.
+if [[ "${TARGET}" == "sttm-builder" ]]; then
+  deploy_service "${SERVICE_NAME}" "${SPEC_FILE}" "${SNOWFLAKE_EGRESS_INTEGRATION}"
+else
+  deploy_service "${SERVICE_NAME}" "${SPEC_FILE}"
+fi
 
 echo "✓ ${SERVICE_NAME} deployed to compute pool ${SNOWFLAKE_COMPUTE_POOL}"
 echo ""

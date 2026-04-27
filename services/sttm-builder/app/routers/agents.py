@@ -1,14 +1,13 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app.auth.dependencies import get_current_principal
+from app.auth.models import CurrentPrincipal
 from app.core.config import SNOWFLAKE_SUPPORTED_MODELS, Settings, get_settings
 from app.schema.agents import AgentInfo, AgentsListResponse
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
-
-_bearer = HTTPBearer()
 
 
 @router.get(
@@ -22,7 +21,7 @@ _bearer = HTTPBearer()
     ),
 )
 def list_agents(
-    _: Annotated[HTTPAuthorizationCredentials, Depends(_bearer)],
+    _: Annotated[CurrentPrincipal, Depends(get_current_principal)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> AgentsListResponse:
     agents = [

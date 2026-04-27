@@ -22,7 +22,8 @@ REGISTRY="${SNOWFLAKE_REGISTRY_HOST}/${DB_LOWER}/${SCHEMA_LOWER}/${REPO_LOWER}"
 
 declare -A SERVICE_CONTEXTS=(
   [sttm-builder]="${REPO_ROOT}/services/sttm-builder"
-  [frontend]="${REPO_ROOT}/services/frontend"
+  [frontend]="${REPO_ROOT}/frontend"
+  [nginx]="${REPO_ROOT}/nginx"
 )
 
 AVAILABLE="$(IFS="|"; echo "${!SERVICE_CONTEXTS[*]}")"

@@ -11,20 +11,20 @@ services:
 
   frontend:
     build:
-      context: ./services/frontend
+      context: ./frontend
     environment:
       NODE_ENV: production
       PORT: 3000
       HOSTNAME: 0.0.0.0
 
-  api-gateway:
+  nginx:
     build:
-      context: ./services/api-gateway
+      context: ./nginx
     environment:
-      STTM_BUILDER_UPSTREAM: sttm-builder:8000
       FRONTEND_UPSTREAM: frontend:3000
+      BACKEND_UPSTREAM: sttm-builder:8000
     depends_on:
       - sttm-builder
       - frontend
     ports:
-      - "9000:9000"
+      - "8080:8080"

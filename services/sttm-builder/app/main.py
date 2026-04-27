@@ -8,15 +8,21 @@ from app.api.error_handlers import (
     request_validation_error_handler,
     unhandled_error_handler,
 )
+from app.auth.router import admin_router, auth_router
 from app.core.config import get_settings
 from app.core.docs import setup_docs
 from app.core.exceptions import AppError
 from app.routers.debug import router as debug_router
 
-app = FastAPI(title="STTM Builder", version="0.1.0", docs_url=None)
+_settings = get_settings()
+
+app = FastAPI(
+    title=_settings.app_name,
+    version=_settings.app_version,
+    docs_url=None,
+)
 setup_docs(app)
 
-_settings = get_settings()
 if _settings.cors_allowed_origins:
     _origins = (
         ["*"]
@@ -28,9 +34,10 @@ if _settings.cors_allowed_origins:
         allow_origins=_origins,
         allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         allow_headers=[
-            "Authorization",
             "Content-Type",
             "Accept",
+            "Sf-Context-Current-User",
+            "Sf-Context-Current-User-Email",
             "Sf-Context-Current-User-Token",
         ],
     )
@@ -40,9 +47,16 @@ app.add_exception_handler(RequestValidationError, request_validation_error_handl
 app.add_exception_handler(Exception, unhandled_error_handler)
 
 app.include_router(router)
+app.include_router(auth_router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(admin_router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(debug_router)
 
 
 @app.get("/health")
 def health():
+    return {"status": "ok"}
+
+
+@app.get("/healthz")
+def healthz():
     return {"status": "ok"}

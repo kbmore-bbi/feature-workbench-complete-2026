@@ -75,7 +75,7 @@ ${spec}
 
 declare -A SERVICE_SPECS=(
   [sttm-builder]="${SPECS_DIR}/sttm-builder.yaml.tmpl:${STTM_BUILDER_SERVICE_NAME}"
-  [frontend]="${SPECS_DIR}/frontend.yaml.tmpl:${FRONTEND_SERVICE_NAME}"
+  [webapp]="${SPECS_DIR}/webapp.yaml.tmpl:${WEBAPP_SERVICE_NAME}"
 )
 
 AVAILABLE="$(IFS="|"; echo "${!SERVICE_SPECS[*]}")"
@@ -99,7 +99,7 @@ SPEC_FILE="${ENTRY%%:*}"
 SERVICE_NAME="${ENTRY##*:}"
 
 # sttm-builder needs egress to Snowflake for Snowpark SQL + Cortex Agents REST API.
-# frontend is a static Next.js app — no Snowflake connections, no EAI needed.
+# webapp is frontend + nginx only — no direct Snowflake egress required.
 if [[ "${TARGET}" == "sttm-builder" ]]; then
   deploy_service "${SERVICE_NAME}" "${SPEC_FILE}" "${SNOWFLAKE_EGRESS_INTEGRATION}"
 else

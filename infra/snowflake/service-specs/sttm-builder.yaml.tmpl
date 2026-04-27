@@ -3,9 +3,19 @@ spec:
     - name: sttm-builder
       image: /${SNOWFLAKE_DATABASE_LOWER}/${SNOWFLAKE_SCHEMA_LOWER}/${SNOWFLAKE_IMAGE_REPOSITORY_LOWER}/sttm-builder:${IMAGE_TAG}
       env:
+        APP_NAME: ${APP_NAME}
+        APP_ENV: ${APP_ENV}
+        APP_VERSION: ${IMAGE_TAG}
         PORT: "8000"
+        USERS_TABLE: ${USERS_TABLE}
+        APP_ROLE_ADMIN: ${APP_ROLE_ADMIN}
+        APP_ROLE_PUBLISHER: ${APP_ROLE_PUBLISHER}
+        APP_ROLE_VIEWER: ${APP_ROLE_VIEWER}
         SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
         SNOWFLAKE_HOST: ${SNOWFLAKE_HOST}
+        SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
+        SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
+        SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}
         SNOWFLAKE_STTM_BUILDER_AGENT: ${SNOWFLAKE_STTM_BUILDER_AGENT}
         SNOWFLAKE_AGENT_ORCHESTRATION_MODEL: ${SNOWFLAKE_AGENT_ORCHESTRATION_MODEL}
         CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS}"
@@ -23,21 +33,7 @@ spec:
   endpoints:
     - name: sttm-builder
       port: 8000
-      public: true
-      corsSettings:
-        Access-Control-Allow-Origin:
-          - "${CORS_ALLOWED_ORIGINS}"
-        Access-Control-Allow-Methods:
-          - GET
-          - POST
-          - PUT
-          - PATCH
-          - DELETE
-        Access-Control-Allow-Headers:
-          - "Content-Type"
-          - "Authorization"
-          - "Accept"
-          - "Sf-Context-Current-User-Token"
+      public: false
 
 capabilities:
   securityContext:

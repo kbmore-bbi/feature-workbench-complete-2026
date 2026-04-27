@@ -2,11 +2,30 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
+from app.core.config import Settings, get_settings
 from app.api.deps import get_sttm_builder_service
 from app.core.sttm_builder import STTMBuilderService
+from app.schema.workbench import WorkbenchInfoResponse
 from app.schema.sttm_builder import STTMBuilderRequest, STTMBuilderResponse
 
 router = APIRouter(prefix="/workbench", tags=["STTM Builder"])
+
+
+@router.get(
+    "/info",
+    response_model=WorkbenchInfoResponse,
+    summary="Get basic workbench metadata",
+)
+def info(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> WorkbenchInfoResponse:
+    return WorkbenchInfoResponse(
+        name=settings.app_name,
+        environment=settings.app_env,
+        version=settings.app_version,
+        api_base_path="/api/v1",
+        health_path="/healthz",
+    )
 
 
 @router.post(

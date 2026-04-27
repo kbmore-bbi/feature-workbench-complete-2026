@@ -11,8 +11,8 @@ spec:
         APP_ROLE_ADMIN: ${APP_ROLE_ADMIN}
         APP_ROLE_PUBLISHER: ${APP_ROLE_PUBLISHER}
         APP_ROLE_VIEWER: ${APP_ROLE_VIEWER}
-        SNOWFLAKE_ACCOUNT: ${SNOWFLAKE_ACCOUNT}
-        SNOWFLAKE_HOST: ${SNOWFLAKE_HOST}
+        # Let Snowflake inject the correct runtime account/host for this service.
+        # Overriding these with deploy-time values can break caller-rights sessions.
         SNOWFLAKE_WAREHOUSE: ${SNOWFLAKE_WAREHOUSE}
         SNOWFLAKE_DATABASE: ${SNOWFLAKE_DATABASE}
         SNOWFLAKE_SCHEMA: ${SNOWFLAKE_SCHEMA}

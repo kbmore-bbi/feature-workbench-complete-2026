@@ -16,13 +16,21 @@ export default function BuilderLayout({
 }) {
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
   const router = useRouter();
-  const { mappingCount, selectedSourceCount, targetAttributeGroup } = useSttmBuilderContext();
+  const { mappingCount, selectedSourceCount, targetAttributeGroup, session } = useSttmBuilderContext();
+
+  const headerRole = session?.app_persona
+    ? `${session.app_persona.slice(0, 1)}${session.app_persona.slice(1).toLowerCase()}`
+    : undefined;
 
   return (
     <SidebarSlotProvider>
       <div className="min-h-screen flex flex-col bg-gray-50">
         {/* Full-width header */}
-        <BuilderHeader currentStep={1} />
+        <BuilderHeader
+          currentStep={1}
+          userName={session?.display_name ?? session?.email ?? undefined}
+          role={headerRole}
+        />
 
         {/* Body */}
         <div className="flex flex-1 overflow-hidden">

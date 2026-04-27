@@ -3,6 +3,7 @@ from typing import Annotated, Optional
 
 from fastapi import Depends, Query, Request
 
+from app.auth.models import AppPersona
 from app.core.config import Settings, get_settings
 from app.core.snowflake import SnowflakeClient
 from app.core.snowflake import build_caller_token
@@ -14,8 +15,23 @@ from app.core.sttm_builder import STTMBuilderService
 _SPCS_USER_TOKEN_HEADER = "sf-context-current-user-token"
 
 
+def _default_role_for_principal(request: Request, settings: Settings) -> str | None:
+    # Delay the import to avoid a module cycle between auth and API deps.
+    from app.auth.dependencies import get_current_principal
+
+    principal = get_current_principal(request)
+    if principal.app_persona is AppPersona.ADMIN:
+        return settings.app_role_admin
+    if principal.app_persona is AppPersona.PUBLISHER:
+        return settings.app_role_publisher
+    if principal.app_persona is AppPersona.VIEWER:
+        return settings.app_role_viewer
+    return None
+
+
 def get_snowflake_client(
     request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
     role: Annotated[Optional[str], Query(description="Snowflake role to activate for this session")] = None,
 ) -> Generator[SnowflakeClient, None, None]:
     """
@@ -24,7 +40,8 @@ def get_snowflake_client(
     If `role` is provided it is activated on the session.
     """
     user_token = request.headers.get(_SPCS_USER_TOKEN_HEADER, "")
-    client = SnowflakeClient(user_token=user_token, role=role)
+    effective_role = role or _default_role_for_principal(request, settings)
+    client = SnowflakeClient(user_token=user_token, role=effective_role)
     try:
         yield client
     finally:

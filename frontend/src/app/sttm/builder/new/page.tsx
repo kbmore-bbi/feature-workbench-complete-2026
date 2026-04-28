@@ -9,7 +9,8 @@ export default function SttmBuilderPage() {
   const { setContent } = useSidebarSlot();
 
   useEffect(() => {
-    setContent(<SourceTargetDbSelection />);
+    setContent(SourceTargetDbSelection);
+    return () => setContent(null);
   }, [setContent]);
 
   return (

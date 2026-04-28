@@ -6,6 +6,13 @@ export const dbService = {
     return response.data;
   },
 
+  getDatabaseSchemas: async (database: string) => {
+    const response = await api.get('/v1/table-selection/schemas', {
+      params: { database },
+    });
+    return response.data;
+  },
+
   getSchemaTables: async (database: string, schema: string) => {
     const response = await api.get('/v1/table-selection/tables', {
       params: { database, schema },

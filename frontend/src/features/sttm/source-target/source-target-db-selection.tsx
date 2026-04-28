@@ -18,18 +18,20 @@ import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-cont
 type SectionType = "source" | "target";
 
 export default function DataSelectionPanel() {
-  const { fullData, selectSchema } = useSttmBuilderContext();
+  const { fullData, loadSchemas, selectSchema } = useSttmBuilderContext();
   const [searchText, setSearchText] = useState("");
 
-  const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({
-    SRC_DB_1: true,
-    TGT_DB_1: true,
-  });
+  const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
 
   if (!fullData) return <Box sx={{ width: 260, p: 2 }}>Loading...</Box>;
 
-  const toggleDb = (dbId: string) => {
-    setExpandedDbs((prev) => ({ ...prev, [dbId]: !prev[dbId] }));
+  const toggleDb = async (type: SectionType, dbId: string) => {
+    const key = `${type}:${dbId}`;
+    const willExpand = !expandedDbs[key];
+    setExpandedDbs((prev) => ({ ...prev, [key]: willExpand }));
+    if (willExpand) {
+      await loadSchemas(type, dbId);
+    }
   };
 
   const matchesSearch = (value: string) =>
@@ -106,12 +108,15 @@ export default function DataSelectionPanel() {
         </Typography>
 
         {items.filter(shouldShowDatabase).map((db) => {
-          const isDbExpanded = expandedDbs[db.dbId];
+          const expandKey = `${type}:${db.dbId}`;
+          const isDbExpanded = expandedDbs[expandKey];
 
           return (
             <Box key={db.dbId} sx={{ mb: 0.4 }}>
               <Box
-                onClick={() => toggleDb(db.dbId)}
+                onClick={() => {
+                  void toggleDb(type, db.dbId);
+                }}
                 sx={{
                   display: "flex",
                   alignItems: "center",

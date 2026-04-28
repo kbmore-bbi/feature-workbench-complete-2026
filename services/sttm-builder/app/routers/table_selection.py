@@ -5,13 +5,22 @@ from fastapi import APIRouter, Depends, Query
 from app.api.deps import get_table_selection_service
 from app.core.table_selection import TableSelectionService
 from app.schema.table_selection import DatabaseItem, TableAttributes, TableItem
+from app.schema.table_selection import SchemaItem
 
 router = APIRouter(prefix="/table-selection", tags=["Table Selection"])
 
 
 @router.get("/databases", response_model=list[DatabaseItem])
 def get_databases(svc: TableSelectionService = Depends(get_table_selection_service)):
-    return svc.list_databases_with_schemas()
+    return svc.list_databases()
+
+
+@router.get("/schemas", response_model=list[SchemaItem])
+def get_schemas(
+    database: Annotated[str, Query(description="Snowflake database name")],
+    svc: TableSelectionService = Depends(get_table_selection_service),
+):
+    return svc.list_schemas(database)
 
 
 @router.get("/tables", response_model=list[TableItem])

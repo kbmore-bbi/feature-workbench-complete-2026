@@ -1,3 +1,5 @@
+from snowflake.snowpark.functions import col
+
 from app.core.exceptions import SnowflakeQueryError
 from app.core.snowflake import SnowflakeClient
 from app.schema.common import TableRef
@@ -27,9 +29,9 @@ class TableSelectionService:
                     return values[candidate]
         return None
 
-    def list_databases_with_schemas(self) -> list[DatabaseItem]:
+    def list_databases(self) -> list[DatabaseItem]:
         try:
-            db_rows = self._session.sql("SHOW DATABASES").collect()
+            db_rows = self._session.sql("SHOW TERSE DATABASES").collect()
         except Exception as e:
             raise SnowflakeQueryError(f"Failed to list databases: {e}") from e
 
@@ -38,32 +40,38 @@ class TableSelectionService:
             db_name = self._row_value(row, "name", "database_name")
             if not db_name:
                 continue
-            try:
-                schema_rows = self._session.sql(
-                    f"SHOW SCHEMAS IN DATABASE {self._quote_identifier(str(db_name))}"
-                ).collect()
-                schemas = sorted(
-                    [
-                        SchemaItem(
-                            schema_name=str(self._row_value(r, "name", "schema_name")),
-                            created=self._row_value(r, "created_on", "created"),
-                        )
-                        for r in schema_rows
-                        if self._row_value(r, "name", "schema_name")
-                    ],
-                    key=lambda item: item.schema_name,
-                )
-            except Exception:
-                schemas = []
-
             result.append(
                 DatabaseItem(
                     database_name=str(db_name),
                     created=self._row_value(row, "created_on", "created"),
-                    schemas=schemas,
+                    schemas=[],
                 )
             )
         return sorted(result, key=lambda item: item.database_name)
+
+    def list_schemas(self, db_name: str) -> list[SchemaItem]:
+        try:
+            rows = self._session.sql(
+                "SHOW TERSE SCHEMAS IN DATABASE "
+                f"{self._quote_identifier(db_name)}"
+            ).collect()
+        except Exception as e:
+            raise SnowflakeQueryError(
+                f"Failed to list schemas in {db_name!r}: {e}"
+            ) from e
+
+        schemas = []
+        for row in rows:
+            schema_name = self._row_value(row, "name", "schema_name")
+            if not schema_name:
+                continue
+            schemas.append(
+                SchemaItem(
+                    schema_name=str(schema_name),
+                    created=self._row_value(row, "created_on", "created"),
+                )
+            )
+        return sorted(schemas, key=lambda item: item.schema_name)
 
     def list_tables(self, db_name: str, schema_name: str) -> list[TableItem]:
         try:

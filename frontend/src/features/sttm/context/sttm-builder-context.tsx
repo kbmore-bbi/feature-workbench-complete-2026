@@ -31,6 +31,7 @@ type DatabaseNode = {
   connectionId: string;
   isSelected: boolean;
   schemas: SchemaNode[];
+  schemasLoaded: boolean;
 };
 
 type SourceTargetInfo = {
@@ -71,6 +72,7 @@ type ContextValue = {
   chatMessages: ChatMessage[];
   chatLoading: boolean;
   session: UserSession | null;
+  loadSchemas: (type: 'source' | 'target', dbId: string) => Promise<void>;
   selectSchema: (type: 'source' | 'target', dbId: string, schemaId: string) => Promise<void>;
   toggleSource: (tableId: string) => void;
   selectTarget: (tableId: string) => void;
@@ -89,19 +91,15 @@ function makeTableRef(qualifiedName: string): TableRef {
   return { database, schema, table };
 }
 
-function toBranch(items: Array<{ database_name: string; schemas: Array<{ schema_name: string }> }>): DatabaseNode[] {
+function toBranch(items: Array<{ database_name: string }>): DatabaseNode[] {
   return items.map((database) => ({
     dbId: database.database_name,
     dbName: database.database_name,
     dbType: 'SNOWFLAKE',
     connectionId: database.database_name,
     isSelected: false,
-    schemas: database.schemas.map((schema) => ({
-      schemaId: `${database.database_name}:${schema.schema_name}`,
-      schemaName: schema.schema_name,
-      isSelected: false,
-      tables: [],
-    })),
+    schemas: [],
+    schemasLoaded: false,
   }));
 }
 
@@ -112,6 +110,7 @@ function cloneBranch(branch: DatabaseNode[]) {
       ...schema,
       tables: schema.tables.map((table) => ({ ...table })),
     })),
+    schemasLoaded: database.schemasLoaded,
   }));
 }
 
@@ -153,6 +152,40 @@ export function SttmBuilderProvider({ children }: { children: React.ReactNode })
 
     void bootstrap();
   }, []);
+
+  async function loadSchemas(type: 'source' | 'target', dbId: string) {
+    if (!fullData) {
+      return;
+    }
+
+    const currentBranch = type === 'source' ? fullData.sources : fullData.targets;
+    const currentDb = currentBranch.find((database) => database.dbId === dbId);
+    if (!currentDb || currentDb.schemasLoaded) {
+      return;
+    }
+
+    const schemaResponse = await dbService.getDatabaseSchemas(dbId);
+    const schemas: SchemaNode[] = schemaResponse.map((schema: { schema_name: string }) => ({
+      schemaId: `${dbId}:${schema.schema_name}`,
+      schemaName: schema.schema_name,
+      isSelected: false,
+      tables: [],
+    }));
+
+    const next = {
+      sources: cloneBranch(fullData.sources),
+      targets: cloneBranch(fullData.targets),
+    };
+    const branch = type === 'source' ? next.sources : next.targets;
+    const database = branch.find((item) => item.dbId === dbId);
+    if (!database) {
+      return;
+    }
+
+    database.schemas = schemas;
+    database.schemasLoaded = true;
+    setFullData(next);
+  }
 
   async function selectSchema(type: 'source' | 'target', dbId: string, schemaId: string) {
     if (!fullData) {
@@ -371,6 +404,7 @@ export function SttmBuilderProvider({ children }: { children: React.ReactNode })
       chatMessages,
       chatLoading,
       session,
+      loadSchemas,
       selectSchema,
       toggleSource,
       selectTarget,
@@ -394,6 +428,7 @@ export function SttmBuilderProvider({ children }: { children: React.ReactNode })
       chatMessages,
       chatLoading,
       session,
+      loadSchemas,
     ]
   );
 

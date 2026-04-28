@@ -3,7 +3,7 @@ import axios from 'axios';
 const api = axios.create({
   // Using relative path for NGINX proxy compatibility
   baseURL: '/api', 
-  timeout: 10000,
+  timeout: 30000,
   headers: { 'Content-Type': 'application/json' }
 });
 

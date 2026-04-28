@@ -2,10 +2,8 @@
 
 import { useState } from 'react';
 import BuilderContentHeader from '@/features/sttm/layout/builder-content-header';
-import BuilderHeader from '@/features/sttm/layout/builder-header';
 import { SidebarHost } from '@/features/sttm/layout/sidebar-host';
 import { SidebarSlotProvider } from '@/features/sttm/layout/sidebar-slot-context';
-
 import { useRouter } from 'next/navigation';
 
 export default function BuilderLayout({
@@ -19,9 +17,6 @@ export default function BuilderLayout({
   return (
     <SidebarSlotProvider>
       <div className="min-h-screen flex flex-col bg-gray-50">
-        {/* Full-width header */}
-        <BuilderHeader currentStep={1} />
-
         {/* Body */}
         <div className="flex flex-1 overflow-hidden">
           {/* Sidebar */}

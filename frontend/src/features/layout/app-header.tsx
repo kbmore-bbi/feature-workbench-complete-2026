@@ -6,6 +6,7 @@ import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import { Avatar, Box, IconButton, Tooltip, Typography } from "@mui/material";
 import { useThemeMode } from "@/app/Providers";
+import Link from 'next/link';
 
 type AppHeaderProps = {
   userName?: string;
@@ -29,17 +30,19 @@ export default function AppHeader({
     <Box className="flex h-[60px] w-full shrink-0 items-center justify-between bg-[var(--color-header-bg)] px-5 text-[var(--color-header-text)]">
       <Box className="flex items-center gap-3">
         <Box className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-sm ">
-          <Image
-            src="/images/FOCS.svg"
-            alt="STTM Builder Logo"
-            width={26}
-            height={26}
-            className="object-contain"
-          />
+          <Link href="/home">
+            <Image
+              src="/images/FOCS.svg"
+              alt="STTM Builder Logo"
+              width={26}
+              height={26}
+              className="object-contain"
+            />
+          </Link>
         </Box>
 
         <Typography className="font-[var(--font-body)] text-[16px] font-semibold ">
-AIA Migration Workbench
+          AIA Migration Workbench
         </Typography>
       </Box>
 

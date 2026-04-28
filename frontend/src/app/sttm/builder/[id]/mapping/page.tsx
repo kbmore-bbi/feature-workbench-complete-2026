@@ -1,4 +1,3 @@
 export default function MappingPage() {
-  
-return <></>
+    return <></>
 }

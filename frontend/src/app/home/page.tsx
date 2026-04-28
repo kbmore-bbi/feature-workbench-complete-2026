@@ -38,11 +38,11 @@ const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
   </Paper>
 );
 
-export default function LandingPage() {
+export default function HomePage() {
   const router = useRouter();
   return (
   <>
-     <AppHeader/>
+     {/* <AppHeader/> */}
 
     <Box sx={{ minHeight: '100vh', bgcolor: '#fff', position: 'relative', p: 4 }}>
 

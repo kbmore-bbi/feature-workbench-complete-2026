@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { useSidebarSlot } from "@/features/sttm/layout/sidebar-slot-context";
 import SourceTargetPanel from "@/features/sttm/source-target/source-target-panel";
 import SourceTargetDbSelection from "@/features/sttm/source-target/source-target-db-selection";
+import SourceTargetFilterConditions from "@/features/sttm/source-target/source-target-filter-conditions";
 
 export default function SttmBuilderPage() {
   const { setContent } = useSidebarSlot();
@@ -28,6 +29,7 @@ export default function SttmBuilderPage() {
         </div>
         
       </div>
+      <SourceTargetFilterConditions/>
     </div>
   );
 }

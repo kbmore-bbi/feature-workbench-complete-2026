@@ -29,6 +29,34 @@ Default ports:
 
 The frontend uses relative `/api/*` calls. Locally, Next.js rewrites those calls to the backend. In Docker and SPCS, `nginx` proxies the same paths to FastAPI so the browser never needs a hardcoded Snowflake backend URL.
 
+### Backend-only local run
+
+To bootstrap and run only the integrated STTM backend:
+
+```bash
+./scripts/start_sttm_backend_local.sh
+```
+
+What the script does:
+
+- creates `services/sttm-builder/.venv` if it does not exist
+- creates `services/sttm-builder/.env.local` from `.env.example` if missing
+- installs backend dependencies only when they are not already present
+- starts the backend on `http://127.0.0.1:8000`
+
+Important local-auth note:
+
+- the backend can run locally, but the deployed SPCS authentication flow does not exist on localhost
+- Snowflake only injects `Sf-Context-*` headers at Snowflake public ingress
+- endpoints that require deployed caller context will return `401` locally unless a separate local auth bypass is introduced
+
+### Swagger / OpenAPI
+
+When the backend is running locally:
+
+- Swagger UI: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+- OpenAPI JSON: [http://127.0.0.1:8000/openapi.json](http://127.0.0.1:8000/openapi.json)
+
 ## CI/CD Overview
 
 The company-side dev pipeline is designed as:
@@ -47,4 +75,3 @@ Included assets:
 - `develop` is intended to auto-deploy to the shared dev SPCS environment.
 - Feature branches validate only.
 - The later client-side rollout is expected to import either a signed source bundle or a prebuilt image bundle and deploy fully inside the client environment.
-

@@ -2,6 +2,7 @@
 .env
 .env.local
 .venv/
+services/sttm-builder/.venv/
 venv/
 .idea/
 __pycache__/
@@ -24,4 +25,3 @@ release/
 
 # Snowflake deploy envs
 infra/snowflake/env/*.env
-

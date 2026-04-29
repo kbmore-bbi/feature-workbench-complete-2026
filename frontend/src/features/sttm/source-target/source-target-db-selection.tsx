@@ -26,7 +26,7 @@ export default function DataSelectionPanel() {
     TGT_DB_1: true,
   });
 
-  if (!fullData) return <Box sx={{ width: 260, p: 2 }}>Loading...</Box>;
+  if (!fullData) return <Box sx={{ width: '100%', p: 2 }}>Loading...</Box>;
 
   const toggleDb = (dbId: string) => {
     setExpandedDbs((prev) => ({ ...prev, [dbId]: !prev[dbId] }));
@@ -165,7 +165,7 @@ export default function DataSelectionPanel() {
   return (
     <Box
       sx={{
-        width: 260,
+        width: '100%',
         height: "100vh",
         flexShrink: 0,
         borderRight: "1px solid #a8a8a8",

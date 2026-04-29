@@ -8,6 +8,8 @@ import SourceTargetDbSelection from "@/features/sttm/source-target/source-target
 import { TableRelationshipPanel } from "@/features/sttm/source-target/table-relationship-panel";
 
 import { TableMeta } from "@/features/sttm/types/sttm.types";
+import SourceTargetFilterConditions from "@/features/sttm/source-target/source-target-filter-conditions";
+
 
 export default function SttmBuilderPage() {
   const [showRelationships, setShowRelationships] = useState(false);
@@ -63,16 +65,14 @@ export default function SttmBuilderPage() {
       </div>
 
       {/* Table Relationships section */}
-      <Box
-        sx={{
-          borderTop: "1px solid #e5e7eb",
-          backgroundColor: "#ffffff",
-          pb: 4,
-          borderRadius: "8px",
-        }}
+      <div
+      
       >
         <TableRelationshipPanel tables={tables} />
-      </Box>
+      </div>
+      <div>
+        <SourceTargetFilterConditions/>
+      </div>
     </div>
   );
 }

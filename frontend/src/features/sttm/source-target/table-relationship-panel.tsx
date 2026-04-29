@@ -30,7 +30,7 @@ export const TableRelationshipPanel: React.FC<Props> = ({ tables }) => {
     ];
 
     return (
-        <Box sx={{ p: 4, backgroundColor: "#ffffff", height: "100%" }}>
+        <Box sx={{ height: "100%" }}>
             {/* Header */}
             <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 4 }}>
                 <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>

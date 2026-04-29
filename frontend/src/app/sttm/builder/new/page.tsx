@@ -48,30 +48,31 @@ export default function SttmBuilderPage() {
   }, [setContent]);
 
   return (
-    <div className="w-full flex flex-col gap-6">
+    <div className="w-full bg-white">
       {/* Panels container: Column on mobile, Row on large screens */}
-      <div className="flex flex-col lg:flex-row gap-4">
-
+      <div className="flex flex-col lg:flex-row gap-3 p-3" style={{
+        borderBottom: "1px solid #e5e7eb"
+      }}>
         {/* Source panel */}
         <div className="flex-1 min-h-[450px]">
           <SourceTargetPanel type="source" />
         </div>
-
         {/* Target panel */}
         <div className="flex-1 min-h-[450px]">
           <SourceTargetPanel type="target" />
         </div>
-
       </div>
-
       {/* Table Relationships section */}
-      <div
-      
-      >
+      <div className="p-3" style={{
+        borderBottom: "1px solid #e5e7eb"
+      }}>
         <TableRelationshipPanel tables={tables} />
       </div>
-      <div>
-        <SourceTargetFilterConditions/>
+      {/* Filter Conditions section */}
+      <div className="p-3" style={{
+        borderBottom: "1px solid #e5e7eb"
+      }}>
+        <SourceTargetFilterConditions />
       </div>
     </div>
   );

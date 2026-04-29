@@ -27,7 +27,6 @@ export default function BuilderLayout({
               shrink-0
               border-r border-gray-200
               bg-white
-              overflow-y-auto
             "
           >
             <SidebarHost />
@@ -59,7 +58,7 @@ export default function BuilderLayout({
             </div>
 
             {/* Main content */}
-            <main className="flex-1 p-4 overflow-y-auto">
+            <main className="overflow-y-auto bg-white">
               {children}
             </main>
           </div>

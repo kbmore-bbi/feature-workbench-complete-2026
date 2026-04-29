@@ -57,7 +57,7 @@ export const EstablishJoinModal: React.FC<Props> = ({
     <Dialog
       open={isOpen}
       onClose={onClose}
-      maxWidth="sm"
+      maxWidth="md"
       fullWidth
       slotProps={{
         paper: {

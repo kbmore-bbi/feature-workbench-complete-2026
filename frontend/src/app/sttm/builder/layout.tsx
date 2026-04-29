@@ -16,7 +16,7 @@ export default function BuilderLayout({
 
   return (
     <SidebarSlotProvider>
-      <div className="min-h-screen flex flex-col bg-gray-50">
+      <div className="h-[calc(100vh-60px)] flex flex-col bg-gray-50">
         {/* Body */}
         <div className="flex flex-1 overflow-hidden">
           {/* Sidebar */}

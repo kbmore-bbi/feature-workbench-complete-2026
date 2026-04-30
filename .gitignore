@@ -2,6 +2,7 @@
 .env
 .env.local
 .venv/
+.client-tools-venv/
 services/sttm-builder/.venv/
 venv/
 .idea/

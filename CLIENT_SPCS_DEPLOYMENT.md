@@ -4,7 +4,7 @@
 
 This guide explains how to move the integrated SPCS workbench into a client Snowflake environment where:
 
-- deployment is performed with Snowflake credentials and Docker
+- deployment is performed with Snowflake CLI, browser-authenticated Snowflake connections, and Docker
 - authentication is handled by the client’s Snowflake + Okta setup
 - deployer access may be lower than `ACCOUNTADMIN`
 
@@ -162,20 +162,58 @@ If the workbench chat / auto-map features should work, the role used for the req
 
 These steps are what you can run yourself once the prerequisites above are in place.
 
-### 1. Copy the client env example
+## Fastest Path
+
+Once the one-time client admin prerequisites are done, the simplest end-to-end command is:
+
+```bash
+cd /path/to/bbi-mig-ai-workbench
+./scripts/run_client_spcs_browser_deploy.sh --env-file infra/snowflake/env/client.env
+```
+
+This wrapper:
+
+1. bootstraps the local tools virtualenv
+2. installs `snowflake-cli`
+3. creates or reuses the Snow CLI browser-auth connection
+4. logs Docker into the Snowflake image registry
+5. builds and pushes the three images
+6. renders the service spec
+7. creates or upgrades the webapp service
+8. lists the public endpoints
+
+The detailed steps below break the same process apart for easier troubleshooting.
+
+## Detailed Steps
+
+### 1. Bootstrap the local deployment tools
+
+```bash
+cd /path/to/bbi-mig-ai-workbench
+./scripts/bootstrap_client_spcs_tools.sh
+```
+
+This script:
+
+- creates `.client-tools-venv` if it does not exist
+- installs `snowflake-cli`
+- verifies Docker is available
+
+### 2. Copy the client env example
 
 ```bash
 cd /path/to/bbi-mig-ai-workbench
 cp infra/snowflake/env/client.env.example infra/snowflake/env/client.env
 ```
 
-### 2. Fill in client-specific values
+### 3. Fill in client-specific values
 
 Edit:
 
+- `SNOWFLAKE_CONNECTION`
+- `SNOWFLAKE_AUTHENTICATOR`
 - `SNOWFLAKE_ACCOUNT`
 - `SNOWFLAKE_USER`
-- `SNOWFLAKE_PASSWORD`
 - `SNOWFLAKE_ROLE`
 - `SNOWFLAKE_WAREHOUSE`
 - `SNOWFLAKE_DATABASE`
@@ -195,36 +233,76 @@ File:
 
 - [client.env.example](/Users/ankurshome/Desktop/storage/Mr-Bucky/bbi-mig-ai-workbench/infra/snowflake/env/client.env.example)
 
-### 3. Run the deploy wrapper
+### 4. Create or validate the Snow CLI connection
 
 ```bash
-./scripts/deploy_spcs_client.sh --env-file infra/snowflake/env/client.env
+./scripts/configure_client_snow_connection.sh --env-file infra/snowflake/env/client.env
 ```
 
-This wrapper will:
+This script:
 
-1. build and push `sttm-builder`
-2. build and push `frontend`
-3. build and push `nginx`
-4. deploy the single webapp service
+- reuses the tools virtualenv
+- creates a named Snow CLI connection using `externalbrowser`
+- runs `snow connection test`, which opens browser login if needed
+
+### 5. Build, push, and deploy with Snow CLI
+
+```bash
+./scripts/deploy_spcs_client_snow.sh --env-file infra/snowflake/env/client.env
+```
+
+This script will:
+
+1. test the Snow CLI connection
+2. log Docker into the Snowflake image registry using `snow spcs image-registry login`
+3. build and push `sttm-builder`
+4. build and push `frontend`
+5. build and push `nginx`
+6. render the single-service spec
+7. create or upgrade the webapp service
+8. list the public endpoints
 
 Script:
 
-- [deploy_spcs_client.sh](/Users/ankurshome/Desktop/storage/Mr-Bucky/bbi-mig-ai-workbench/scripts/deploy_spcs_client.sh)
+- [deploy_spcs_client_snow.sh](/Users/ankurshome/Desktop/storage/Mr-Bucky/bbi-mig-ai-workbench/scripts/deploy_spcs_client_snow.sh)
 
-### 4. Verify service status
+Optional examples:
+
+```bash
+./scripts/deploy_spcs_client_snow.sh --env-file infra/snowflake/env/client.env --image-tag client-001
+./scripts/deploy_spcs_client_snow.sh --env-file infra/snowflake/env/client.env --skip-build
+```
+
+If you want a single wrapper instead of the step-by-step flow, use:
+
+```bash
+./scripts/run_client_spcs_browser_deploy.sh --env-file infra/snowflake/env/client.env
+```
+
+### 6. Verify service status
 
 Run:
 
-```sql
-SHOW SERVICES IN SCHEMA <runtime_db>.<runtime_schema>;
-SHOW ENDPOINTS IN SERVICE <webapp_service_name>;
-DESCRIBE SERVICE <runtime_db>.<runtime_schema>.<webapp_service_name>;
+```bash
+snow spcs service status <webapp_service_name> \
+  -c <connection_name> \
+  --database <runtime_db> \
+  --schema <runtime_schema>
+
+snow spcs service list-containers <webapp_service_name> \
+  -c <connection_name> \
+  --database <runtime_db> \
+  --schema <runtime_schema>
+
+snow spcs service list-endpoints <webapp_service_name> \
+  -c <connection_name> \
+  --database <runtime_db> \
+  --schema <runtime_schema>
 ```
 
-### 5. Test browser login
+### 7. Test browser login
 
-Open the public endpoint returned by `SHOW ENDPOINTS`.
+Open the public endpoint returned by `snow spcs service list-endpoints`.
 
 Expected flow:
 
@@ -232,6 +310,23 @@ Expected flow:
 2. Snowflake login / Okta SAML
 3. authenticated session
 4. app header shows real username and persona
+
+## Notes On The Legacy Password-Based Wrapper
+
+The repo still contains the earlier password-oriented wrapper:
+
+- [deploy_spcs_client.sh](/Users/ankurshome/Desktop/storage/Mr-Bucky/bbi-mig-ai-workbench/scripts/deploy_spcs_client.sh)
+
+That wrapper depends on:
+
+- password-based registry login
+- password-based `snowsql`
+
+It is not the recommended path for client environments where deployment is done through:
+
+- `snow connection add`
+- `authenticator=externalbrowser`
+- `snow spcs ...`
 
 ## Why `feature/client-avd-ready-auth` Deployed But Still Had Metadata Issues
 

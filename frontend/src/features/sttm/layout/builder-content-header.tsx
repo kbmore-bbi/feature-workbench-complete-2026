@@ -62,7 +62,7 @@
 //                 {step.label} 
 //               </Typography> 
 //             </Box>
-           
+
 //           );
 //         })}
 //       </Box>
@@ -240,8 +240,8 @@ export default function BuilderContentHeader({
                 backgroundColor: active
                   ? "var(--color-header-bg)"
                   : completed
-                  ? "var(--color-surface-muted)"
-                  : "transparent",
+                    ? "var(--color-surface-muted)"
+                    : "transparent",
                 color: active ? "#060505" : "#282323",
               }}
             >
@@ -258,8 +258,8 @@ export default function BuilderContentHeader({
                   backgroundColor: active
                     ? "var(--color-header-text)"
                     : completed
-                    ? "var(--color-header-bg)"
-                    : "var(--color-border)",
+                      ? "var(--color-header-bg)"
+                      : "var(--color-border)",
                   color: active ? "var(--color-header-bg)" : completed ? "#060505" : "#282323",
                   lineHeight: 1,
                 }}
@@ -301,8 +301,8 @@ export default function BuilderContentHeader({
               minWidth: 136,
               px: 1.75,
               borderRadius: "4px",
-              backgroundColor: "var(--color-primary-save)",
-              border: "1px solid var(--color-primary-save)",
+              backgroundColor: "var(--aia-mapping-button-color)",
+              border: "1px solid var(--aia-mapping-button-color)",
               color: "#ffffff",
               fontSize: "12px",
               fontWeight: 600,
@@ -310,8 +310,8 @@ export default function BuilderContentHeader({
               textTransform: "none",
               boxShadow: "none",
               "&:hover": {
-                backgroundColor: "var(--color-primary-hover)",
-                borderColor: "var(--color-primary-hover)",
+                backgroundColor: "var(--aia-mapping-button-hoverColor)",
+                borderColor: "var(--aia-mapping-button-hoverColor)",
                 boxShadow: "none",
               },
             }}
@@ -354,8 +354,8 @@ export default function BuilderContentHeader({
                 minWidth: 132,
                 px: 1.5,
                 borderRadius: "4px",
-                backgroundColor: "var(--color-primary-save)",
-                border: "1px solid var(--color-primary-save)",
+                backgroundColor: "var(--aia-mapping-button-color)",
+                border: "1px solid var(--aia-mapping-button-color)",
                 color: "#ffffff",
                 fontSize: "12px",
                 fontWeight: 600,
@@ -363,8 +363,8 @@ export default function BuilderContentHeader({
                 textTransform: "none",
                 boxShadow: "none",
                 "&:hover": {
-                  backgroundColor: "var(--color-primary-hover)",
-                  borderColor: "var(--color-primary-hover)",
+                  backgroundColor: "var(--aia-mapping-button-hoverColor)",
+                  borderColor: "var(--aia-mapping-button-hoverColor)",
                   boxShadow: "none",
                 },
               }}

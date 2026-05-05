@@ -1,4 +1,5 @@
 import { createTheme } from "@mui/material/styles";
+import { CLIENT_CONFIG as config } from '@/config/client.config';
 
 export type AppThemeMode = "light" | "dark";
 
@@ -57,6 +58,27 @@ export function getAppTheme(mode: AppThemeMode) {
     components: {
       MuiCssBaseline: {
         styleOverrides: {
+          ':root': {
+            /* Colors */
+            '--aia-header-bgColor': config.branding.colors.header,
+            '--aia-card-color': config.branding.colors.background.default,
+            '--aia-button-color': config.branding.colors.button.primary,
+            '--aia-secondary-button-color': config.branding.colors.button.secondary,
+            '--aia-secondary-button-colorHover': config.branding.colors.button.secondaryHover,
+            '--aia-assitant-header-color': config.branding.colors.background.inverse,
+            '--aia-assitant-header-textColor': config.branding.colors.background.paper,
+            '--aia-assitant-avatar-bgColor': config.branding.colors.background.surface,
+            '--aia-assitant-textColor': config.branding.colors.text.subtle,
+            '--aia-assitant-subheader-color': config.branding.colors.background.subtle,
+            '--aia-assitant-table-textColor': config.branding.colors.text.inverse,
+            '--aia-mapping-button-color': config.branding.colors.button.inverse,
+            '--aia-mapping-button-hoverColor': config.branding.colors.button.inverseHover,
+            '--aia-secondary-color': config.branding.colors.secondary,
+            '--aia-primary-text-color': config.branding.colors.text.primary,
+            '--aia-secondary-text-color': config.branding.colors.text.secondary,
+            '--aia-header-color': config.branding.colors.background.default,
+            '--aia-border-color': config.branding.colors.border,
+          },
           body: {
             fontFamily: "museo-sans, sans-serif",
             backgroundColor: isDark ? "#151515" : "#f7f8fa",
@@ -77,34 +99,34 @@ export function getAppTheme(mode: AppThemeMode) {
             },
           },
         },
-          variants:[  
+        variants: [
           {
-            props: {variant: "contained", color:"primary"},
-            style:{
-            backgroundColor: "#0082b5",
-            color: "#ffffff",
-            border: "1px solid #0082b5",
-            "&:hover": {
-              backgroundColor: "#035c7f",
-              borderColor: "#035c7f",
+            props: { variant: "contained", color: "primary" },
+            style: {
+              backgroundColor: "#0082b5",
+              color: "#ffffff",
+              border: "1px solid #0082b5",
+              "&:hover": {
+                backgroundColor: "#035c7f",
+                borderColor: "#035c7f",
+              },
             },
           },
-        },
           {
-            props: {variant: "contained", color:"primary"},
-            style:{
-            backgroundColor: "transparent",
-            color: "#9fd1ef",
-            border: "1px solid #9fd1ef",
-            "&:hover": {
+            props: { variant: "contained", color: "primary" },
+            style: {
               backgroundColor: "transparent",
-              borderColor: "#9fd1ef",
+              color: "#9fd1ef",
+              border: "1px solid #9fd1ef",
+              "&:hover": {
+                backgroundColor: "transparent",
+                borderColor: "#9fd1ef",
+              },
             },
           },
-        },
-      ]
+        ]
       },
-    
+
 
       MuiOutlinedInput: {
         styleOverrides: {

@@ -134,16 +134,16 @@ export default function MappingQualityPanel({
               sx={{
                 height: 32,
                 borderRadius: "4px",
-                backgroundColor: "var(--color-primary-save)",
-                border: "1px solid var(--color-primary-save)",
+                backgroundColor: "var(--aia-mapping-button-color)",
+                border: "1px solid var(--aia-mapping-button-color)",
                 color: "#ffffff",
                 fontSize: "12px",
                 fontWeight: 600,
                 textTransform: "none",
                 boxShadow: "none",
                 "&:hover": {
-                  backgroundColor: "var(--color-primary-hover)",
-                  borderColor: "var(--color-primary-hover)",
+                  backgroundColor: "var(--aia-mapping-button-hoverColor)",
+                  borderColor: "var(--aia-mapping-button-hoverColor)",
                   boxShadow: "none",
                 },
               }}

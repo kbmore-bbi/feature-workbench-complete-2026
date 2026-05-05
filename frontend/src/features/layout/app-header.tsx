@@ -7,6 +7,8 @@ import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownR
 import { Avatar, Box, IconButton, Tooltip, Typography } from "@mui/material";
 import { useThemeMode } from "@/app/Providers";
 import Link from 'next/link';
+import { CLIENT_CONFIG as config } from '@/config/client.config';
+
 
 type AppHeaderProps = {
   userName?: string;
@@ -27,21 +29,21 @@ export default function AppHeader({
     .toUpperCase();
 
   return (
-    <Box className="flex h-[60px] w-full shrink-0 items-center justify-between bg-[var(--color-header-bg)] px-5 text-[var(--color-header-text)]">
+    <Box className="flex h-[60px] w-full shrink-0 items-center justify-between bg-[var(--aia-header-bgColor)] border-b-1 border-[var(--aia-border-color)] px-5 text-[var(--color-header-text)]">
       <Box className="flex items-center gap-3">
-        <Box className="flex h-8 w-8 items-center justify-center overflow-hidden rounded-sm ">
+        <Box className="flex h-15 w-15 items-center justify-center overflow-hidden rounded-sm ">
           <Link href="/home">
             <Image
-              src="/images/FOCS.svg"
+              src={config.branding.logo.light}
               alt="STTM Builder Logo"
-              width={26}
-              height={26}
+              width={50}
+              height={50}
               className="object-contain"
             />
           </Link>
         </Box>
 
-        <Typography className="font-[var(--font-body)] text-[16px] font-semibold ">
+        <Typography className="font-[var(--font-body)] text-[16px] font-semibold pt-2 ">
           AIA Migration Workbench
         </Typography>
       </Box>

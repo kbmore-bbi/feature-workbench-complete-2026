@@ -33,8 +33,8 @@ export default function AIAgentPopover() {
                     position: 'fixed',
                     bottom: 24,
                     right: 24,
-                    bgcolor: '#000',
-                    '&:hover': { bgcolor: '#333' }
+                    bgcolor: 'var(--aia-secondary-button-color)',
+                    '&:hover': { bgcolor: 'var(--aia-secondary-button-colorHover)' }
                 }}
             >
                 <SmartToyIcon />&nbsp;&nbsp;

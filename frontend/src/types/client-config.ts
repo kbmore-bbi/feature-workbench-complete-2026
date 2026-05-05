@@ -5,6 +5,7 @@ export interface ClientConfig {
     name: string;
     title: string;
     description?: string;
+    clientTitle?: string;
   };
 
   branding: {
@@ -32,15 +33,28 @@ export interface ClientConfig {
         default: string;
         paper: string;
         subtle: string;
+        inverse: string;
+        surface: string;
       };
 
       text: {
         primary: string;
         secondary: string;
         disabled: string;
+        subtle: string;
+        inverse: string
       };
 
+      button: {
+        primary: string;
+        secondary: string;
+        secondaryHover: string;
+        inverse: string;
+        inverseHover: string;
+      }
+
       border: string;
+      header:string;
 
       states: {
         success: string;

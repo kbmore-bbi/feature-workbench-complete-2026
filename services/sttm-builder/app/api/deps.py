@@ -41,7 +41,11 @@ def get_snowflake_client(
     """
     user_token = request.headers.get(_SPCS_USER_TOKEN_HEADER, "")
     effective_role = role or _default_role_for_principal(request, settings)
-    client = SnowflakeClient(user_token=user_token, role=effective_role)
+    client = SnowflakeClient(
+        settings=settings,
+        user_token=user_token,
+        role=effective_role,
+    )
     try:
         yield client
     finally:

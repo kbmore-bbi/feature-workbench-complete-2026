@@ -34,6 +34,7 @@ class Settings(BaseSettings):
         env_file=".env.local",
         extra="ignore",
         case_sensitive=False,
+        populate_by_name=True,
     )
 
     app_name: str = Field(default="BBI AI Migration Workbench API", alias="APP_NAME")
@@ -50,9 +51,24 @@ class Settings(BaseSettings):
         default="WORKBENCH_VIEWER",
         alias="APP_ROLE_VIEWER",
     )
+    local_dev_auth_enabled: bool = Field(
+        default=False,
+        alias="LOCAL_DEV_AUTH_ENABLED",
+    )
+    local_dev_user_email: str = Field(
+        default="",
+        alias="LOCAL_DEV_USER_EMAIL",
+    )
+    local_dev_bypass_metadata: bool = Field(
+        default=True,
+        alias="LOCAL_DEV_BYPASS_METADATA",
+    )
 
     snowflake_account: str = Field(default="", alias="SNOWFLAKE_ACCOUNT")
     snowflake_host: str = Field(default="", alias="SNOWFLAKE_HOST")
+    snowflake_user: str = Field(default="", alias="SNOWFLAKE_USER")
+    snowflake_password: str = Field(default="", alias="SNOWFLAKE_PASSWORD")
+    snowflake_role: str = Field(default="", alias="SNOWFLAKE_ROLE")
     snowflake_warehouse: str = Field(default="", alias="SNOWFLAKE_WAREHOUSE")
     snowflake_database: str = Field(default="", alias="SNOWFLAKE_DATABASE")
     snowflake_schema: str = Field(default="", alias="SNOWFLAKE_SCHEMA")
@@ -92,6 +108,17 @@ class Settings(BaseSettings):
     @property
     def qualified_users_table(self) -> str:
         return self.qualify_table_name(self.users_table)
+
+    @property
+    def local_dev_effective_email(self) -> str:
+        return self.local_dev_user_email or self.snowflake_user
+
+    @property
+    def resolved_snowflake_host(self) -> str:
+        host = (self.snowflake_host or "").strip()
+        if host == "your_org-your_account.snowflakecomputing.com":
+            return ""
+        return host
 
 
 @lru_cache

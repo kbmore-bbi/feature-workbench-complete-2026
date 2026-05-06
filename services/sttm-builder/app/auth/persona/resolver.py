@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import zlib
 from typing import Any
 
 from fastapi import HTTPException
@@ -19,6 +20,23 @@ def resolve_persona(row: dict[str, Any]) -> AppPersona:
     if bool(row["IS_VIEWER"]):
         return AppPersona.VIEWER
     raise HTTPException(status_code=403, detail="User is not assigned to an app persona")
+
+
+def _local_dev_principal(
+    *,
+    snowflake_user: str,
+    email: str,
+    persona: AppPersona,
+) -> CurrentPrincipal:
+    return CurrentPrincipal(
+        user_id=zlib.crc32(snowflake_user.encode("utf-8")),
+        snowflake_user=snowflake_user,
+        email=email,
+        display_name=snowflake_user,
+        app_persona=persona,
+        permissions=get_permissions(persona),
+        snowflake_user_token="",
+    )
 
 
 def resolve_and_upsert(context: dict[str, Any], settings: Settings) -> CurrentPrincipal:
@@ -49,6 +67,14 @@ def resolve_and_upsert(context: dict[str, Any], settings: Settings) -> CurrentPr
         email = context["email"] or snowflake_user
         display_name = snowflake_user
         cursor.close()
+
+    is_local_dev = settings.local_dev_auth_enabled and not context["snowflake_user_token"]
+    if is_local_dev and settings.local_dev_bypass_metadata:
+        return _local_dev_principal(
+            snowflake_user=snowflake_user,
+            email=email,
+            persona=persona,
+        )
 
     # App metadata is owned by the service. Caller-rights still determines the
     # persona above, but users should not need direct write grants on TBL_USERS.

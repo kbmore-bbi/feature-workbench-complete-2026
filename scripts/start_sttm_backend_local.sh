@@ -41,6 +41,7 @@ find_python() {
 
 ensure_env_file() {
   if [[ -f "${ENV_FILE}" ]]; then
+    sync_env_file
     return 0
   fi
 
@@ -51,6 +52,31 @@ ensure_env_file() {
   cp "${ENV_EXAMPLE}" "${ENV_FILE}"
   log "Created ${ENV_FILE} from .env.example"
   log "Update the Snowflake values in ${ENV_FILE} before using authenticated endpoints."
+}
+
+sync_env_file() {
+  [[ -f "${ENV_EXAMPLE}" ]] || die "Could not find ${ENV_EXAMPLE}"
+  [[ -f "${ENV_FILE}" ]] || return 0
+
+  local additions=()
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    [[ "${line}" =~ ^[A-Z0-9_]+= ]] || continue
+    local key="${line%%=*}"
+    if ! grep -Eq "^${key}=" "${ENV_FILE}"; then
+      additions+=("${line}")
+    fi
+  done < "${ENV_EXAMPLE}"
+
+  if (( ${#additions[@]} == 0 )); then
+    return 0
+  fi
+
+  {
+    printf '\n# Added from .env.example by start_sttm_backend_local.sh\n'
+    printf '%s\n' "${additions[@]}"
+  } >> "${ENV_FILE}"
+
+  log "Updated ${ENV_FILE} with missing keys from .env.example"
 }
 
 ensure_venv() {
@@ -99,7 +125,10 @@ start_backend() {
   log "Health check: http://127.0.0.1:${PORT}/health"
   log "Docs: http://127.0.0.1:${PORT}/docs"
   log "Local note: Snowflake ingress auth headers are not present on localhost."
-  log "Endpoints that depend on Sf-Context-* will return 401 unless accessed through deployed SPCS ingress."
+  log "Default mode still expects deployed SPCS ingress and caller context."
+  log "For local frontend/API testing, set LOCAL_DEV_AUTH_ENABLED=true in ${ENV_FILE}"
+  log "and provide SNOWFLAKE_USER / SNOWFLAKE_PASSWORD so the backend can connect"
+  log "directly as that developer's Snowflake identity."
 
   cd "${SERVICE_DIR}"
   APP_ENV="${APP_ENV:-local}" \

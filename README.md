@@ -5,7 +5,8 @@ Monorepo for the client-facing AI migration workbench deployed to Snowflake Snow
 ## Repository Layout
 
 - `frontend/` contains the Next.js web application.
-- `backend/` contains the FastAPI API service.
+- `services/sttm-builder/` contains the integrated FastAPI API service used by the current STTM workbench flow.
+- `backend/` contains an older API service and is not the supported local path for the integrated STTM frontend.
 - `nginx/` contains the reverse proxy used in Docker and SPCS.
 - `infra/` contains AWS and Snowflake deployment assets.
 - `buildspecs/` contains CodeBuild build specifications.
@@ -13,7 +14,7 @@ Monorepo for the client-facing AI migration workbench deployed to Snowflake Snow
 
 ## Local Development
 
-1. Create a Python virtual environment for the backend and install the backend dependencies.
+1. Create a Python virtual environment for `services/sttm-builder/` and install the backend dependencies.
 2. Install the frontend dependencies with `npm install` in `frontend/`.
 3. Start the stack:
 
@@ -25,7 +26,6 @@ Default ports:
 
 - frontend: `http://127.0.0.1:3000`
 - backend: `http://127.0.0.1:8000`
-- gateway: `http://127.0.0.1:8080`
 
 The frontend uses relative `/api/*` calls. Locally, Next.js rewrites those calls to the backend. In Docker and SPCS, `nginx` proxies the same paths to FastAPI so the browser never needs a hardcoded Snowflake backend URL.
 
@@ -39,16 +39,18 @@ To bootstrap and run only the integrated STTM backend:
 
 What the script does:
 
-- creates `services/sttm-builder/.venv` if it does not exist
+- creates `services/sttm-builder/.venv` only if it does not exist and otherwise reuses it
 - creates `services/sttm-builder/.env.local` from `.env.example` if missing
+- syncs any newly added keys from `.env.example` into an existing `.env.local` without overwriting existing values
 - installs backend dependencies only when they are not already present
 - starts the backend on `http://127.0.0.1:8000`
 
-Important local-auth note:
+Local auth modes:
 
-- the backend can run locally, but the deployed SPCS authentication flow does not exist on localhost
-- Snowflake only injects `Sf-Context-*` headers at Snowflake public ingress
-- endpoints that require deployed caller context will return `401` locally unless a separate local auth bypass is introduced
+- deployed mode: Snowflake injects `Sf-Context-*` headers only at public SPCS ingress, which is how production auth and caller-context work
+- local development mode: set `LOCAL_DEV_AUTH_ENABLED=true` in `services/sttm-builder/.env.local` and provide `SNOWFLAKE_USER` / `SNOWFLAKE_PASSWORD`
+- in local development mode, the backend connects directly as that developer's Snowflake identity, so the frontend can exercise auth/session and table-selection APIs while still respecting the Snowflake RBAC granted to that user
+- keep `LOCAL_DEV_AUTH_ENABLED=false` for deployed environments
 
 ### Swagger / OpenAPI
 

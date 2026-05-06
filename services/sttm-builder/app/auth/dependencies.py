@@ -5,7 +5,7 @@ from fastapi import HTTPException, Request
 from app.auth.extractors.headers import extract_snowflake_context
 from app.auth.models import AppPersona, CurrentPrincipal
 from app.auth.persona.resolver import resolve_and_upsert
-from app.config import get_settings
+from app.config import Settings, get_settings
 
 
 def get_current_principal(request: Request) -> CurrentPrincipal:
@@ -13,7 +13,8 @@ def get_current_principal(request: Request) -> CurrentPrincipal:
     if cached is not None:
         return cached
 
-    principal = resolve_and_upsert(extract_snowflake_context(request), get_settings())
+    settings: Settings = get_settings()
+    principal = resolve_and_upsert(extract_snowflake_context(request, settings), settings)
     request.state.current_principal = principal
     return principal
 

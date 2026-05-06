@@ -8,6 +8,7 @@ from app.core.config import Settings, get_settings
 from app.core.snowflake import SnowflakeClient
 from app.core.snowflake import build_caller_token
 from app.core.snowflake_agent import SnowflakeAgentClient
+from app.core.semantic_model import SemanticModelService
 from app.core.table_selection import TableSelectionService
 from app.core.user import UserService
 from app.core.sttm_builder import STTMBuilderService
@@ -77,3 +78,9 @@ def get_user_service(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> UserService:
     return UserService(client, settings)
+
+
+def get_semantic_model_service(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> SemanticModelService:
+    return SemanticModelService(settings)

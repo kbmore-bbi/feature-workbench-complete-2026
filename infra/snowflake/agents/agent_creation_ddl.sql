@@ -1,0 +1,30 @@
+create or replace agent FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.AGT_SOURCE_MAPPING
+    profile='{"display_name":"AGT_SOURCE_MAPPING"}'
+    from specification
+    $$
+    {{AGENT_SPEC}}
+    $$;
+
+
+create or replace agent FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.AGT_TRANSFORMATION_RULE
+    profile='{"display_name":"AGT_TRANSFORMATION_RULE"}'
+    from specification
+    $$
+    {{AGENT_SPEC}}
+    $$;
+
+
+CREATE OR REPLACE AGENT FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.AGT_STTM_BUILDER
+    PROFILE = '{"display_name":"AGT_STTM_BUILDER"}'
+    FROM SPECIFICATION
+    $$
+    {{AGENT_SPEC}}
+    $$;
+
+
+CREATE OR REPLACE AGENT FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.AGT_SEMANTIC_MODEL
+    PROFILE = '{"display_name":"AGT_SEMANTIC_MODEL"}'
+    FROM SPECIFICATION
+    $$
+    {{AGENT_SPEC}}
+    $$;

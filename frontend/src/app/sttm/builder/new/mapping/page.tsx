@@ -10,8 +10,7 @@ export default function MappingPage() {
   const { setContent } = useSidebarSlot();
 
   useEffect(() => {
-    setContent(SourceTargetAttributeList);
-    return () => setContent(null);
+    setContent(<SourceTargetAttributeList />);
   }, [setContent]);
 
   return (

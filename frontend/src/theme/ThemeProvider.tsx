@@ -8,7 +8,6 @@ import { createEmotionCache } from '@/theme/emotionCache';
 import { getAppTheme } from './theme';
 
 const clientEmotionCache = createEmotionCache();
-const defaultTheme = getAppTheme('light');
 
 interface ThemeProviderProps {
   children: ReactNode;
@@ -17,10 +16,10 @@ interface ThemeProviderProps {
 export default function ThemeProvider({ children }: ThemeProviderProps) {
   return (
     <CacheProvider value={clientEmotionCache}>
-      <MuiThemeProvider theme={defaultTheme}>
+      <MuiThemeProvider theme={getAppTheme('light')}>
         <CssBaseline />
         {children}
-      </MuiThemeProvider>
+      </MuiThemeProvider >
     </CacheProvider>
   );
 }

@@ -11,7 +11,7 @@ import {
 
 interface Column {
   key: string;
-  label: string;
+  label: string | React.ReactNode;
   align?: 'left' | 'center' | 'right';
 }
 

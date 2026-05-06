@@ -33,15 +33,15 @@ export default function BuilderHeader({
   return (
     <Box className="flex h-[84px] w-full items-center justify-between border-b border-[#a8a8a8] bg-white px-6" sx={{backgroundColor: '#f9f9f9', borderBottomWidth: '1px'}}>
       <Box className="flex items-center gap-3">
-        <Box className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white">
+         <Box className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white"> 
           <Image
-            src="/images/focus_logo.png"
+            src="/images/focus_home_logo.svg"
             alt="STTM Builder Logo"
             width={44}
             height={44}
             className="object-contain"
           />
-        </Box>
+         </Box> 
 
         <Box>
           <Typography className="text-[17px] font-bold text-[#111827]">

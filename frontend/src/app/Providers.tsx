@@ -10,6 +10,8 @@ import {
 } from "react";
 import { CssBaseline, ThemeProvider } from "@mui/material";
 import { getAppTheme, type AppThemeMode } from "@/theme/theme";
+import { Provider as ReduxProvider } from "react-redux";
+import { store } from "@/store/store";
 
 type ThemeModeContextValue = {
   mode: AppThemeMode;
@@ -60,10 +62,12 @@ export default function Providers({ children }: { children: ReactNode }) {
 
   return (
     <ThemeModeContext.Provider value={value}>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
-        {children}
-      </ThemeProvider>
+      <ReduxProvider store={store}>
+        <ThemeProvider theme={theme}>
+          <CssBaseline />
+          {children}
+        </ThemeProvider>
+      </ReduxProvider>
     </ThemeModeContext.Provider>
   );
 }

@@ -11,6 +11,7 @@ import {
     Checkbox,
 } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material/Select';
+import type { SxProps, Theme } from '@mui/material/styles';
 
 interface Option {
     label: string;
@@ -22,11 +23,14 @@ interface FocusSelectProps {
     value?: string | string[];
     options?: Option[];
     onChange?: (value: string | string[]) => void;
+    placeholder?: string;
 
     multiple?: boolean;
     disabled?: boolean;
     size?: 'small' | 'medium';
     fullWidth?: boolean;
+    /** Merged into the root FormControl for layout/density overrides from parents. */
+    sx?: SxProps<Theme>;
 }
 
 const ITEM_HEIGHT = 48;
@@ -36,7 +40,8 @@ const MenuProps = {
     slotProps: {
         paper: {
             sx: {
-                maxHeight: ITEM_HEIGHT * 4.5 + ITEM_PADDING_TOP,
+                // show up to 4 items, then scroll
+                maxHeight: ITEM_HEIGHT * 4 + ITEM_PADDING_TOP,
             },
         },
     },
@@ -47,10 +52,12 @@ const FocusSelect = ({
     value,
     options = [],
     onChange,
+    placeholder = 'Select…',
     multiple = false,
     disabled = false,
     size = 'small',
     fullWidth = true,
+    sx,
 }: FocusSelectProps) => {
     const handleChange = (
         event: SelectChangeEvent<string | string[]>,
@@ -67,8 +74,15 @@ const FocusSelect = ({
     };
 
     return (
-        <FormControl sx={{ m: 1, minWidth: 120 }} size={size} fullWidth={fullWidth}
-            disabled={disabled}>
+        <FormControl
+            sx={[
+                { minWidth: fullWidth ? 0 : 120 },
+                ...(sx ? (Array.isArray(sx) ? sx : [sx]) : []),
+            ]}
+            size={size}
+            fullWidth={fullWidth}
+            disabled={disabled}
+        >
             {label && <InputLabel size={size}>{label}</InputLabel>}
             <Select
                 multiple={multiple}
@@ -77,10 +91,11 @@ const FocusSelect = ({
                 onChange={handleChange}
                 input={<OutlinedInput label={label} size={size} />}
                 MenuProps={MenuProps}
+                displayEmpty
                 sx={{
                     '& .MuiSelect-select': {
-                        paddingTop: size === 'small' ? 1.5 : 2,
-                        paddingBottom: size === 'small' ? 1.5 : 2,
+                        paddingTop: size === 'small' ? 1 : 1.5,
+                        paddingBottom: size === 'small' ? 1 : 1.5,
                     },
                 }}
                 renderValue={(selected) =>
@@ -88,7 +103,19 @@ const FocusSelect = ({
                         ? (selected as string[])
                             .map(v => options.find(o => o.value === v)?.label)
                             .join(', ')
-                        : options.find(o => o.value === selected)?.label
+                        : (() => {
+                            const s = selected as string;
+                            if (!s) return (
+                                <span style={{ color: '#9ca3af' }}>
+                                    {placeholder}
+                                </span>
+                            );
+                            return options.find(o => o.value === s)?.label ?? (
+                                <span style={{ color: '#9ca3af' }}>
+                                    {placeholder}
+                                </span>
+                            );
+                        })()
                 }>
                 {options.map((opt) => {
                     const isSelected = multiple

@@ -1,0 +1,144 @@
+models:
+  orchestration: auto
+
+orchestration: {}
+
+instructions:
+  orchestration: |
+    You are an STTM Transformation Rule agent. Given target attributes, their mapped
+    source attributes, and a transformation intent, produce SQL transformation rules.
+
+    ## Inputs
+    - Target attributes: fully qualified column references (DB.Schema.Table.Column)
+    - Source attributes: fully qualified column references (DB.Schema.Table.Column)
+    - Transformation intent: natural language or keywords describing how to transform
+    - User feedback: optional corrections or hints from a prior round
+
+    ## Reasoning approach
+    1. Call GET_TABLE_DDL for each source table to understand column types and constraints.
+    2. If types alone are insufficient to determine the transformation, call GET_SAMPLE_DATA.
+    3. For each target attribute, write a SQL expression guided by the transformation intent
+       and the source column types.
+    4. If user feedback is provided, revise only the affected rule(s).
+    5. If the request is not about transformation rule creation, set rules: [] and respond in message.
+
+    ## Tool use rules
+    - Call GET_SEMANTIC_MODEL first (scope ATTRIBUTE) for each source column.
+      If code=FOUND, use the returned semantic_model for business meaning and data quality context.
+      Fall back to GET_TABLE_DDL only when GET_SEMANTIC_MODEL returns code=NOT_FOUND.
+    - Call GET_TABLE_DDL once per table; reuse results across all target attributes.
+    - Only call GET_SAMPLE_DATA when DDL is ambiguous.
+
+  response: |
+    Return a single JSON object. No prose outside the JSON.
+
+    {
+      "rules": [
+        {
+          "target_id": "DB.Schema.Table.Column",
+          "transformation_rule": "SQL expression mapping source column(s) to the target",
+          "description": "one sentence describing the transformation"
+        }
+      ],
+      "message": "present only when request is not for transformation rule creation"
+    }
+
+    Rules:
+    - One object per target attribute.
+    - transformation_rule is a valid SQL expression (e.g. CAST, COALESCE, CONCAT, CASE WHEN).
+    - description is concise — one sentence maximum.
+    - For non-transformation requests: rules: [], message: <your response>.
+    - No text outside the JSON block.
+
+tools:
+  - tool_spec:
+      type: generic
+      name: get_semantic_model
+      description: |
+        Retrieve the stored semantic model for a schema, table, or individual attribute.
+        Use scope='ATTRIBUTE' to get data type, business meaning, and data quality notes for a single column.
+        Use scope='TABLE' to get entity description and all column meanings.
+        Returns code='FOUND' with semantic_model, or code='NOT_FOUND' if none exists yet.
+      input_schema:
+        type: object
+        properties:
+          scope:
+            type: string
+            description: "'SCHEMA' | 'TABLE' | 'ATTRIBUTE'"
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+          attribute_name:
+            type: string
+            description: Required only for scope=ATTRIBUTE
+        required:
+          - scope
+          - db_name
+          - schema_name
+
+  - tool_spec:
+      type: generic
+      name: get_table_ddl
+      description: Get the DDL of a table. Use only when get_semantic_model returns NOT_FOUND.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+
+  - tool_spec:
+      type: generic
+      name: get_sample_data
+      description: Get sample data from a table to understand its contents in depth.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+          sample_size:
+            type: number
+        required:
+          - db_name
+          - schema_name
+          - table_name
+          - sample_size
+
+tool_resources:
+  get_semantic_model:
+    type: procedure
+    name: "SP_GET_SEMANTIC_MODEL(VARCHAR, VARCHAR, VARCHAR, DEFAULT VARCHAR, DEFAULT VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SEMANTIC_MODEL"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  get_table_ddl:
+    type: procedure
+    name: "SP_GET_TABLE_DDL(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_DDL"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  get_sample_data:
+    type: procedure
+    name: "SP_GET_SAMPLE_DATA(VARCHAR, VARCHAR, VARCHAR, NUMBER)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SAMPLE_DATA"
+    execution_environment:
+      type: warehouse
+      warehouse: ""

@@ -15,7 +15,7 @@ export default function DashboardPage() {
                 elevation={0}
                 className="mx-auto flex min-h-[calc(100vh-32px)] max-w-[1600px] flex-col overflow-hidden rounded-[24px] border border-[#E8ECF4] bg-white"
             >
-                <AppHeader />
+                {/* <AppHeader /> */}
 
                 <Box className="flex min-h-0 flex-1">
                     <DashboardSidebar />

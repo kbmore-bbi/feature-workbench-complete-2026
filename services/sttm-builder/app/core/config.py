@@ -77,6 +77,14 @@ class Settings(BaseSettings):
         default="",
         alias="SNOWFLAKE_STTM_BUILDER_AGENT",
     )
+    snowflake_semantic_model_agent: str = Field(
+        default="",
+        alias="SNOWFLAKE_SEMANTIC_MODEL_AGENT",
+    )
+    snowflake_semantic_model_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODEL",
+        alias="SNOWFLAKE_SEMANTIC_MODEL_TABLE",
+    )
     snowflake_agent_orchestration_model: str = Field(
         default="claude-sonnet-4",
         alias="SNOWFLAKE_AGENT_ORCHESTRATION_MODEL",

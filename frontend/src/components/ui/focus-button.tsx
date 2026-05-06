@@ -18,6 +18,11 @@ interface FocusButtonProps {
 
     rounded?: 'none' | 'sm' | 'md' | 'lg' | 'full';
     color?: 'primary' | 'secondary' | 'error' | 'warning' | 'info' | 'success';
+
+    customColor?: string;
+    customBackgroundColor?: string;
+    customHoverBackgroundColor?: string;
+    customBorderColor?: string;
 }
 
 const radiusMap = {
@@ -28,7 +33,22 @@ const radiusMap = {
     full: '999px',
 };
 
-const FocusButton = ({ children, className, onClick, disabled = false, startIcon, endIcon, variant = 'contained', size = 'large', rounded = 'md', color = 'primary', }: FocusButtonProps) => {
+const FocusButton = ({
+    children,
+    className,
+    onClick,
+    disabled = false,
+    startIcon,
+    endIcon,
+    variant = 'contained',
+    size = 'large',
+    rounded = 'md',
+    color = 'primary',
+    customColor,
+    customBackgroundColor,
+    customHoverBackgroundColor,
+    customBorderColor
+}: FocusButtonProps) => {
 
     const isIconOnly = !children;
 
@@ -47,33 +67,20 @@ const FocusButton = ({ children, className, onClick, disabled = false, startIcon
                 borderRadius: radiusMap[rounded],
                 minWidth: isIconOnly ? 36 : undefined,
                 padding: isIconOnly ? '8px' : undefined,
+                color: customColor ? customColor : undefined,
+                borderColor: customBorderColor ? customBorderColor : undefined,
+                backgroundColor: customBackgroundColor ? customBackgroundColor : undefined,
+                "&:hover": {
+                    color: customColor ?? undefined,
+                    borderColor: customBorderColor ?? undefined,
+                    backgroundColor:
+                        customHoverBackgroundColor ??
+                        customBackgroundColor ??
+                        undefined,
+                },
             }}>
             {children}
         </Button>
-
-        //  <Button
-        //     className={className}
-        //     color="primary"
-        //     variant={variant}
-        //     size={size}
-        //     onClick={onClick}
-        //     disabled={disabled}
-        //     startIcon={startIcon}
-        //     endIcon={endIcon}
-        //     sx={{
-        //         textTransform: 'none',
-        //         borderRadius: radiusMap[rounded],
-        //         color: textColor,
-        //         backgroundColor,
-        //         fontSize: '0.75rem',
-        //         minWidth: label ? undefined : 36,
-        //         '&:hover': {
-        //             backgroundColor,
-        //         },
-        //     }}
-        // >
-        //     {children}
-        // </Button>
     );
 }
 

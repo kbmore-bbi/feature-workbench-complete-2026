@@ -1,4 +1,4 @@
-export default function ViewerLayout({
+export default function SttmViewerLayout({
   children,
 }: {
   children: React.ReactNode;

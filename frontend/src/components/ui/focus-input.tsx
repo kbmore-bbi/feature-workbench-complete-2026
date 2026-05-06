@@ -3,6 +3,7 @@
 import React from 'react';
 import { FormControl, TextField } from '@mui/material';
 import type { TextFieldVariants } from '@mui/material/TextField';
+import type { SxProps, Theme } from '@mui/material/styles';
 
 interface FocusInputProps {
     label?: string;
@@ -17,6 +18,8 @@ interface FocusInputProps {
     fullWidth?: boolean;
 
     variant?: TextFieldVariants;
+    /** Merged into the TextField for layout/density overrides from parents. */
+    sx?: SxProps<Theme>;
 }
 
 const FocusInput = ({
@@ -29,6 +32,7 @@ const FocusInput = ({
     size = 'small',
     fullWidth = true,
     variant = 'outlined',
+    sx,
 }: FocusInputProps) => {
     const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
         onChange?.(event.target.value);
@@ -45,11 +49,14 @@ const FocusInput = ({
                 variant={variant}
                 fullWidth={fullWidth}
                 disabled={disabled}
-                sx={{
-                    '& .MuiInputBase-input': {
-                        paddingY: size === 'small' ? 1.5 : 2,
+                sx={[
+                    {
+                        '& .MuiInputBase-input': {
+                            paddingY: size === 'small' ? 1.5 : 2,
+                        },
                     },
-                }}
+                    ...(sx ? (Array.isArray(sx) ? sx : [sx]) : []),
+                ]}
             />
         </FormControl>
     );

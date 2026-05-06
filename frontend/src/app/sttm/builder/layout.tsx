@@ -2,11 +2,8 @@
 
 import { useState } from 'react';
 import BuilderContentHeader from '@/features/sttm/layout/builder-content-header';
-import BuilderHeader from '@/features/sttm/layout/builder-header';
 import { SidebarHost } from '@/features/sttm/layout/sidebar-host';
 import { SidebarSlotProvider } from '@/features/sttm/layout/sidebar-slot-context';
-import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
-
 import { useRouter } from 'next/navigation';
 
 export default function BuilderLayout({
@@ -16,22 +13,10 @@ export default function BuilderLayout({
 }) {
   const [currentStep, setCurrentStep] = useState<1 | 2>(1);
   const router = useRouter();
-  const { mappingCount, selectedSourceCount, targetAttributeGroup, session } = useSttmBuilderContext();
-
-  const headerRole = session?.app_persona
-    ? `${session.app_persona.slice(0, 1)}${session.app_persona.slice(1).toLowerCase()}`
-    : undefined;
 
   return (
     <SidebarSlotProvider>
-      <div className="min-h-screen flex flex-col bg-gray-50">
-        {/* Full-width header */}
-        <BuilderHeader
-          currentStep={1}
-          userName={session?.display_name ?? session?.email ?? undefined}
-          role={headerRole}
-        />
-
+      <div className="h-[calc(100vh-60px)] flex flex-col bg-gray-50">
         {/* Body */}
         <div className="flex flex-1 overflow-hidden">
           {/* Sidebar */}
@@ -42,7 +27,6 @@ export default function BuilderLayout({
               shrink-0
               border-r border-gray-200
               bg-white
-              overflow-y-auto
             "
           >
             <SidebarHost />
@@ -54,8 +38,8 @@ export default function BuilderLayout({
             <div className="shrink-0 border-b border-gray-200 bg-white px-4 py-2">
               <BuilderContentHeader
                 currentStep={currentStep}
-                tableCount={selectedSourceCount + (targetAttributeGroup ? 1 : 0)}
-                mappingCount={mappingCount}
+                tableCount={2}
+                mappingCount={currentStep === 1 ? 0 : 9}
                 onProceed={() => {
                   setCurrentStep(2)
                   router.push('/sttm/builder/new/mapping')
@@ -74,7 +58,7 @@ export default function BuilderLayout({
             </div>
 
             {/* Main content */}
-            <main className="flex-1 p-4 overflow-y-auto">
+            <main className="overflow-y-auto bg-white">
               {children}
             </main>
           </div>

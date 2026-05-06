@@ -1,7 +1,9 @@
 -- ============================================================
--- PROFILING LAYER
+-- PROFILING LAYER (DEPRECATED)
 -- Raw source schema metadata. No FK to project tables.
 -- ============================================================
+
+-- DEPRECATED
 CREATE TABLE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_TABLE_STATS (
     DB_NAME               VARCHAR       NOT NULL,
     SCHEMA_NAME           VARCHAR       NOT NULL,
@@ -16,7 +18,7 @@ CREATE TABLE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_TABLE_STATS (
 )
 COMMENT = 'Catalogue-level table stats captured during STTM profiling';
 
-
+-- DEPRECATED
 CREATE TABLE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_ATTRIBUTE_STATS (
     DB_NAME               VARCHAR       NOT NULL,
     SCHEMA_NAME           VARCHAR       NOT NULL,
@@ -29,6 +31,34 @@ CREATE TABLE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_ATTRIBUTE_STATS (
     CONSTRAINT PK_TBL_ATTRIBUTE_STATS PRIMARY KEY (DB_NAME, SCHEMA_NAME, TABLE_NAME, ATTRIBUTE_NAME)
 )
 COMMENT = 'Column-level profiling stats captured during STTM profiling';
+
+
+-- ============================================================
+-- SEMANTIC MODELING LAYER
+-- Natural key: (SCOPE, DB_NAME, SCHEMA_NAME, TABLE_NAME, ATTRIBUTE_NAME)
+-- TABLE_NAME = '' for SCHEMA scope; ATTRIBUTE_NAME = '' for SCHEMA and TABLE scopes.
+-- DDL_HASH detects structural staleness — compare stored vs current before trusting the model.
+-- ============================================================
+
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODELS (
+    SCOPE            VARCHAR(20)   NOT NULL,   -- 'SCHEMA' | 'TABLE' | 'ATTRIBUTE'
+    DB_NAME          VARCHAR(255)  NOT NULL,
+    SCHEMA_NAME      VARCHAR(255)  NOT NULL,
+    TABLE_NAME       VARCHAR(255)  NOT NULL,   -- '' for SCHEMA scope
+    ATTRIBUTE_NAME   VARCHAR(255)  NOT NULL,   -- '' for SCHEMA and TABLE scope
+    SEMANTIC_MODEL   VARIANT       NOT NULL,
+    DDL_HASH         VARCHAR(32)   NOT NULL,
+    GENERATED_AT     TIMESTAMP_NTZ NOT NULL,
+    UPDATED_AT       TIMESTAMP_NTZ NOT NULL,
+
+    CONSTRAINT CHK_SM_SCOPE CHECK (SCOPE IN ('SCHEMA', 'TABLE', 'ATTRIBUTE')),
+    CONSTRAINT CHK_SM_KEYS CHECK (
+        (SCOPE = 'SCHEMA'    AND TABLE_NAME = ''     AND ATTRIBUTE_NAME = '') OR
+        (SCOPE = 'TABLE'     AND TABLE_NAME != ''    AND ATTRIBUTE_NAME = '') OR
+        (SCOPE = 'ATTRIBUTE' AND TABLE_NAME != ''    AND ATTRIBUTE_NAME != '')
+    )
+);
 
 
 -- ============================================================

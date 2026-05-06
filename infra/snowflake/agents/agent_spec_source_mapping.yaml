@@ -1,0 +1,173 @@
+models:
+  orchestration: auto
+
+orchestration: {}
+
+instructions:
+  orchestration: |
+    You are an STTM Source Auto Mapping agent. Your task is to map source
+    attributes to each target attribute.
+
+    ## Inputs
+    - Target attributes: list of fully qualified column references (DB.Schema.Table.Column)
+    - Source tables: list of fully qualified table references (DB.Schema.Table)
+    - User feedback: optional, attribute-scoped corrections or hints from a prior mapping round
+
+    ## Reasoning approach
+    1. For each source table, call GET_TABLE_DDL to inspect column names, types, and constraints.
+    2. If DDL alone is insufficient (e.g. generic column names like col1, value, data),
+       call GET_SAMPLE_DATA on that table.
+    3. For each target attribute, infer the best source mapping(s) by matching on:
+       column name similarity, data type alignment, and business semantics.
+    4. If user feedback targets a specific attribute, re-evaluate that attribute
+       using the provided context before finalising its mapping.
+    5. If no plausible source exists for a target attribute, return confidence LOW
+       with a null column and a brief reason.
+
+    ## Tool use rules
+    - Call GET_SEMANTIC_MODEL first (scope TABLE or ATTRIBUTE) for any source or target table.
+      If code=FOUND, use the returned semantic_model directly — skip GET_TABLE_DDL for that table.
+    - Fall back to GET_TABLE_DDL only when GET_SEMANTIC_MODEL returns code=NOT_FOUND.
+    - Do not call GET_TABLE_DDL for the same table more than once; reuse results.
+    - Only call GET_SAMPLE_DATA when DDL is ambiguous.
+    - LIST_TABLES is rarely needed — only if a source table reference needs to be resolved.
+
+  response: |
+    Return a single JSON object. No prose outside the JSON.
+
+    {
+      "mappings": [
+        {
+          "target": "DB.Schema.Table.Column",
+          "sources": [
+            {
+              "table": "DB.Schema.Table",
+              "column": "ColumnName",
+              "confidence": "HIGH | MEDIUM | LOW"
+            }
+          ]
+        }
+      ]
+    }
+
+    Rules:
+    - One object per target attribute.
+    - sources may contain multiple entries for derived or concatenated mappings.
+    - When no source is found: sources: []
+    - No text outside the JSON block.
+
+tools:
+  - tool_spec:
+      type: generic
+      name: get_semantic_model
+      description: |
+        Retrieve the stored semantic model for a schema, table, or individual attribute.
+        Use scope='TABLE' to get entity description and column business meanings.
+        Use scope='ATTRIBUTE' to get the semantic model for a single column.
+        Returns code='FOUND' with semantic_model, or code='NOT_FOUND' if none exists yet.
+      input_schema:
+        type: object
+        properties:
+          scope:
+            type: string
+            description: "'SCHEMA' | 'TABLE' | 'ATTRIBUTE'"
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+          attribute_name:
+            type: string
+            description: Required only for scope=ATTRIBUTE
+        required:
+          - scope
+          - db_name
+          - schema_name
+
+  - tool_spec:
+      type: generic
+      name: list_tables
+      description: List tables from a given schema.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+
+  - tool_spec:
+      type: generic
+      name: get_table_ddl
+      description: Get the DDL of a table. Use only when get_semantic_model returns NOT_FOUND.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+
+  - tool_spec:
+      type: generic
+      name: get_sample_data
+      description: Get sample data from a table to understand its contents in depth.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+          sample_size:
+            type: number
+        required:
+          - db_name
+          - schema_name
+          - table_name
+          - sample_size
+
+tool_resources:
+  get_semantic_model:
+    type: procedure
+    name: "SP_GET_SEMANTIC_MODEL(VARCHAR, VARCHAR, VARCHAR, DEFAULT VARCHAR, DEFAULT VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SEMANTIC_MODEL"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  list_tables:
+    type: procedure
+    name: "SP_LIST_TABLES(VARCHAR, VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_LIST_TABLES"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  get_table_ddl:
+    type: procedure
+    name: "SP_GET_TABLE_DDL(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_DDL"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  get_sample_data:
+    type: procedure
+    name: "SP_GET_SAMPLE_DATA(VARCHAR, VARCHAR, VARCHAR, NUMBER)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SAMPLE_DATA"
+    execution_environment:
+      type: warehouse
+      warehouse: ""

@@ -4,6 +4,7 @@ import '@/theme/theme.css';
 import ThemeProvider from '@/theme/ThemeProvider';
 import Providers from "./Providers";
 import ChatWidget from '@/features/ai-agent/chat-widget';
+import AppHeader from "@/features/layout/app-header";
 
 export const metadata: Metadata = {
   title: "Focus AI Migration Workbench",
@@ -21,7 +22,9 @@ export default function RootLayout({
         <meta name="emotion-insertion-point" content="" />
       </head>
       <body>
-        <Providers>{children}
+        <Providers>
+          <AppHeader />
+          {children}
           <ChatWidget />
         </Providers>
       </body>

@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "@xyflow/react/dist/style.css";
+@import "../features/sttm/source-target/styles.css";
 
 :root {
   --font-body: museo-sans, sans-serif;

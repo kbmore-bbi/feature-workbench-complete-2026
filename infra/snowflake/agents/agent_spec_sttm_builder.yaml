@@ -1,0 +1,125 @@
+models:
+  orchestration: claude-haiku-4-5
+
+orchestration: {}
+
+instructions:
+  orchestration: |
+    You are an STTM Orchestration Agent. You coordinate two sub-agents (as Tools)
+    and return structured results to the UI.
+
+    ## Sub-agents (As Tools)
+    - AGT_SOURCE_MAPPING: Maps source attributes to target attributes.
+    - AGT_TRANSFORMATION_RULE: Generates transformation rules for mapped attribute pairs.
+
+    Model Options for Subagents:
+    ["claude-sonnet-4-6", "claude-haiku-4-5"]
+
+    ## Interface types (input field: interface)
+    - AUTO_MAP    → triggered by Source Auto Map button
+    - CHAT        → triggered by sidebar chat input
+    - TRANSFORM   → triggered by Transformation Rule Creation button
+
+    ## Routing rules
+
+    AUTO_MAP
+    → Route to AGT_SOURCE_MAPPING unconditionally.
+
+    TRANSFORM
+    → Route to AGT_TRANSFORMATION_RULE unconditionally.
+
+    CHAT
+    → Analyse the user message:
+      - Mapping corrections, wrong source, re-map → AGT_SOURCE_MAPPING
+      - Transformation logic, rules, expressions, casting → AGT_TRANSFORMATION_RULE
+      - Ambiguous or insufficient context → set agent: null, result: null, message: clarifying question.
+
+  response: |
+    ## Response envelope
+
+    AUTO_MAP response:
+    {
+      "agent": "AGT_SOURCE_MAPPING",
+      "result": { ...AGT_SOURCE_MAPPING response verbatim... }
+    }
+
+    TRANSFORM response:
+    {
+      "agent": "AGT_TRANSFORMATION_RULE",
+      "result": { ...AGT_TRANSFORMATION_RULE response verbatim... }
+    }
+
+    CHAT response:
+    {
+      "agent": "AGT_SOURCE_MAPPING | AGT_TRANSFORMATION_RULE | null",
+      "result": { ...sub-agent response verbatim... } | null,
+      "message": "one short sentence summarising what was done, or a clarifying question"
+    }
+
+    ## Rules
+    - result is null when no sub-agent was called.
+    - message is present only when interface is CHAT.
+    - Never call both sub-agents in a single turn.
+    - Do not pre-process or modify inputs before passing to a sub-agent.
+
+tools:
+  - tool_spec:
+      type: generic
+      name: AGT_SOURCE_MAPPING
+      description: |
+        Maps source attributes and source tables to their corresponding target attributes.
+        Use this tool when target attributes and source table metadata are provided
+        and source-to-target column mappings need to be identified.
+      input_schema:
+        type: object
+        properties:
+          model_name:
+            type: string
+          query_context:
+            type: string
+            description: |
+              A JSON string containing source table names, target table name with its
+              attributes, and optional user feedback for specific target attributes
+              to guide the mapping.
+        required:
+          - query_context
+          - model_name
+
+  - tool_spec:
+      type: generic
+      name: AGT_TRANSFORMATION_RULE
+      description: |
+        Generates SQL transformation rules for mapped attribute pairs.
+        Use this tool when target attributes, their source attributes, and a transformation
+        intent are provided and SQL expressions need to be produced.
+      input_schema:
+        type: object
+        properties:
+          model_name:
+            type: string
+          query_context:
+            type: string
+            description: |
+              A JSON string containing target attributes, their mapped source attributes,
+              transformation intent (natural language or keywords), and optional user
+              feedback from a prior round.
+        required:
+          - query_context
+          - model_name
+
+tool_resources:
+  AGT_SOURCE_MAPPING:
+    type: procedure
+    name: "SP_SUBAGT_SOURCE_MAPPING(VARCHAR, DEFAULT VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_SUBAGT_SOURCE_MAPPING"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  AGT_TRANSFORMATION_RULE:
+    type: procedure
+    name: "SP_SUBAGT_TRANSFORMATION_RULE(VARCHAR, DEFAULT VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_SUBAGT_TRANSFORMATION_RULE"
+    execution_environment:
+      type: warehouse
+      warehouse: ""

@@ -1,444 +1,163 @@
-'use client';
+"use client";
 
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
-
-import { authService } from '@/services/authService';
-import { dbService } from '@/services/dbService';
-import { workbenchService, type TableRef } from '@/services/workbenchService';
-import type { UserSession } from '@/types/user';
-
-type TableNode = {
-  tableId: string;
-  tableName: string;
-  qualifiedName: string;
-  isSelected: boolean;
-  tag: string;
-  rows: string;
-  columns: number;
-};
-
-type SchemaNode = {
-  schemaId: string;
-  schemaName: string;
-  isSelected: boolean;
-  tables: TableNode[];
-};
-
-type DatabaseNode = {
-  dbId: string;
-  dbName: string;
-  dbType: 'SNOWFLAKE';
-  connectionId: string;
-  isSelected: boolean;
-  schemas: SchemaNode[];
-  schemasLoaded: boolean;
-};
-
-type SourceTargetInfo = {
-  dbName: string;
-  schemaName: string;
-};
-
-type ColumnGroup = {
-  table: string;
-  qualifiedName: string;
-  columns: Array<{
-    name: string;
-    type: string;
-  }>;
-};
-
-type MappingSuggestion = {
-  targetAttribute: string;
-  sourceAttributes: string[];
-  confidenceScore: number;
-};
-
-type ChatMessage = {
-  role: 'user' | 'assistant';
-  content: string;
-};
-
-type ContextValue = {
-  fullData: { sources: DatabaseNode[]; targets: DatabaseNode[] } | null;
-  sources: TableNode[];
-  targets: TableNode[];
-  sourceInfo: SourceTargetInfo;
-  targetInfo: SourceTargetInfo;
-  sourceAttributeGroups: ColumnGroup[];
-  targetAttributeGroup: ColumnGroup | null;
-  mappingSuggestions: MappingSuggestion[];
-  mappingLoading: boolean;
-  chatMessages: ChatMessage[];
-  chatLoading: boolean;
-  session: UserSession | null;
-  loadSchemas: (type: 'source' | 'target', dbId: string) => Promise<void>;
-  selectSchema: (type: 'source' | 'target', dbId: string, schemaId: string) => Promise<void>;
-  toggleSource: (tableId: string) => void;
-  selectTarget: (tableId: string) => void;
-  clearSources: () => void;
-  clearTargets: () => void;
-  runAutoMap: () => Promise<void>;
-  sendChatMessage: (message: string) => Promise<void>;
-  selectedSourceCount: number;
-  mappingCount: number;
-};
+import { createContext, useContext, useEffect, useMemo } from "react";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import {
+  fetchDatabases,
+  fetchSchemas,
+  fetchTables,
+  fetchAttributes,
+  runAutoMap as runAutoMapThunk,
+  sendChatMessage as sendChatMessageThunk,
+  toggleSource as toggleSourceAction,
+  selectTarget as selectTargetAction,
+  clearSources as clearSourcesAction,
+  clearTargets as clearTargetsAction,
+  setDrivingTable as setDrivingTableAction,
+  addDerivedSource as addDerivedSourceAction,
+  updateDerivedSource as updateDerivedSourceAction,
+  removeDerivedSource as removeDerivedSourceAction,
+} from "@/features/sttm/store/sttm-builder-slice";
+import type {
+  DerivedSource,
+  SelectionSide,
+  SttmBuilderContextValue as ContextValue,
+} from "@/features/sttm/types/sttm.types";
 
 const SttmBuilderContext = createContext<ContextValue | null>(null);
 
-function makeTableRef(qualifiedName: string): TableRef {
-  const [database, schema, table] = qualifiedName.split('.', 3);
-  return { database, schema, table };
-}
+export function SttmBuilderProvider({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const dispatch = useAppDispatch();
+  const state = useAppSelector((s) => s.sttmBuilder);
 
-function toBranch(items: Array<{ database_name: string }>): DatabaseNode[] {
-  return items.map((database) => ({
-    dbId: database.database_name,
-    dbName: database.database_name,
-    dbType: 'SNOWFLAKE',
-    connectionId: database.database_name,
-    isSelected: false,
-    schemas: [],
-    schemasLoaded: false,
-  }));
-}
-
-function cloneBranch(branch: DatabaseNode[]) {
-  return branch.map((database) => ({
-    ...database,
-    schemas: database.schemas.map((schema) => ({
-      ...schema,
-      tables: schema.tables.map((table) => ({ ...table })),
-    })),
-    schemasLoaded: database.schemasLoaded,
-  }));
-}
-
-export function SttmBuilderProvider({ children }: { children: React.ReactNode }) {
-  const [fullData, setFullData] = useState<{ sources: DatabaseNode[]; targets: DatabaseNode[] } | null>(null);
-  const [sources, setSources] = useState<TableNode[]>([]);
-  const [targets, setTargets] = useState<TableNode[]>([]);
-  const [sourceInfo, setSourceInfo] = useState<SourceTargetInfo>({ dbName: '', schemaName: '' });
-  const [targetInfo, setTargetInfo] = useState<SourceTargetInfo>({ dbName: '', schemaName: '' });
-  const [sourceAttributeGroups, setSourceAttributeGroups] = useState<ColumnGroup[]>([]);
-  const [targetAttributeGroup, setTargetAttributeGroup] = useState<ColumnGroup | null>(null);
-  const [mappingSuggestions, setMappingSuggestions] = useState<MappingSuggestion[]>([]);
-  const [mappingLoading, setMappingLoading] = useState(false);
-  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
-    { role: 'assistant', content: "Hi! I'm your STTM AI Assistant. Ask me about mapping, tables, or next steps." },
-  ]);
-  const [chatLoading, setChatLoading] = useState(false);
-  const [agentThreadId, setAgentThreadId] = useState<string | null>(null);
-  const [session, setSession] = useState<UserSession | null>(null);
-
+  // Load databases on mount
   useEffect(() => {
-    async function bootstrap() {
-      try {
-        const [databases, userSession] = await Promise.all([
-          dbService.getExplorerData(),
-          authService.getSession().catch(() => null),
-        ]);
-        const branch = toBranch(databases);
-        setFullData({
-          sources: branch,
-          targets: cloneBranch(branch),
-        });
-        setSession(userSession);
-      } catch (error) {
-        console.error('Failed to initialize STTM builder context', error);
-        setFullData({ sources: [], targets: [] });
-      }
-    }
+    dispatch(fetchDatabases());
+  }, [dispatch]);
 
-    void bootstrap();
-  }, []);
+  const value = useMemo<ContextValue>(() => {
+    // Compose fullData from the two branches in Redux
+    const fullData =
+      state.sourceDatabases.length || state.targetDatabases.length
+        ? { sources: state.sourceDatabases, targets: state.targetDatabases }
+        : null;
 
-  async function loadSchemas(type: 'source' | 'target', dbId: string) {
-    if (!fullData) {
-      return;
-    }
+    return {
+      // Tree data
+      fullData,
 
-    const currentBranch = type === 'source' ? fullData.sources : fullData.targets;
-    const currentDb = currentBranch.find((database) => database.dbId === dbId);
-    if (!currentDb || currentDb.schemasLoaded) {
-      return;
-    }
+      // Flat lists
+      sources: state.sources,
+      targets: state.targets,
+      sourceInfo: state.sourceInfo,
+      targetInfo: state.targetInfo,
 
-    const schemaResponse = await dbService.getDatabaseSchemas(dbId);
-    const schemas: SchemaNode[] = schemaResponse.map((schema: { schema_name: string }) => ({
-      schemaId: `${dbId}:${schema.schema_name}`,
-      schemaName: schema.schema_name,
-      isSelected: false,
-      tables: [],
-    }));
+      // Attributes
+      sourceAttributeGroups: state.sourceAttributeGroups,
+      targetAttributeGroup: state.targetAttributeGroup,
 
-    const next = {
-      sources: cloneBranch(fullData.sources),
-      targets: cloneBranch(fullData.targets),
-    };
-    const branch = type === 'source' ? next.sources : next.targets;
-    const database = branch.find((item) => item.dbId === dbId);
-    if (!database) {
-      return;
-    }
+      // Mapping
+      mappingSuggestions: state.mappingSuggestions,
+      mappingLoading: state.mappingLoading,
 
-    database.schemas = schemas;
-    database.schemasLoaded = true;
-    setFullData(next);
-  }
+      // Chat
+      chatMessages: state.chatMessages,
+      chatLoading: state.chatLoading,
 
-  async function selectSchema(type: 'source' | 'target', dbId: string, schemaId: string) {
-    if (!fullData) {
-      return;
-    }
+      // Session
+      session: state.session,
 
-    const [databaseName, schemaName] = schemaId.split(':', 2);
-    const tableResponse = await dbService.getSchemaTables(databaseName, schemaName);
-    const tables: TableNode[] = tableResponse.map((table: { table_name: string }) => ({
-      tableId: `${databaseName}.${schemaName}.${table.table_name}`,
-      tableName: table.table_name,
-      qualifiedName: `${databaseName}.${schemaName}.${table.table_name}`,
-      isSelected: false,
-      tag: type === 'source' ? 'Source' : 'Target',
-      rows: '--',
-      columns: 0,
-    }));
+      // Loading / error
+      loadState: state.loadState,
+      errorState: state.errorState,
 
-    const next = {
-      sources: cloneBranch(fullData.sources),
-      targets: cloneBranch(fullData.targets),
-    };
-    const branch = type === 'source' ? next.sources : next.targets;
+      // Actions — data loading
+      reloadInitialData: () => {
+        dispatch(fetchDatabases());
+      },
 
-    branch.forEach((database) => {
-      const isActiveDb = database.dbId === dbId;
-      database.isSelected = isActiveDb;
-      database.schemas.forEach((schema) => {
-        schema.isSelected = isActiveDb && schema.schemaId === schemaId;
-        if (schema.schemaId === schemaId) {
-          schema.tables = tables.map((table) => ({ ...table }));
+      loadSchemas: (type: SelectionSide, dbId: string) => {
+        dispatch(fetchSchemas({ type, dbId }));
+      },
+
+      selectSchema: (type: SelectionSide, dbId: string, schemaId: string) => {
+        dispatch(fetchTables({ type, dbId, schemaId }));
+      },
+
+      // Actions — selection
+      toggleSource: (tableId: string) => {
+        dispatch(toggleSourceAction({ tableId }));
+        // After toggling, refresh source attributes
+        const nextSources = state.sources.map((t) =>
+          t.tableId === tableId ? { ...t, isSelected: !t.isSelected } : t
+        );
+        const selectedNames = nextSources
+          .filter((t) => t.isSelected)
+          .map((t) => t.qualifiedName);
+        dispatch(fetchAttributes({ qualifiedNames: selectedNames, side: "source" }));
+      },
+
+      selectTarget: (tableId: string) => {
+        dispatch(selectTargetAction({ tableId }));
+        // After selecting, refresh target attributes
+        const target = state.targets.find((t) => t.tableId === tableId);
+        if (target) {
+          dispatch(
+            fetchAttributes({ qualifiedNames: [target.qualifiedName], side: "target" })
+          );
         }
-      });
-    });
+      },
 
-    setFullData(next);
+      clearSources: () => dispatch(clearSourcesAction()),
+      clearTargets: () => dispatch(clearTargetsAction()),
 
-    if (type === 'source') {
-      setSources(tables);
-      setSourceInfo({ dbName: databaseName, schemaName });
-      setSourceAttributeGroups([]);
-      setMappingSuggestions([]);
-    } else {
-      setTargets(tables);
-      setTargetInfo({ dbName: databaseName, schemaName });
-      setTargetAttributeGroup(null);
-      setMappingSuggestions([]);
-    }
-  }
+      // Actions — AI
+      runAutoMap: () => {
+        dispatch(runAutoMapThunk());
+      },
+      sendChatMessage: (message: string) => {
+        dispatch(sendChatMessageThunk(message));
+      },
 
-  async function refreshSourceAttributes(nextSources: TableNode[]) {
-    const selected = nextSources.filter((table) => table.isSelected).map((table) => table.qualifiedName);
-    if (!selected.length) {
-      setSourceAttributeGroups([]);
-      return;
-    }
+      // Computed
+      selectedSourceCount: state.sources.filter((t) => t.isSelected).length,
+      mappingCount: state.mappingSuggestions.filter(
+        (item) => item.sourceAttributes.length > 0
+      ).length,
 
-    const attributes = await dbService.getTableAttributes(selected);
-    setSourceAttributeGroups(
-      attributes.map((item: { table: TableRef; columns: Array<{ column_name: string; data_type: string }> }) => ({
-        table: item.table.table,
-        qualifiedName: `${item.table.database}.${item.table.schema}.${item.table.table}`,
-        columns: item.columns.map((column) => ({
-          name: column.column_name,
-          type: column.data_type,
-        })),
-      }))
-    );
-  }
+      // Derived source features
+      drivingTableId: state.drivingTableId,
+      setDrivingTable: (tableId: string | null) =>
+        dispatch(setDrivingTableAction({ tableId })),
+      derivedSources: state.derivedSources,
+      addDerivedSource: (source: DerivedSource) =>
+        dispatch(addDerivedSourceAction(source)),
+      updateDerivedSource: (source: DerivedSource) =>
+        dispatch(updateDerivedSourceAction(source)),
+      removeDerivedSource: (id: string) =>
+        dispatch(removeDerivedSourceAction({ id })),
+    };
+  }, [state, dispatch]);
 
-  async function refreshTargetAttributes(nextTargets: TableNode[]) {
-    const selected = nextTargets.find((table) => table.isSelected);
-    if (!selected) {
-      setTargetAttributeGroup(null);
-      return;
-    }
-
-    const [attributes] = await dbService.getTableAttributes([selected.qualifiedName]);
-    if (!attributes) {
-      setTargetAttributeGroup(null);
-      return;
-    }
-
-    setTargetAttributeGroup({
-      table: attributes.table.table,
-      qualifiedName: `${attributes.table.database}.${attributes.table.schema}.${attributes.table.table}`,
-      columns: attributes.columns.map((column: { column_name: string; data_type: string }) => ({
-        name: column.column_name,
-        type: column.data_type,
-      })),
-    });
-  }
-
-  function toggleSource(tableId: string) {
-    const nextSources = sources.map((table) =>
-      table.tableId === tableId ? { ...table, isSelected: !table.isSelected } : table
-    );
-    setSources(nextSources);
-    setMappingSuggestions([]);
-    void refreshSourceAttributes(nextSources);
-  }
-
-  function selectTarget(tableId: string) {
-    const nextTargets = targets.map((table) => ({
-      ...table,
-      isSelected: table.tableId === tableId,
-    }));
-    setTargets(nextTargets);
-    setMappingSuggestions([]);
-    void refreshTargetAttributes(nextTargets);
-  }
-
-  function clearSources() {
-    const nextSources = sources.map((table) => ({ ...table, isSelected: false }));
-    setSources(nextSources);
-    setSourceAttributeGroups([]);
-    setMappingSuggestions([]);
-  }
-
-  function clearTargets() {
-    const nextTargets = targets.map((table) => ({ ...table, isSelected: false }));
-    setTargets(nextTargets);
-    setTargetAttributeGroup(null);
-    setMappingSuggestions([]);
-  }
-
-  async function runAutoMap() {
-    const selectedSourceTables = sources.filter((table) => table.isSelected);
-    if (!selectedSourceTables.length || !targetAttributeGroup) {
-      return;
-    }
-
-    setMappingLoading(true);
-    try {
-      const response = await workbenchService.invoke({
-        interface: 'AUTO_MAP',
-        thread_id: agentThreadId,
-        source_tables: selectedSourceTables.map((table) => makeTableRef(table.qualifiedName)),
-        attributes: targetAttributeGroup.columns.map((column) => ({
-          target_table: makeTableRef(targetAttributeGroup.qualifiedName),
-          target_attribute: column.name,
-          source_mappings: null,
-        })),
-      });
-
-      setAgentThreadId(response.thread_id);
-      const mappingEntries = Object.entries(
-        (response.result?.mappings ?? {}) as Record<
-          string,
-          { source_attributes?: string[]; confidence_score?: number }
-        >
-      );
-      const mappings = mappingEntries.map(([targetAttribute, value]) => ({
-          targetAttribute,
-          sourceAttributes: value?.source_attributes ?? [],
-          confidenceScore: value?.confidence_score ?? 0,
-        }));
-      setMappingSuggestions(mappings);
-      if (response.message) {
-        setChatMessages((current) => [...current, { role: 'assistant', content: response.message }]);
-      }
-    } catch (error) {
-      console.error('Failed to run auto-map', error);
-    } finally {
-      setMappingLoading(false);
-    }
-  }
-
-  async function sendChatMessage(message: string) {
-    const trimmed = message.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    setChatMessages((current) => [...current, { role: 'user', content: trimmed }]);
-    setChatLoading(true);
-    try {
-      const response = await workbenchService.invoke({
-        interface: 'CHAT',
-        thread_id: agentThreadId,
-        message: trimmed,
-      });
-      setAgentThreadId(response.thread_id);
-      setChatMessages((current) => [
-        ...current,
-        {
-          role: 'assistant',
-          content: response.message ?? 'The agent completed the request without a message.',
-        },
-      ]);
-    } catch (error) {
-      console.error('Failed to send STTM chat message', error);
-      setChatMessages((current) => [
-        ...current,
-        {
-          role: 'assistant',
-          content: 'I could not reach the STTM agent just now. Please try again.',
-        },
-      ]);
-    } finally {
-      setChatLoading(false);
-    }
-  }
-
-  const value = useMemo<ContextValue>(
-    () => ({
-      fullData,
-      sources,
-      targets,
-      sourceInfo,
-      targetInfo,
-      sourceAttributeGroups,
-      targetAttributeGroup,
-      mappingSuggestions,
-      mappingLoading,
-      chatMessages,
-      chatLoading,
-      session,
-      loadSchemas,
-      selectSchema,
-      toggleSource,
-      selectTarget,
-      clearSources,
-      clearTargets,
-      runAutoMap,
-      sendChatMessage,
-      selectedSourceCount: sources.filter((table) => table.isSelected).length,
-      mappingCount: mappingSuggestions.filter((item) => item.sourceAttributes.length > 0).length,
-    }),
-    [
-      fullData,
-      sources,
-      targets,
-      sourceInfo,
-      targetInfo,
-      sourceAttributeGroups,
-      targetAttributeGroup,
-      mappingSuggestions,
-      mappingLoading,
-      chatMessages,
-      chatLoading,
-      session,
-      loadSchemas,
-    ]
+  return (
+    <SttmBuilderContext.Provider value={value}>
+      {children}
+    </SttmBuilderContext.Provider>
   );
-
-  return <SttmBuilderContext.Provider value={value}>{children}</SttmBuilderContext.Provider>;
 }
 
 export const useSttmBuilderContext = () => {
   const context = useContext(SttmBuilderContext);
+
   if (!context) {
-    throw new Error('useSttmBuilderContext must be used within SttmBuilderProvider');
+    throw new Error(
+      "useSttmBuilderContext must be used within SttmBuilderProvider"
+    );
   }
+
   return context;
 };

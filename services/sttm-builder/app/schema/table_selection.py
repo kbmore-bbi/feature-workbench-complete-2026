@@ -19,6 +19,8 @@ class DatabaseItem(BaseModel):
 
 class TableItem(BaseModel):
     table_name: str
+    row_count: Optional[int] = None
+    column_count: int = 0
 
 
 class ColumnItem(BaseModel):
@@ -27,8 +29,31 @@ class ColumnItem(BaseModel):
     is_nullable: str
     ordinal_position: int
     comment: Optional[str]
+    is_primary_key: bool = False
+    is_foreign_key: bool = False
 
 
 class TableAttributes(BaseModel):
     table: TableRef
     columns: list[ColumnItem]
+
+
+class RelationshipColumnMapping(BaseModel):
+    left_column: str
+    right_column: str
+    operator: str = "="
+
+
+class RelationshipItem(BaseModel):
+    id: str
+    left_table: TableRef
+    right_table: TableRef
+    constraint_name: str | None = None
+    join_type: str = "INNER"
+    conditions: list[RelationshipColumnMapping]
+    source: str = "FOREIGN_KEY"
+    locked: bool = True
+
+
+class RelationshipRequest(BaseModel):
+    tables: list[TableRef]

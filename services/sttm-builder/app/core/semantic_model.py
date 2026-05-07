@@ -8,7 +8,12 @@ from snowflake.snowpark import Session
 
 from app.core.config import Settings
 from app.core.exceptions import SnowflakeAgentError, SnowflakeQueryError
-from app.core.snowflake import SnowflakeClient, build_caller_token
+from app.core.snowflake import (
+    SnowflakeClient,
+    build_caller_token,
+    get_local_rest_session_context,
+    using_local_dev_auth,
+)
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.schema.common import TableRef
 from app.schema.semantic_model import GenerateRequest, JobStatus
@@ -83,6 +88,70 @@ class SemanticModelService:
             "updated_at": r["UPDATED_AT"],
         }
 
+    def ensure_tables(
+        self,
+        session: Session,
+        agent_client: SnowflakeAgentClient,
+        tables: list[TableRef],
+        force: bool = False,
+    ) -> dict[str, int]:
+        generated = 0
+        skipped = 0
+
+        for db, schema in _unique_schemas(tables):
+            outcome = _execute_task(
+                session,
+                agent_client,
+                self._table,
+                self._agent_name,
+                "SCHEMA",
+                db,
+                schema,
+                "",
+                force,
+            )
+            generated += 1 if outcome == "generated" else 0
+            skipped += 1 if outcome == "skipped" else 0
+
+        for table in tables:
+            table_db = table.database.upper()
+            table_schema = table.schema.upper()
+            table_name = table.table.upper()
+            for scope in ("TABLE", "ATTRIBUTE"):
+                outcome = _execute_task(
+                    session,
+                    agent_client,
+                    self._table,
+                    self._agent_name,
+                    scope,
+                    table_db,
+                    table_schema,
+                    table_name,
+                    force,
+                )
+                generated += 1 if outcome == "generated" else 0
+                skipped += 1 if outcome == "skipped" else 0
+
+        return {"generated": generated, "skipped": skipped}
+
+    def get_table_records(
+        self,
+        session: Session,
+        tables: list[TableRef],
+    ) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for table in tables:
+            record = self.get_record(
+                session=session,
+                scope="TABLE",
+                db_name=table.database,
+                schema_name=table.schema,
+                table_name=table.table,
+            )
+            if record:
+                records.append(record)
+        return records
+
     # ------------------------------------------------------------------
     # Background task
     # ------------------------------------------------------------------
@@ -99,22 +168,36 @@ class SemanticModelService:
         sf_client = SnowflakeClient(settings=self._settings, user_token=user_token)
         try:
             session = sf_client.session
-            agent_client = SnowflakeAgentClient(token=build_caller_token(user_token))
+            agent_client = self._build_agent_client(user_token)
 
-            # 1. Schema-level — one per unique (database, schema)
             for db, schema in _unique_schemas(req.tables):
-                _run_task(job, session, agent_client, self._table, self._agent_name,
-                          "SCHEMA", db, schema, "", req.force)
+                _run_task(
+                    job,
+                    session,
+                    agent_client,
+                    self._table,
+                    self._agent_name,
+                    "SCHEMA",
+                    db,
+                    schema,
+                    "",
+                    req.force,
+                )
 
-            # 2. Table-level
             for tbl in req.tables:
-                _run_task(job, session, agent_client, self._table, self._agent_name,
-                          "TABLE", tbl.database.upper(), tbl.schema.upper(), tbl.table.upper(), req.force)
-
-            # 3. Attribute-level (all columns per table)
-            for tbl in req.tables:
-                _run_task(job, session, agent_client, self._table, self._agent_name,
-                          "ATTRIBUTE", tbl.database.upper(), tbl.schema.upper(), tbl.table.upper(), req.force)
+                for scope in ("TABLE", "ATTRIBUTE"):
+                    _run_task(
+                        job,
+                        session,
+                        agent_client,
+                        self._table,
+                        self._agent_name,
+                        scope,
+                        tbl.database.upper(),
+                        tbl.schema.upper(),
+                        tbl.table.upper(),
+                        req.force,
+                    )
 
             job.status = "completed"
             job.completed_at = datetime.now(timezone.utc)
@@ -126,6 +209,20 @@ class SemanticModelService:
             job.completed_at = datetime.now(timezone.utc)
         finally:
             sf_client.close()
+
+    def _build_agent_client(self, user_token: str) -> SnowflakeAgentClient:
+        if using_local_dev_auth(self._settings, user_token):
+            context = get_local_rest_session_context(self._settings)
+            return SnowflakeAgentClient(
+                token=context.token,
+                host=context.host,
+                auth_mode="snowflake_token",
+            )
+
+        return SnowflakeAgentClient(
+            token=build_caller_token(user_token),
+            host=self._settings.resolved_snowflake_host or None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -158,20 +255,21 @@ def _run_task(
 ) -> None:
     label = f"{scope} {db}.{schema}{'.'+tbl if tbl else ''}"
     try:
-        current_hash = _compute_ddl_hash(session, scope, db, schema, tbl)
-
-        if not force and _is_fresh(session, sm_table, scope, db, schema, tbl, current_hash):
+        outcome = _execute_task(
+            session,
+            agent_client,
+            sm_table,
+            agent_name,
+            scope,
+            db,
+            schema,
+            tbl,
+            force,
+        )
+        if outcome == "skipped":
             job.skipped += 1
             logger.debug("Skipped (fresh): %s", label)
             return
-
-        prompt = _build_prompt(scope, db, schema, tbl)
-        raw_text, _ = agent_client.run(
-            [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-            agent=agent_name,
-        )
-        envelope = _parse_response(raw_text)
-        _upsert(session, sm_table, scope, db, schema, tbl, envelope, current_hash)
 
         job.completed += 1
         logger.debug("Generated: %s", label)
@@ -182,13 +280,43 @@ def _run_task(
         logger.exception("Failed to generate semantic model for %s", label)
 
 
+def _execute_task(
+    session: Session,
+    agent_client: SnowflakeAgentClient,
+    sm_table: str,
+    agent_name: str,
+    scope: str,
+    db: str,
+    schema: str,
+    tbl: str,
+    force: bool,
+) -> str:
+    current_hash = _compute_ddl_hash(session, scope, db, schema, tbl)
+    if not force and _is_fresh(session, sm_table, scope, db, schema, tbl, current_hash):
+        return "skipped"
+
+    prompt = _build_prompt(scope, db, schema, tbl)
+    raw_text, _ = agent_client.run(
+        [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+        agent=agent_name,
+    )
+    envelope = _parse_response(raw_text)
+    _upsert(session, sm_table, scope, db, schema, tbl, envelope, current_hash)
+    return "generated"
+
+
 def _compute_ddl_hash(session: Session, scope: str, db: str, schema: str, tbl: str) -> str:
     if scope == "SCHEMA":
         sql = f"""
-            SELECT COALESCE(MD5(
-                LISTAGG(TABLE_NAME || CHR(31) || COLUMN_NAME || CHR(31) || DATA_TYPE || CHR(31) || IS_NULLABLE
-                        ORDER BY TABLE_NAME, ORDINAL_POSITION)
-            ), 'EMPTY') AS HASH
+            SELECT COALESCE(
+                MD5(
+                    LISTAGG(
+                        TABLE_NAME || CHR(31) || COLUMN_NAME || CHR(31) || DATA_TYPE || CHR(31) || IS_NULLABLE,
+                        ''
+                    ) WITHIN GROUP (ORDER BY TABLE_NAME, ORDINAL_POSITION)
+                ),
+                'EMPTY'
+            ) AS HASH
             FROM {db}.INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = '{schema}'
         """

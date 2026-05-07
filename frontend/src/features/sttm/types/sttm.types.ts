@@ -17,6 +17,9 @@ export interface Column {
   type?: string;
   isPrimaryKey?: boolean;
   isForeignKey?: boolean;
+  tableId?: string;
+  tableName?: string;
+  selected?: boolean;
 }
 
 export interface TableMeta {
@@ -38,6 +41,9 @@ export interface JoinConfig {
   joinType?: "INNER" | "LEFT" | "RIGHT" | "FULL";
   leftTableId?: string;
   rightTableId?: string;
+  constraintName?: string;
+  source?: "FOREIGN_KEY" | "USER_DEFINED";
+  locked?: boolean;
   conditions?: {
     leftColumn?: string;
     operator?: string;
@@ -48,7 +54,12 @@ export interface JoinConfig {
 export interface DerivedSource {
   id: string;
   sourceName: string;
+  isSelected?: boolean;
+  derivedSourceIds?: string[];
+  sqlText?: string;
   alias?: string;
+  drivingTableId?: string;
+  tableIds?: string[];
   joins: {
     id: string;
     joinType: "INNER" | "LEFT" | "RIGHT" | "FULL";
@@ -63,6 +74,12 @@ export interface DerivedSource {
   }[];
   filters: any[];
   columns: Column[];
+  previewColumns?: Array<{
+    name: string;
+    dataType: string;
+    isPrimaryKey?: boolean;
+  }>;
+  previewRows?: Array<Record<string, unknown>>;
 }
 
 // -----------------
@@ -78,6 +95,7 @@ export type TableNode = {
   tag: string;
   rows: string;
   columns: number;
+  columnItems?: Column[];
 };
 
 export type SchemaNode = {
@@ -106,10 +124,7 @@ export type SourceTargetInfo = {
 export type ColumnGroup = {
   table: string;
   qualifiedName: string;
-  columns: Array<{
-    name: string;
-    type: string;
-  }>;
+  columns: Column[];
 };
 
 export type MappingSuggestion = {
@@ -130,6 +145,7 @@ export type BuilderLoadState = {
   schemasByDb: Record<string, LoadStatus>;
   tablesBySchema: Record<string, LoadStatus>;
   attributes: LoadStatus;
+  relationships: LoadStatus;
   autoMap: LoadStatus;
   chat: LoadStatus;
 };
@@ -139,6 +155,7 @@ export type BuilderErrorState = {
   schemasByDb: Record<string, string | undefined>;
   tablesBySchema: Record<string, string | undefined>;
   attributes?: string;
+  relationships?: string;
   autoMap?: string;
   chat?: string;
 };
@@ -199,8 +216,11 @@ export type SttmBuilderContextValue = {
   // Derived source features
   drivingTableId: string | null;
   setDrivingTable: (tableId: string | null) => void;
+  relationships: JoinConfig[];
+  setRelationships: (joins: JoinConfig[]) => void;
   derivedSources: DerivedSource[];
   addDerivedSource: (source: DerivedSource) => void;
   updateDerivedSource: (source: DerivedSource) => void;
   removeDerivedSource: (id: string) => void;
+  toggleDerivedSource: (id: string) => void;
 };

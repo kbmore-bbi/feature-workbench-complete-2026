@@ -1,24 +1,75 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  Dialog,
+  Background,
+  BackgroundVariant,
+  Controls,
+  MarkerType,
+  ReactFlow,
+  type Connection,
+  type Edge,
+  useEdgesState,
+  useNodesState,
+} from "@xyflow/react";
+import {
   Box,
-  Typography,
+  Dialog,
   IconButton,
   InputBase,
+  Typography,
 } from "@mui/material";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import AddCircleOutlineRoundedIcon from "@mui/icons-material/AddCircleOutlineRounded";
-import RemoveCircleOutlineRoundedIcon from "@mui/icons-material/RemoveCircleOutlineRounded";
-import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import TableChartOutlinedIcon from "@mui/icons-material/TableChartOutlined";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
+
+import { dbService } from "@/services/dbService";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import { FocusButton } from "@/components/ui/focus-button";
-import { FocusSelect } from "@/components/ui/focus-select";
 import { FocusTable } from "@/components/ui/focus-table/focus-table";
 import { FilterConditions, type RuleGroup } from "./filter-conditions";
-import type { DerivedSource, TableMeta } from "@/features/sttm/types/sttm.types";
+import { JoinModal } from "./join-modal";
+import { TableEdge } from "./table-edge";
+import { TableNode, type TableNodeData } from "./table-node";
+import type { Column, DerivedSource, JoinConfig, TableMeta } from "@/features/sttm/types/sttm.types";
+
+const nodeTypes = { tableNode: TableNode };
+const edgeTypes = { tableEdge: TableEdge };
+
+function buildRelationshipHandleId(
+  table: { database?: string; schema?: string; name?: string },
+  columnName: string,
+  index: number,
+  kind: "source" | "target"
+) {
+  return `${table.database}.${table.schema}.${table.name}.${columnName}-${index}-${kind}`;
+}
+
+function resolveRelationshipHandleId(
+  table: TableMeta | undefined,
+  columnName: string | undefined,
+  kind: "source" | "target"
+) {
+  if (!table || !columnName) return undefined;
+  const index = (table.columns ?? []).findIndex((column) => column.name === columnName);
+  if (index === -1) return undefined;
+  return buildRelationshipHandleId(table, columnName, index, kind);
+}
+
+function parseRelationshipHandleId(
+  handleId: string | null | undefined,
+  kind: "source" | "target"
+) {
+  if (!handleId) return null;
+  const suffix = `-${kind}`;
+  if (!handleId.endsWith(suffix)) return null;
+  const withoutKind = handleId.slice(0, -suffix.length);
+  const lastDash = withoutKind.lastIndexOf("-");
+  if (lastDash === -1) return null;
+  return withoutKind.slice(withoutKind.lastIndexOf(".") + 1, lastDash);
+}
 
 interface AddDerivedModalProps {
   isOpen: boolean;
@@ -27,262 +78,848 @@ interface AddDerivedModalProps {
   onConfirm: (source: DerivedSource) => void;
 }
 
-type DerivedJoinRow = {
-  id: string;
-  leftTableId: string;
-  joinType: "INNER" | "LEFT" | "RIGHT" | "FULL";
-  rightTableId: string;
-  conditions: Array<{
-    id: string;
-    leftColumn: string;
-    operator: string;
-    rightColumn: string;
-  }>;
-};
+function tagChipPalette(tag?: string) {
+  const t = (tag || "").toLowerCase();
+  if (t.includes("derived")) return { tagBg: "#dcfce3", tagFg: "#166534" };
+  return { tagBg: "#f1f5f9", tagFg: "#475569" };
+}
 
-export function AddDerivedModal({ isOpen, onClose, editingSource, onConfirm }: AddDerivedModalProps) {
-  const { fullData } = useSttmBuilderContext();
+function isDerivedTableMeta(table: TableMeta | undefined) {
+  return table?.tag?.toLowerCase().includes("derived") ?? false;
+}
 
-  const [sourceName, setSourceName] = useState("");
-  const [joins, setJoins] = useState<DerivedJoinRow[]>([]);
-  const [filterGroups, setFilterGroups] = useState<RuleGroup[]>([]);
-  const [filterSql, setFilterSql] = useState<string>("");
-  const [customSql, setCustomSql] = useState<string>("");
-  const [activeTab, setActiveTab] = useState<"SQL" | "Preview">("SQL");
+function buildAlias(table: TableMeta, index: number) {
+  const base = (table.name ?? `t${index + 1}`)
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return (base || `t${index + 1}`).slice(0, 18);
+}
 
-  React.useEffect(() => {
-    if (isOpen) {
-      if (editingSource) {
-        setSourceName(editingSource.sourceName);
-        setJoins(editingSource.joins || []);
-        setFilterGroups(editingSource.filters || []);
-        setFilterSql(""); // Will be recalculated by FilterConditions
-        setCustomSql("");
-      } else {
-        setSourceName("");
-        setJoins([]);
-        setFilterGroups([]);
-        setFilterSql("");
-        setCustomSql("");
-      }
-      setActiveTab("SQL");
-    }
-  }, [isOpen, editingSource]);
+function normalizeColumns(columns: Column[] | undefined, table: TableMeta): Column[] {
+  return (columns ?? []).map((column) => ({
+    ...column,
+    tableId: column.tableId ?? (table.id as string),
+    tableName: column.tableName ?? table.name,
+  }));
+}
 
-  // Flatten all tables from fullData into TableMeta format
-  const availableTables: TableMeta[] = useMemo(() => {
-    const tables: TableMeta[] = [];
+function toTableRef(tableId: string) {
+  const [database, schema, table] = tableId.split(".", 3);
+  return { database, schema, table };
+}
+
+function indentSqlBlock(sqlText: string) {
+  return sqlText
+    .split("\n")
+    .map((line) => `  ${line}`)
+    .join("\n");
+}
+
+function toRelationshipPayload(join: JoinConfig) {
+  return {
+    id: join.id,
+    left_table: toTableRef(join.leftTableId as string),
+    right_table: toTableRef(join.rightTableId as string),
+    constraint_name: join.constraintName ?? null,
+    join_type: join.joinType ?? "INNER",
+    source: join.source ?? "USER_DEFINED",
+    locked: join.locked ?? false,
+    conditions: (join.conditions ?? [])
+      .filter((condition) => !!condition.leftColumn && !!condition.rightColumn)
+      .map((condition) => ({
+        left_column: condition.leftColumn as string,
+        right_column: condition.rightColumn as string,
+        operator: condition.operator ?? "=",
+      })),
+  };
+}
+
+function orientJoinAroundDrivingTable(
+  join: JoinConfig,
+  drivingTableId: string | null
+): JoinConfig {
+  if (!drivingTableId) {
+    return join;
+  }
+  if (join.leftTableId === drivingTableId || join.rightTableId !== drivingTableId) {
+    return join;
+  }
+
+  return {
+    ...join,
+    leftTableId: join.rightTableId,
+    rightTableId: join.leftTableId,
+    conditions: (join.conditions ?? []).map((condition) => ({
+      leftColumn: condition.rightColumn,
+      operator: condition.operator ?? "=",
+      rightColumn: condition.leftColumn,
+    })),
+  };
+}
+
+export function AddDerivedModal({
+  isOpen,
+  onClose,
+  editingSource,
+  onConfirm,
+}: AddDerivedModalProps) {
+  const { fullData, drivingTableId, relationships, sourceAttributeGroups, derivedSources } = useSttmBuilderContext();
+
+  const availableTables = useMemo<TableMeta[]>(() => {
+    const groupsByQualifiedName = new Map(
+      sourceAttributeGroups.map((group) => [group.qualifiedName, group.columns])
+    );
+    const selectedTables: TableMeta[] = [];
+
     for (const db of fullData?.sources ?? []) {
-      for (const sch of db.schemas ?? []) {
-        for (const tbl of sch.tables ?? []) {
-          if (tbl.isSelected) {
-            tables.push({
-              id: `${db.dbId}:${sch.schemaId}:${tbl.tableId}`,
-              name: tbl.tableName,
-              schema: sch.schemaName,
+      for (const schema of db.schemas ?? []) {
+        for (const table of schema.tables ?? []) {
+          if (!table.isSelected) continue;
+          const qualifiedName = table.qualifiedName;
+          const columns = normalizeColumns(
+            table.columnItems?.length ? table.columnItems : groupsByQualifiedName.get(qualifiedName),
+            {
+              id: table.tableId,
+              name: table.tableName,
+              schema: schema.schemaName,
               database: db.dbName,
-              rowCount: String(tbl.rows ?? "—"),
-              colCount: tbl.columns ?? 6,
-              columns: [], // We'll mock columns dynamically if needed, or assume they exist
-              tag: tbl.tag ?? "Source",
-            });
-          }
+            }
+          );
+          selectedTables.push({
+            id: table.tableId,
+            name: table.tableName,
+            schema: schema.schemaName,
+            database: db.dbName,
+            rowCount: table.rows ?? "—",
+            colCount: columns.length || table.columns || 0,
+            columns,
+            tag: "Source",
+          });
         }
       }
     }
-    return tables;
-  }, [fullData]);
 
-  // Mock columns based on table name for preview/dropdowns
-  const getColumnsForTable = (tableId: string) => {
-    const table = availableTables.find((t) => t.id === tableId);
-    if (!table) return [];
-    const tName = table.name?.toLowerCase() || "";
-    if (tName.includes("order")) {
-      return [
-        { name: "ORDER_ID", type: "BIGINT", isPrimaryKey: true },
-        { name: "CUST_ID", type: "INT", isForeignKey: true },
-        { name: "ORDER_DATE", type: "DATE" },
-        { name: "AMOUNT", type: "DECIMAL" },
-        { name: "STATUS", type: "VARCHAR" },
-      ];
+    const derivedTables: TableMeta[] = (derivedSources ?? [])
+      .filter((source) => source.isSelected)
+      .map((source) => ({
+        id: source.id,
+        name: source.sourceName,
+        schema: "DERIVED",
+        database: "DERIVED",
+        rowCount: "—",
+        colCount: source.columns.length,
+        columns: normalizeColumns(source.columns, {
+          id: source.id,
+          name: source.sourceName,
+          schema: "DERIVED",
+          database: "DERIVED",
+        }),
+        tag: "Derived",
+      }));
+
+    return [...selectedTables, ...derivedTables];
+  }, [derivedSources, fullData, sourceAttributeGroups]);
+
+  const derivedSourceMap = useMemo(
+    () => new Map((derivedSources ?? []).map((source) => [source.id, source])),
+    [derivedSources]
+  );
+
+  const isDerivedSourceId = (tableId: string) => derivedSourceMap.has(tableId);
+
+  const getPhysicalSourceTableIds = (tableIds: string[]) => {
+    const visited = new Set<string>();
+    const resolved = new Set<string>();
+
+    const visit = (tableId: string) => {
+      if (visited.has(tableId)) return;
+      visited.add(tableId);
+
+      const derivedSource = derivedSourceMap.get(tableId);
+      if (!derivedSource) {
+        resolved.add(tableId);
+        return;
+      }
+
+      for (const nestedTableId of derivedSource.tableIds ?? []) {
+        visit(nestedTableId);
+      }
+    };
+
+    for (const tableId of tableIds) {
+      visit(tableId);
     }
-    if (tName.includes("customer")) {
-      return [
-        { name: "CUST_ID", type: "BIGINT", isPrimaryKey: true },
-        { name: "NAME", type: "VARCHAR" },
-        { name: "EMAIL", type: "VARCHAR" },
-        { name: "REGION", type: "VARCHAR" },
-      ];
+
+    return Array.from(resolved);
+  };
+
+  const renderSqlSourceReference = (table: TableMeta, alias: string) => {
+    const derivedSource = derivedSourceMap.get(table.id as string);
+    if (!derivedSource) {
+      return `${table.database}.${table.schema}.${table.name} ${alias}`;
     }
-    return [
-      { name: "ID", type: "BIGINT", isPrimaryKey: true },
-      { name: "COL_1", type: "VARCHAR" },
-      { name: "COL_2", type: "VARCHAR" },
-      { name: "AMOUNT", type: "DECIMAL" },
-    ];
+
+    const sqlText = derivedSource.sqlText?.trim() || `SELECT * FROM ${table.name}`;
+    return `(\n${indentSqlBlock(sqlText)}\n) ${alias}`;
   };
 
-  const tableOptions = availableTables.map((t) => ({
-    label: `${t.schema}.${t.name}`,
-    value: t.id as string,
-  }));
+  const [sourceName, setSourceName] = useState("");
+  const [selectedTableIds, setSelectedTableIds] = useState<string[]>([]);
+  const [selectedColumnsByTable, setSelectedColumnsByTable] = useState<Record<string, string[]>>({});
+  const [joins, setJoins] = useState<JoinConfig[]>([]);
+  const [drivingTable, setDrivingTable] = useState<string | null>(null);
+  const [filterGroups, setFilterGroups] = useState<RuleGroup[]>([]);
+  const [filterSql, setFilterSql] = useState("");
+  const [customSql, setCustomSql] = useState("");
+  const [activeTab, setActiveTab] = useState<"SQL" | "Preview">("SQL");
+  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [editingJoin, setEditingJoin] = useState<JoinConfig | null>(null);
+  const [isValidating, setIsValidating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [previewColumnsState, setPreviewColumnsState] = useState<
+    Array<{ name: string; dataType: string; isPrimaryKey?: boolean }>
+  >([]);
+  const [previewRowsState, setPreviewRowsState] = useState<Array<Record<string, unknown>>>([]);
+  const [validationState, setValidationState] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
 
-  const handleAddJoinRow = () => {
-    const prevJoin = joins[joins.length - 1];
-    const leftTableId = prevJoin ? prevJoin.leftTableId : (availableTables[0]?.id as string) || "";
-    setJoins([...joins, {
-      id: Math.random().toString(36).substring(2, 9),
-      leftTableId,
-      joinType: "LEFT",
-      rightTableId: "",
-      conditions: [{ id: Math.random().toString(36).substring(2, 9), leftColumn: "", operator: "=", rightColumn: "" }]
-    }]);
-  };
+  useEffect(() => {
+    if (!isOpen) return;
 
-  const handleRemoveJoinRow = (id: string) => {
-    setJoins((prev) => prev.filter((j) => j.id !== id));
-  };
+    const fallbackDriving =
+      (drivingTableId && availableTables.find((table) => table.id === drivingTableId)?.id) ||
+      availableTables[0]?.id ||
+      null;
+    const initialTableIds = editingSource?.tableIds?.length
+      ? editingSource.tableIds
+      : fallbackDriving
+        ? [fallbackDriving]
+        : [];
 
-  const updateJoinRow = (id: string, updates: Partial<DerivedJoinRow>) => {
-    setJoins((prev) => prev.map((j) => (j.id === id ? { ...j, ...updates } : j)));
-  };
+    const initialSelectedColumns =
+      editingSource?.columns?.length
+        ? editingSource.columns.reduce<Record<string, string[]>>((acc, column) => {
+            const tableId = column.tableId;
+            const columnName = column.name;
+            if (!tableId || !columnName) return acc;
+            acc[tableId] = [...(acc[tableId] ?? []), columnName];
+            return acc;
+          }, {})
+        : Object.fromEntries(
+            initialTableIds.map((tableId) => {
+              return [tableId, []];
+            })
+          );
 
-  const handleAddConditionRow = (joinId: string) => {
-    setJoins((prev) => prev.map((j) => {
-      if (j.id === joinId) {
-        return { ...j, conditions: [...j.conditions, { id: Math.random().toString(36).substring(2, 9), leftColumn: "", operator: "=", rightColumn: "" }] };
+    setSourceName(editingSource?.sourceName ?? "");
+    setSelectedTableIds(initialTableIds);
+    setSelectedColumnsByTable(initialSelectedColumns);
+    setJoins(editingSource?.joins ?? []);
+    setDrivingTable(editingSource?.drivingTableId ?? fallbackDriving);
+    setFilterGroups(editingSource?.filters ?? []);
+    setFilterSql("");
+    setCustomSql("");
+    setActiveTab("SQL");
+    setEditingJoin(null);
+    setIsJoinModalOpen(false);
+    setPreviewColumnsState(
+      editingSource?.previewColumns?.map((column) => ({
+        name: column.name,
+        dataType: column.dataType,
+        isPrimaryKey: column.isPrimaryKey,
+      })) ?? []
+    );
+    setPreviewRowsState(editingSource?.previewRows ?? []);
+    setValidationState(null);
+  }, [availableTables, drivingTableId, editingSource, isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setPreviewColumnsState((prev) => (prev.length ? [] : prev));
+    setPreviewRowsState((prev) => (prev.length ? [] : prev));
+    setValidationState((prev) =>
+      prev?.type === "success"
+        ? { type: "success", message: "SQL changed. Re-run validation to refresh the preview." }
+        : prev
+    );
+  }, [customSql, drivingTable, filterGroups, joins, selectedColumnsByTable, selectedTableIds, isOpen]);
+
+  const selectedTables = useMemo(() => {
+    return availableTables.filter((table) => selectedTableIds.includes(table.id as string));
+  }, [availableTables, selectedTableIds]);
+
+  const cachedRelationships = useMemo(() => {
+    const selectedIdSet = new Set(selectedTableIds);
+    return relationships.filter(
+      (join) =>
+        !!join.leftTableId &&
+        !!join.rightTableId &&
+        selectedIdSet.has(join.leftTableId) &&
+        selectedIdSet.has(join.rightTableId)
+    );
+  }, [relationships, selectedTableIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadRelationships = async () => {
+      const physicalSelectedTableIds = selectedTableIds.filter(
+        (tableId) => !isDerivedSourceId(tableId)
+      );
+
+      if (physicalSelectedTableIds.length < 2) {
+        setJoins((prev) => prev.filter((join) => !join.locked));
+        return;
       }
-      return j;
-    }));
-  };
 
-  const handleRemoveConditionRow = (joinId: string, conditionId: string) => {
-    setJoins((prev) => prev.map((j) => {
-      if (j.id === joinId) {
-        return { ...j, conditions: j.conditions.filter((c) => c.id !== conditionId) };
-      }
-      return j;
-    }));
-  };
-
-  const updateConditionRow = (joinId: string, conditionId: string, updates: any) => {
-    setJoins((prev) => prev.map((j) => {
-      if (j.id === joinId) {
-        return { ...j, conditions: j.conditions.map((c) => c.id === conditionId ? { ...c, ...updates } : c) };
-      }
-      return j;
-    }));
-  };
-
-  const involvedTables = useMemo(() => {
-    const tableIds = new Set<string>();
-    joins.forEach((j) => {
-      if (j.leftTableId) tableIds.add(j.leftTableId);
-      if (j.rightTableId) tableIds.add(j.rightTableId);
-    });
-    return availableTables.filter((t) => tableIds.has(t.id as string)).map(t => ({
-      ...t,
-      columns: getColumnsForTable(t.id as string)
-    }));
-  }, [joins, availableTables]);
-
-  const joinSqlPreview = useMemo(() => {
-    if (joins.length === 0) return "No join clauses defined";
-    return joins
-      .map((j) => {
-        if (!j.leftTableId || !j.rightTableId || !j.conditions || j.conditions.length === 0) return "";
-        const leftT = availableTables.find((t) => t.id === j.leftTableId);
-        const rightT = availableTables.find((t) => t.id === j.rightTableId);
-        if (!leftT || !rightT) return "";
-        const lName = `${leftT.schema}.${leftT.name}`;
-        const rName = `${rightT.schema}.${rightT.name}`;
-
-        const conds = j.conditions.filter(c => c.leftColumn && c.operator && c.rightColumn).map(c => {
-          return `${lName}.${c.leftColumn} ${c.operator} ${rName}.${c.rightColumn}`;
+      if (cachedRelationships.length > 0) {
+        setJoins((prev) => {
+          const manual = prev.filter((join) => !join.locked);
+          const auto = cachedRelationships.map((join) =>
+            orientJoinAroundDrivingTable(
+              {
+                ...join,
+                locked: join.locked ?? true,
+                source: join.source ?? "FOREIGN_KEY",
+              },
+              drivingTable
+            )
+          );
+          return [...manual, ...auto];
         });
+        return;
+      }
 
-        if (conds.length === 0) return `  ${j.joinType} JOIN ${rName}\n    ON ?`;
-        return `  ${j.joinType} JOIN ${rName}\n    ON ${conds.join("\n   AND ")}`;
+      try {
+        const relationships = await dbService.getTableRelationships(
+          physicalSelectedTableIds.map((tableId) => toTableRef(tableId))
+        );
+        if (cancelled) return;
+
+        const autoJoins: JoinConfig[] = relationships.map(
+          (item: {
+            id?: string;
+            left_table: { database: string; schema: string; table: string };
+            right_table: { database: string; schema: string; table: string };
+            constraint_name?: string | null;
+            join_type?: "INNER" | "LEFT" | "RIGHT" | "FULL";
+            source?: "FOREIGN_KEY" | "USER_DEFINED" | null;
+            locked?: boolean;
+            conditions?: Array<{
+              left_column?: string;
+              right_column?: string;
+              fk_column?: string;
+              pk_column?: string;
+              operator?: string;
+            }>;
+          }) => ({
+            id:
+              item.id ??
+              item.constraint_name ??
+              `${item.left_table.database}.${item.left_table.schema}.${item.left_table.table}__${item.right_table.database}.${item.right_table.schema}.${item.right_table.table}`,
+            leftTableId: `${item.left_table.database}.${item.left_table.schema}.${item.left_table.table}`,
+            rightTableId: `${item.right_table.database}.${item.right_table.schema}.${item.right_table.table}`,
+            constraintName: item.constraint_name ?? undefined,
+            joinType: item.join_type ?? "INNER",
+            source: item.source ?? "FOREIGN_KEY",
+            locked: item.locked ?? true,
+            conditions: (item.conditions ?? [])
+              .filter(
+                (condition) =>
+                  (condition.left_column || condition.fk_column) &&
+                  (condition.right_column || condition.pk_column)
+              )
+              .map((condition) => ({
+                leftColumn: (condition.left_column ?? condition.fk_column) as string,
+                rightColumn: (condition.right_column ?? condition.pk_column) as string,
+                operator: condition.operator ?? "=",
+              })),
+          })
+        ).map((join: JoinConfig) => orientJoinAroundDrivingTable(join, drivingTable));
+
+        setJoins((prev) => {
+          const manual = prev.filter((join) => !join.locked);
+          return [...manual, ...autoJoins];
+        });
+      } catch {
+        if (!cancelled) {
+          setValidationState({
+            type: "error",
+            message: "Unable to load automatic table relationships right now.",
+          });
+        }
+      }
+    };
+
+    void loadRelationships();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [cachedRelationships, drivingTable, selectedTableIds, derivedSourceMap]);
+
+  useEffect(() => {
+    if (!drivingTable) return;
+    setJoins((prev) => prev.map((join) => orientJoinAroundDrivingTable(join, drivingTable)));
+  }, [drivingTable]);
+
+  const tableAliasById = useMemo(() => {
+    return Object.fromEntries(
+      selectedTables.map((table, index) => [table.id as string, buildAlias(table, index)])
+    ) as Record<string, string>;
+  }, [selectedTables]);
+
+  const relationshipNodes = useMemo(() => {
+    return selectedTables.map((table, index) => ({
+      id: table.id as string,
+      type: "tableNode",
+      position: { x: 32 + index * 268, y: 40 },
+      data: {
+        label: table.name ?? "—",
+        schema: table.schema ?? "—",
+        database: table.database ?? "—",
+        tag: table.id === drivingTable ? "Driving" : table.tag ?? "Source",
+        tagBg: table.id === drivingTable ? "#fef3c7" : tagChipPalette(table.tag).tagBg,
+        tagFg: table.id === drivingTable ? "#854d0e" : tagChipPalette(table.tag).tagFg,
+        secondaryTag: isDerivedTableMeta(table) ? "Derived" : undefined,
+        secondaryTagBg: "#dcfce7",
+        secondaryTagFg: "#166534",
+        rowCount: table.rowCount ?? "—",
+        colCount: table.colCount ?? table.columns?.length ?? 0,
+        columns: table.columns ?? [],
+        compact: true,
+        selectableColumns: true,
+        selectedColumns: selectedColumnsByTable[table.id as string] ?? [],
+        showColumnSearch: true,
+        onToggleColumn: (columnName: string, checked: boolean) => {
+          setSelectedColumnsByTable((prev) => {
+            const current = new Set(prev[table.id as string] ?? []);
+            if (checked) current.add(columnName);
+            else current.delete(columnName);
+            return { ...prev, [table.id as string]: Array.from(current) };
+          });
+        },
+      } satisfies TableNodeData,
+    }));
+  }, [drivingTable, selectedColumnsByTable, selectedTables]);
+
+  const [nodes, setNodes, onNodesChange] = useNodesState(relationshipNodes);
+
+  useEffect(() => {
+    setNodes((prevNodes) =>
+      relationshipNodes.map((node) => {
+        const existing = prevNodes.find((prevNode) => prevNode.id === node.id);
+        return existing
+          ? {
+              ...node,
+              position: existing.position,
+            }
+          : node;
       })
-      .filter(Boolean)
-      .join("\n");
-  }, [joins, availableTables]);
+    );
+  }, [relationshipNodes, setNodes]);
 
-  const fullSqlExpression = useMemo(() => {
+  const relationshipEdges = useMemo(() => {
+    return joins
+      .map((join) => {
+        const first = join.conditions?.[0];
+        if (!join.id || !join.leftTableId || !join.rightTableId || !first) return null;
+        if (!first.leftColumn || !first.rightColumn) return null;
+        const leftTable = selectedTables.find((table) => table.id === join.leftTableId);
+        const rightTable = selectedTables.find((table) => table.id === join.rightTableId);
+        const sourceHandle = resolveRelationshipHandleId(leftTable, first.leftColumn, "source");
+        const targetHandle = resolveRelationshipHandleId(rightTable, first.rightColumn, "target");
+        if (!sourceHandle || !targetHandle) return null;
+        return {
+          id: join.id,
+          source: join.leftTableId,
+          target: join.rightTableId,
+          sourceHandle,
+          targetHandle,
+          type: "tableEdge",
+          data: {
+            joinType: join.joinType ?? "INNER",
+            conditionCount: join.conditions?.length ?? 0,
+            onDelete: (id: string) => setJoins((prev) => prev.filter((item) => item.id !== id)),
+            onEdit: (id: string) => {
+              const joinToEdit = joins.find((item) => item.id === id);
+              if (joinToEdit) {
+                setEditingJoin(joinToEdit);
+                setIsJoinModalOpen(true);
+              }
+            },
+          },
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            color:
+              (join.joinType ?? "INNER") === "LEFT"
+                ? "#1d4ed8"
+                : (join.joinType ?? "INNER") === "RIGHT"
+                  ? "#0f766e"
+                  : (join.joinType ?? "INNER") === "FULL"
+                    ? "#7c3aed"
+                    : "#111827",
+          },
+        } satisfies Edge;
+      })
+      .filter(Boolean) as Edge[];
+  }, [joins, selectedTables]);
+
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+
+  useEffect(() => {
+    setEdges(relationshipEdges);
+  }, [relationshipEdges, setEdges]);
+
+  useEffect(() => {
+    const ids = new Set(selectedTableIds);
+    setJoins((prev) =>
+      prev.filter(
+        (join) =>
+          !!join.leftTableId &&
+          !!join.rightTableId &&
+          ids.has(join.leftTableId) &&
+          ids.has(join.rightTableId)
+      )
+    );
+  }, [selectedTableIds]);
+
+  const onConnect = (params: Connection) => {
+    const leftTableId = params.source;
+    const rightTableId = params.target;
+    const leftColumn = parseRelationshipHandleId(params.sourceHandle, "source");
+    const rightColumn = parseRelationshipHandleId(params.targetHandle, "target");
+
+    if (!leftTableId || !rightTableId || !leftColumn || !rightColumn) return;
+
+    const existing = joins.find(
+      (join) => join.leftTableId === leftTableId && join.rightTableId === rightTableId
+    );
+    setEditingJoin(
+      existing ?? {
+        id: `${leftTableId}__${rightTableId}`,
+        leftTableId,
+        rightTableId,
+        joinType: "INNER",
+        conditions: [{ leftColumn, operator: "=", rightColumn }],
+      }
+    );
+    setIsJoinModalOpen(true);
+  };
+
+  const toggleTableSelection = (tableId: string) => {
+    setSelectedTableIds((prev) => {
+      if (prev.includes(tableId)) {
+        const next = prev.filter((id) => id !== tableId);
+        if (drivingTable === tableId) {
+          setDrivingTable(next[0] ?? null);
+        }
+        setSelectedColumnsByTable((current) => {
+          const nextMap = { ...current };
+          delete nextMap[tableId];
+          return nextMap;
+        });
+        return next;
+      }
+
+      const table = availableTables.find((item) => item.id === tableId);
+      setSelectedColumnsByTable((current) => ({
+        ...current,
+        [tableId]: current[tableId] ?? [],
+      }));
+      if (!drivingTable) {
+        setDrivingTable(tableId);
+      }
+      return [...prev, tableId];
+    });
+  };
+
+  const selectedColumnEntries = useMemo(() => {
+    return selectedTables.flatMap((table) =>
+      (selectedColumnsByTable[table.id as string] ?? [])
+        .map((columnName) => {
+          const column = (table.columns ?? []).find((item) => item.name === columnName);
+          if (!column) return null;
+          return {
+            table,
+            column: {
+              ...column,
+              tableId: table.id as string,
+              tableName: table.name,
+            },
+          };
+        })
+        .filter(Boolean) as Array<{ table: TableMeta; column: Column }>
+    );
+  }, [selectedColumnsByTable, selectedTables]);
+
+  const previewColumns = useMemo(() => {
+    return [
+      { key: "index", label: "#", align: "left" as const },
+      ...previewColumnsState.map((column, index) => ({
+        key: `${column.name}-${index}`,
+        label: (
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+            <Typography sx={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>
+              {column.name}
+            </Typography>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+              {column.isPrimaryKey ? (
+                <Box
+                  sx={{
+                    px: 0.75,
+                    py: 0.15,
+                    borderRadius: 1,
+                    backgroundColor: "#fef3c7",
+                    color: "#92400e",
+                    fontSize: 10,
+                    fontWeight: 700,
+                  }}
+                >
+                  PK
+                </Box>
+              ) : null}
+              <Box
+                sx={{
+                  px: 0.75,
+                  py: 0.15,
+                  borderRadius: 1,
+                  backgroundColor: "#f1f5f9",
+                  color: "#64748b",
+                  fontSize: 10,
+                  fontWeight: 700,
+                }}
+              >
+                {column.dataType}
+              </Box>
+            </Box>
+          </Box>
+        ),
+      })),
+    ];
+  }, [previewColumnsState]);
+
+  const previewRows = useMemo(() => {
+    return previewRowsState.map((values, index) => ({
+      index: index + 1,
+      ...values,
+    }));
+  }, [previewRowsState]);
+
+  const generatedSqlExpression = useMemo(() => {
+    const drivingSource =
+      selectedTables.find((table) => table.id === drivingTable) ?? selectedTables[0] ?? null;
     const lines = ["SELECT"];
 
-    // Build select list from all involved tables
-    const selects: string[] = [];
-    involvedTables.forEach(t => {
-      const alias = t.name?.charAt(0).toLowerCase() || 't';
-      getColumnsForTable(t.id as string).slice(0, 3).forEach(c => {
-        selects.push(`  ${alias}.${c.name}`);
-      });
-    });
-
-    if (selects.length > 0) {
-      lines.push(selects.join(",\n"));
+    if (selectedColumnEntries.length > 0) {
+      lines.push(
+        selectedColumnEntries
+          .map(({ table, column }) => {
+            const alias = tableAliasById[table.id as string] ?? "t";
+            return `  ${alias}.${column.name}`;
+          })
+          .join(",\n")
+      );
     } else {
-      lines.push("  *");
+      lines.push("  -- Select columns from the table cards above");
     }
 
-    if (involvedTables.length > 0) {
-      const firstT = involvedTables[0];
-      const alias = firstT.name?.charAt(0).toLowerCase() || 't';
-      lines.push(`FROM ${firstT.schema}.${firstT.name} ${alias}`);
+    if (drivingSource) {
+      lines.push(
+        `FROM ${renderSqlSourceReference(
+          drivingSource,
+          tableAliasById[drivingSource.id as string]
+        )}`
+      );
     } else {
-      lines.push("FROM [Select Tables via JOINs]");
+      lines.push("FROM [Select one or more source tables]");
     }
 
-    if (joins.length > 0) {
-      lines.push(joinSqlPreview);
+    for (const join of joins) {
+      const leftTable = selectedTables.find((table) => table.id === join.leftTableId);
+      const rightTable = selectedTables.find((table) => table.id === join.rightTableId);
+      if (!leftTable || !rightTable || !join.conditions?.length) continue;
+
+      const rightAlias = tableAliasById[rightTable.id as string];
+      const conditions = join.conditions
+        .filter((condition) => condition.leftColumn && condition.rightColumn)
+        .map((condition) => {
+          const leftAlias = tableAliasById[leftTable.id as string];
+          return `${leftAlias}.${condition.leftColumn} ${condition.operator ?? "="} ${rightAlias}.${condition.rightColumn}`;
+        });
+
+      if (!conditions.length) continue;
+
+      lines.push(
+        `${join.joinType ?? "INNER"} JOIN ${renderSqlSourceReference(rightTable, rightAlias)}`
+      );
+      lines.push(`  ON ${conditions.join("\n  AND ")}`);
     }
 
-    // Rough WHERE clause placeholder
-    if (filterGroups.length > 0 && filterSql) {
-      lines.push(`WHERE\n  ${filterSql.split("\n").join("\n  ")}`);
+    if (filterGroups.length > 0 && filterSql.trim()) {
+      lines.push("WHERE");
+      lines.push(`  ${filterSql.split("\n").join("\n  ")}`);
     }
 
     return lines.join("\n");
-  }, [involvedTables, joins, joinSqlPreview, filterGroups, filterSql]);
+  }, [
+    derivedSourceMap,
+    drivingTable,
+    filterGroups.length,
+    filterSql,
+    joins,
+    selectedColumnEntries,
+    selectedTables,
+    tableAliasById,
+  ]);
 
-  const hasName = sourceName.trim().length > 0;
-  const validJoinsCount = joins.filter((j) => j.leftTableId && j.rightTableId).length;
-  const hasJoins = validJoinsCount > 0;
-  const hasFilters = filterGroups.length > 0;
+  const effectiveSqlExpression = customSql || generatedSqlExpression;
 
-  const handleConfirm = () => {
-    const finalSource: DerivedSource = {
-      id: editingSource?.id || `derived_${Math.random().toString(36).substring(2, 9)}`,
-      sourceName: sourceName.trim(),
-      joins,
-      filters: filterGroups,
-      columns: involvedTables.flatMap(t => getColumnsForTable(t.id as string)),
-    };
-    onConfirm(finalSource);
-    onClose();
+  const persistedSourceTables = useMemo(
+    () =>
+      getPhysicalSourceTableIds(selectedTableIds).map((tableId) => toTableRef(tableId)),
+    [selectedTableIds, derivedSourceMap]
+  );
+
+  const buildDerivedPayload = () => ({
+    derived_source_id: editingSource?.id ?? null,
+    derived_source_name: sourceName.trim(),
+    sql_text: effectiveSqlExpression,
+    source_tables: persistedSourceTables,
+    driving_table:
+      drivingTable && !isDerivedSourceId(drivingTable) ? toTableRef(drivingTable) : null,
+    relationships: joins.map(toRelationshipPayload),
+    filters: filterGroups,
+    selected_columns_by_table: selectedColumnsByTable,
+  });
+
+  const handleValidateSql = async () => {
+    if (!sourceName.trim()) {
+      setValidationState({ type: "error", message: "Enter a derived table name before validating." });
+      return;
+    }
+    if (!selectedTableIds.length) {
+      setValidationState({ type: "error", message: "Select at least one source table to validate the SQL." });
+      return;
+    }
+    if (!selectedColumnEntries.length) {
+      setValidationState({ type: "error", message: "Select one or more columns to include in the derived table." });
+      return;
+    }
+    if (!effectiveSqlExpression.includes("SELECT") || !effectiveSqlExpression.includes("FROM")) {
+      setValidationState({ type: "error", message: "The SQL view must include both SELECT and FROM clauses." });
+      return;
+    }
+
+    try {
+      setIsValidating(true);
+      const result = await dbService.validateDerivedSource(buildDerivedPayload());
+      setPreviewColumnsState(
+        (result.preview_columns ?? []).map((column: { name: string; data_type: string; is_primary_key?: boolean }) => ({
+          name: column.name,
+          dataType: column.data_type,
+          isPrimaryKey: column.is_primary_key ?? false,
+        }))
+      );
+      setPreviewRowsState(
+        (result.preview_rows ?? []).map((row: { values: Record<string, unknown> }) => row.values)
+      );
+      setValidationState({ type: "success", message: result.message ?? "SQL validated successfully." });
+      setActiveTab("Preview");
+    } catch (error) {
+      const fallback = "Unable to validate the SQL in Snowflake right now.";
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "response" in error &&
+        typeof (error as { response?: { data?: { message?: string } } }).response?.data?.message === "string"
+          ? (error as { response?: { data?: { message?: string } } }).response!.data!.message!
+          : fallback;
+      setValidationState({ type: "error", message });
+    } finally {
+      setIsValidating(false);
+    }
   };
 
-  const StatusChip = ({ label, active }: { label: string; active: boolean }) => (
-    <Box
-      sx={{
-        px: 1.5,
-        py: 0.5,
-        borderRadius: "16px",
-        fontSize: 11,
-        fontWeight: 700,
-        backgroundColor: active ? "#ecfdf5" : "#f1f5f9",
-        color: active ? "#059669" : "#64748b",
-        display: "flex",
-        alignItems: "center",
-        gap: 0.5,
-      }}
-    >
-      {active && <span style={{ fontSize: 14 }}>✓</span>}
-      {label}
-    </Box>
-  );
+  const handleConfirm = async () => {
+    const normalizedJoins = joins
+      .filter(
+        (join) =>
+          !!join.id &&
+          !!join.leftTableId &&
+          !!join.rightTableId &&
+          !!join.joinType &&
+          !!join.conditions?.length
+      )
+      .map((join) => ({
+        id: join.id as string,
+        joinType: join.joinType as "INNER" | "LEFT" | "RIGHT" | "FULL",
+        leftTableId: join.leftTableId as string,
+        rightTableId: join.rightTableId as string,
+        conditions: (join.conditions ?? [])
+          .filter(
+            (condition) =>
+              !!condition.leftColumn &&
+              !!condition.operator &&
+              !!condition.rightColumn
+          )
+          .map((condition, index) => ({
+            id: `${join.id}-cond-${index + 1}`,
+            leftColumn: condition.leftColumn as string,
+            operator: condition.operator as string,
+            rightColumn: condition.rightColumn as string,
+          })),
+      }))
+      .filter((join) => join.conditions.length > 0);
+
+    try {
+      setIsSaving(true);
+      const result = await dbService.saveDerivedSource(buildDerivedPayload());
+      const finalSource: DerivedSource = {
+        id: result.derived_source_id,
+        sourceName: result.derived_source_name,
+        sqlText: result.sql_text,
+        drivingTableId: drivingTable ?? undefined,
+        tableIds: selectedTableIds,
+        derivedSourceIds: selectedTableIds.filter((tableId) => derivedSourceMap.has(tableId)),
+        joins: normalizedJoins,
+        filters: filterGroups,
+        columns: selectedColumnEntries.map(({ column }) => column),
+        previewColumns: (result.preview_columns ?? []).map(
+          (column: { name: string; data_type: string; is_primary_key?: boolean }) => ({
+            name: column.name,
+            dataType: column.data_type,
+            isPrimaryKey: column.is_primary_key,
+          })
+        ),
+        previewRows: previewRowsState,
+      };
+      onConfirm(finalSource);
+      onClose();
+    } catch (error) {
+      const fallback = "Unable to save the derived source right now.";
+      const message =
+        typeof error === "object" &&
+        error !== null &&
+        "response" in error &&
+        typeof (error as { response?: { data?: { message?: string } } }).response?.data?.message === "string"
+          ? (error as { response?: { data?: { message?: string } } }).response!.data!.message!
+          : fallback;
+      setValidationState({ type: "error", message });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const statusItems = [
+    { label: "Name", active: sourceName.trim().length > 0 },
+    { label: `Tables (${selectedTableIds.length})`, active: selectedTableIds.length > 0 },
+    { label: `Joins (${joins.length})`, active: joins.length > 0 },
+    { label: "Columns", active: selectedColumnEntries.length > 0 },
+  ];
 
   return (
     <Dialog
@@ -291,346 +928,553 @@ export function AddDerivedModal({ isOpen, onClose, editingSource, onConfirm }: A
       maxWidth="xl"
       fullWidth
       sx={{
-        "& .MuiDialog-paper": { height: "90vh", borderRadius: "16px", overflow: "hidden", display: 'flex', flexDirection: 'column' }
+        "& .MuiDialog-paper": {
+          height: "90vh",
+          borderRadius: "16px",
+          overflow: "hidden",
+          display: "flex",
+          flexDirection: "column",
+        },
       }}
     >
-      {/* Header */}
-      <Box sx={{ px: 3, py: 2, borderBottom: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <Box
+        sx={{
+          px: 3,
+          py: 2,
+          borderBottom: "1px solid #e5e7eb",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
         <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <Box sx={{ width: 40, height: 40, borderRadius: "50%", backgroundColor: "#065f46", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <Box
+            sx={{
+              width: 40,
+              height: 40,
+              borderRadius: "50%",
+              backgroundColor: "#065f46",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
             <AddCircleOutlineRoundedIcon sx={{ color: "white" }} />
           </Box>
           <Box>
-            <Typography sx={{ fontSize: 18, fontWeight: 800, color: "#0f172a", lineHeight: 1.2 }}>
-              Add Derived Source
+            <Typography sx={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
+              Add Derived Table
             </Typography>
             <Typography sx={{ fontSize: 13, color: "#64748b" }}>
-              Define a virtual table — configure joins, filters and SQL expression
+              Build a derived source from selected tables, joins, and chosen columns.
             </Typography>
           </Box>
-          <Box sx={{ display: "flex", gap: 1, ml: 4 }}>
-            <StatusChip label="Name" active={hasName} />
-            <StatusChip label={`Joins (${validJoinsCount})`} active={hasJoins} />
-            <StatusChip label="Filters" active={hasFilters} />
-            <StatusChip label="SQL" active={hasName && hasJoins} />
+          <Box sx={{ display: "flex", gap: 1, ml: 3, flexWrap: "wrap" }}>
+            {statusItems.map((item) => (
+              <Box
+                key={item.label}
+                sx={{
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: "16px",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  backgroundColor: item.active ? "#ecfdf5" : "#f1f5f9",
+                  color: item.active ? "#059669" : "#64748b",
+                }}
+              >
+                {item.label}
+              </Box>
+            ))}
           </Box>
         </Box>
-        <IconButton onClick={onClose}><CloseRoundedIcon /></IconButton>
+        <IconButton onClick={onClose}>
+          <CloseRoundedIcon />
+        </IconButton>
       </Box>
 
-      {/* Main Content Area */}
-      <Box sx={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {/* Left Sidebar */}
-        <Box sx={{ width: 260, borderRight: "1px solid #e5e7eb", display: "flex", flexDirection: "column", bgcolor: "#fafafa" }}>
-          <Box sx={{ p: 2, flex: 1, overflowY: "auto" }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", mb: 1.5, letterSpacing: "0.05em" }}>AVAILABLE TABLES</Typography>
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 2 }}>
-              {availableTables.map(t => (
-                <Box key={t.id} sx={{ display: "flex", gap: 1.5, alignItems: "flex-start", cursor: "pointer" }}>
-                  <TableChartOutlinedIcon sx={{ color: "#94a3b8", fontSize: 20, mt: 0.2 }} />
-                  <Box>
-                    <Typography sx={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>{t.schema}.{t.name}</Typography>
-                    <Typography sx={{ fontSize: 11, fontWeight: 600, color: "#94a3b8" }}>{t.colCount} cols</Typography>
-                  </Box>
-                </Box>
-              ))}
-            </Box>
+      <Box sx={{ display: "flex", flex: 1, minHeight: 0 }}>
+        <Box
+          sx={{
+            width: 300,
+            borderRight: "1px solid #e5e7eb",
+            display: "flex",
+            flexDirection: "column",
+            bgcolor: "#fafafa",
+            overflowX: "hidden",
+          }}
+        >
+          <Box sx={{ p: 2, borderBottom: "1px solid #e5e7eb", flexShrink: 0 }}>
+            <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", mb: 1 }}>
+              DERIVED SOURCE NAME
+            </Typography>
+            <InputBase
+              fullWidth
+              value={sourceName}
+              onChange={(event) => setSourceName(event.target.value)}
+              placeholder="e.g. vw_customer_orders"
+              sx={{
+                border: "1px solid #e2e8f0",
+                borderRadius: 1,
+                px: 1.5,
+                py: 0.9,
+                fontSize: 14,
+                backgroundColor: "#ffffff",
+              }}
+            />
           </Box>
-          <Box sx={{ p: 2, borderTop: "1px solid #e5e7eb", bgcolor: "white" }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", mb: 1.5, letterSpacing: "0.05em" }}>FUNCTIONS</Typography>
-            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", mb: 1.5 }}>
-              {['String', 'Numeric', 'Date', 'Logic'].map((cat) => (
-                <Box
-                  key={cat}
-                  component="span"
-                  sx={{ cursor: "pointer", fontSize: 10, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 1, color: "#64748b", "&:hover": { bgcolor: "#f1f5f9" } }}
-                >
-                  {cat}
-                </Box>
-              ))}
-            </Box>
-            <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-              {['UPPER()', 'LOWER()', 'TRIM()', 'CONCAT()', 'SUBSTRING()', 'REPLACE()', 'SELECT', 'GROUP BY', 'HAVING', 'UNION', 'DISTINCT'].map((func) => (
-                <Box
-                  key={func}
-                  component="span"
-                  onClick={() => setCustomSql((prev) => (prev || fullSqlExpression) + "\n" + func)}
-                  sx={{ cursor: "pointer", fontSize: 10, padding: "4px 8px", border: "1px solid #e2e8f0", borderRadius: 1, color: "#64748b", "&:hover": { bgcolor: "#f1f5f9" } }}
-                >
-                  {func}
-                </Box>
-              ))}
+
+          <Box sx={{ p: 2, flex: 1, overflowY: "auto", overflowX: "hidden", minWidth: 0 }}>
+            <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", mb: 1.5 }}>
+              AVAILABLE TABLES
+            </Typography>
+            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+              {availableTables.map((table) => {
+                const isActive = selectedTableIds.includes(table.id as string);
+                const isDriving = drivingTable === table.id;
+                return (
+                  <Box
+                    key={table.id}
+                    onClick={() => toggleTableSelection(table.id as string)}
+                    sx={{
+                      border: "1px solid",
+                      borderColor: isActive ? "#2563eb" : "#e5e7eb",
+                      borderRadius: 2,
+                      px: 1.5,
+                      py: 1.25,
+                      backgroundColor: isActive ? "#eff6ff" : "#ffffff",
+                      cursor: "pointer",
+                      minWidth: 0,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <Box sx={{ display: "flex", gap: 1.25, alignItems: "flex-start" }}>
+                      {isActive ? (
+                        <CheckCircleRoundedIcon sx={{ color: "#2563eb", fontSize: 18, mt: 0.2 }} />
+                      ) : (
+                        <RadioButtonUncheckedRoundedIcon sx={{ color: "#94a3b8", fontSize: 18, mt: 0.2 }} />
+                      )}
+                      <TableChartOutlinedIcon sx={{ color: "#64748b", fontSize: 18, mt: 0.2 }} />
+                      <Box sx={{ minWidth: 0, flex: 1 }}>
+                        <Box
+                          sx={{
+                            display: "flex",
+                            alignItems: "flex-start",
+                            justifyContent: "space-between",
+                            gap: 1,
+                          }}
+                        >
+                          <Typography
+                            sx={{
+                              fontSize: 13,
+                              fontWeight: 700,
+                              color: "#1f2937",
+                              whiteSpace: "normal",
+                              overflowWrap: "anywhere",
+                              wordBreak: "break-word",
+                              lineHeight: 1.2,
+                              minWidth: 0,
+                              flex: 1,
+                            }}
+                          >
+                            {table.name}
+                          </Typography>
+                          {isDerivedTableMeta(table) ? (
+                            <Box
+                              sx={{
+                                px: 0.85,
+                                py: 0.2,
+                                borderRadius: "999px",
+                                backgroundColor: "#dcfce7",
+                                color: "#166534",
+                                fontSize: 10,
+                                fontWeight: 800,
+                                lineHeight: 1.2,
+                                flexShrink: 0,
+                              }}
+                            >
+                              Derived
+                            </Box>
+                          ) : null}
+                        </Box>
+                        <Typography
+                          sx={{
+                            fontSize: 11,
+                            color: "#6b7280",
+                            whiteSpace: "normal",
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                            lineHeight: 1.35,
+                          }}
+                        >
+                          {table.schema} · {table.database}
+                        </Typography>
+                        <Typography sx={{ fontSize: 11, color: "#94a3b8", mt: 0.25 }}>
+                          {table.colCount} cols
+                        </Typography>
+                      </Box>
+                    </Box>
+                    {isActive ? (
+                      <Box sx={{ display: "flex", justifyContent: "space-between", mt: 1.25 }}>
+                        <Typography sx={{ fontSize: 10, color: "#64748b" }}>
+                          {selectedColumnsByTable[table.id as string]?.length ?? 0} selected for SQL
+                        </Typography>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            setDrivingTable(table.id as string);
+                          }}
+                          style={{
+                            border: "none",
+                            background: "none",
+                            color: isDriving ? "#b45309" : "#2563eb",
+                            fontSize: 10,
+                            fontWeight: 700,
+                            cursor: "pointer",
+                          }}
+                        >
+                          {isDriving ? "Driving table" : "Set driving"}
+                        </button>
+                      </Box>
+                    ) : null}
+                  </Box>
+                );
+              })}
             </Box>
           </Box>
         </Box>
 
-        {/* Right Area */}
-        <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-          <Box sx={{ flex: 1, display: "flex", flexDirection: "column", overflowY: "auto" }}>
+        <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+          <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <Box sx={{ p: 3, borderBottom: "1px solid #e5e7eb" }}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+              <Box>
+                <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
+                  Table Relationships
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: "#64748b", mt: 0.5 }}>
+                  Add tables from the left, connect matching columns, and choose the columns that should appear in the derived source.
+                </Typography>
+              </Box>
+              <FocusButton
+                variant="outlined"
+                size="small"
+                rounded="full"
+                onClick={() => {
+                  setEditingJoin(null);
+                  setIsJoinModalOpen(true);
+                }}
+                disabled={selectedTables.length < 2}
+              >
+                + Add Join
+              </FocusButton>
+            </Box>
 
-            <Box sx={{ p: 3, display: "flex", gap: 2, borderBottom: "1px solid #e5e7eb" }}>
-              <Box sx={{ flex: 1 }}>
-                <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", mb: 1, letterSpacing: "0.05em" }}>SOURCE NAME</Typography>
-                <InputBase
-                  fullWidth
-                  value={sourceName}
-                  onChange={(e) => setSourceName(e.target.value)}
-                  placeholder="e.g. vw_OrdersSummary"
-                  sx={{ border: "1px solid #e2e8f0", borderRadius: 1, px: 1.5, py: 0.75, fontSize: 14 }}
-                />
+            <Box sx={{ height: 320, border: "1px solid #e5e7eb", borderRadius: 3, overflow: "hidden", bgcolor: "#ffffff" }}>
+              {selectedTables.length === 0 ? (
+                <Box
+                  sx={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#94a3b8",
+                    fontSize: 14,
+                    px: 4,
+                    textAlign: "center",
+                  }}
+                >
+                  Select one or more source tables from the left. They will appear here for join design and column selection.
+                </Box>
+              ) : (
+                <ReactFlow
+                  nodes={nodes}
+                  edges={edges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={onConnect}
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  proOptions={{ hideAttribution: true }}
+                  defaultEdgeOptions={{ type: "tableEdge", animated: true }}
+                  style={{ width: "100%", height: "100%" }}
+                >
+                  <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#e2e8f0" />
+                  <Controls position="bottom-right" style={{ marginBottom: 16, marginRight: 16 }} />
+                </ReactFlow>
+              )}
+            </Box>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mt: 1.5 }}>
+              <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#111827", letterSpacing: "0.08em" }}>
+                LEGEND:
+              </Typography>
+              {[
+                ["INNER JOIN", "#111827"],
+                ["LEFT JOIN", "#1d4ed8"],
+                ["RIGHT JOIN", "#0f766e"],
+                ["FULL JOIN", "#7c3aed"],
+              ].map(([label, backgroundColor]) => (
+                <Box
+                  key={label}
+                  sx={{
+                    px: 1.25,
+                    py: 0.4,
+                    borderRadius: 1,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: "#ffffff",
+                    backgroundColor,
+                  }}
+                >
+                  {label}
+                </Box>
+              ))}
+            </Box>
+          </Box>
+
+          <Box sx={{ borderBottom: "1px solid #e5e7eb" }}>
+            <FilterConditions
+              tables={selectedTables}
+              initialGroups={editingSource?.filters}
+              showPreview={false}
+              onChange={(groups, sql) => {
+                setFilterGroups(groups);
+                setFilterSql(sql);
+              }}
+            />
+          </Box>
+
+          <Box sx={{ minHeight: 520, display: "flex", flexDirection: "column", bgcolor: "#f8fafc" }}>
+            <Box sx={{ display: "flex", borderBottom: "1px solid #e5e7eb", px: 3, pt: 2, gap: 3, bgcolor: "#ffffff" }}>
+              <Box
+                onClick={() => setActiveTab("SQL")}
+                sx={{
+                  pb: 1.5,
+                  borderBottom: activeTab === "SQL" ? "2px solid #22c55e" : "2px solid transparent",
+                  cursor: "pointer",
+                }}
+              >
+                <Typography sx={{ fontSize: 13, fontWeight: 700, color: activeTab === "SQL" ? "#0f172a" : "#64748b" }}>
+                  SQL View
+                </Typography>
+              </Box>
+              <Box
+                onClick={() => setActiveTab("Preview")}
+                sx={{
+                  pb: 1.5,
+                  borderBottom: activeTab === "Preview" ? "2px solid #22c55e" : "2px solid transparent",
+                  cursor: "pointer",
+                }}
+              >
+                <Typography sx={{ fontSize: 13, fontWeight: 700, color: activeTab === "Preview" ? "#0f172a" : "#64748b" }}>
+                  Resulting Columns Preview
+                </Typography>
               </Box>
             </Box>
 
-            {/* JOINs Section */}
-            <Box sx={{ p: 3, borderBottom: "1px solid #e5e7eb" }}>
-              <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
-                <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-                  <Box sx={{ width: 24, height: 24, borderRadius: "50%", bgcolor: "#eff6ff", color: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16 }}>∞</Box>
-                  <Typography sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>JOIN Clauses</Typography>
-                  <Typography sx={{ fontSize: 12, color: "#94a3b8" }}>Define how source tables relate</Typography>
-                </Box>
-                <FocusButton variant="outlined" size="small" rounded="full" onClick={handleAddJoinRow}>
-                  + Add Join
-                </FocusButton>
-              </Box>
-
-              <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5 }}>
-                {joins.length === 0 ? (
-                  <Box sx={{ border: "1px dashed #cbd5e1", borderRadius: 2, p: 3, display: "flex", alignItems: "center", gap: 2 }}>
-                    <Box sx={{ width: 32, height: 32, borderRadius: "50%", bgcolor: "#eff6ff", color: "#2563eb", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20 }}>∞</Box>
-                    <Box>
-                      <Typography sx={{ fontSize: 13, fontWeight: 700, color: "#334155" }}>No join clauses defined</Typography>
-                      <Typography sx={{ fontSize: 12, color: "#94a3b8", mt: 0.5 }}>Click <strong style={{ color: "#64748b" }}>Add Join</strong> to define how tables relate</Typography>
+            <Box sx={{ flex: 1, minHeight: 0, p: 3 }}>
+              {activeTab === "SQL" ? (
+                <Box sx={{ height: "100%", minHeight: 420, bgcolor: "#0f172a", borderRadius: 2, p: 2, display: "flex", flexDirection: "column", gap: 1.5 }}>
+                  {validationState ? (
+                    <Box
+                      sx={{
+                        px: 1.5,
+                        py: 1,
+                        borderRadius: 1.5,
+                        backgroundColor: validationState.type === "success" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
+                        color: validationState.type === "success" ? "#bbf7d0" : "#fecaca",
+                        fontSize: 12,
+                        fontWeight: 600,
+                      }}
+                    >
+                      {validationState.message}
                     </Box>
-                  </Box>
-                ) : (
-                  joins.map((join, idx) => {
-                    const lCols = getColumnsForTable(join.leftTableId).map(c => ({ label: c.name, value: c.name }));
-                    const rCols = getColumnsForTable(join.rightTableId).map(c => ({ label: c.name, value: c.name }));
-                    const opOptions = [
-                      { label: "=", value: "=" }, { label: "!=", value: "!=" },
-                      { label: ">", value: ">" }, { label: "<", value: "<" },
-                      { label: ">=", value: ">=" }, { label: "<=", value: "<=" }
-                    ];
-
-                    return (
-                      <Box key={join.id} sx={{ display: "flex", flexDirection: "column", gap: 1, bgcolor: "#f8fafc", p: 2, borderRadius: 2, border: "1px solid #e2e8f0" }}>
-
-                        {/* Tier 1: Table level */}
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                          <Typography sx={{ fontSize: 12, fontWeight: 700, color: "#94a3b8", minWidth: 20 }}>{idx + 1}</Typography>
-
-                          <Box sx={{ flex: 1 }}>
-                            <FocusSelect options={tableOptions} value={join.leftTableId} onChange={(val) => updateJoinRow(join.id, { leftTableId: String(val) })} placeholder="Left Table" fullWidth />
-                          </Box>
-
-                          <Box sx={{ width: 140 }}>
-                            <FocusSelect options={[{ label: "LEFT JOIN", value: "LEFT" }, { label: "INNER JOIN", value: "INNER" }, { label: "RIGHT JOIN", value: "RIGHT" }, { label: "FULL JOIN", value: "FULL" }]} value={join.joinType} onChange={(val) => updateJoinRow(join.id, { joinType: String(val) as any })} fullWidth />
-                          </Box>
-
-                          <Box sx={{ flex: 1 }}>
-                            <FocusSelect options={tableOptions} value={join.rightTableId} onChange={(val) => updateJoinRow(join.id, { rightTableId: String(val) })} placeholder="Right Table" fullWidth />
-                          </Box>
-
-                          <IconButton onClick={() => handleRemoveJoinRow(join.id)} size="small" sx={{ color: "#ef4444" }}>
-                            <DeleteOutlineRoundedIcon fontSize="small" />
-                          </IconButton>
-                        </Box>
-
-                        {/* Tier 2: Conditions */}
-                        <Box sx={{ pl: 4, display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
-                          {(join.conditions || []).map((cond, cIdx) => (
-                            <Box key={cond.id} sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                              {cIdx > 0 && <Typography sx={{ fontSize: 11, fontWeight: 700, color: "#64748b", minWidth: 24, textAlign: "right", mr: 1 }}>AND</Typography>}
-                              {cIdx === 0 && <Typography sx={{ fontSize: 11, fontWeight: 700, color: "#64748b", minWidth: 24, textAlign: "right", mr: 1 }}>ON</Typography>}
-
-                              <Box sx={{ flex: 1 }}>
-                                <FocusSelect options={lCols} value={cond.leftColumn} onChange={(val) => updateConditionRow(join.id, cond.id, { leftColumn: String(val) })} placeholder="Left Column" fullWidth />
-                              </Box>
-
-                              <Box sx={{ width: 80 }}>
-                                <FocusSelect options={opOptions} value={cond.operator} onChange={(val) => updateConditionRow(join.id, cond.id, { operator: String(val) })} fullWidth />
-                              </Box>
-
-                              <Box sx={{ flex: 1 }}>
-                                <FocusSelect options={rCols} value={cond.rightColumn} onChange={(val) => updateConditionRow(join.id, cond.id, { rightColumn: String(val) })} placeholder="Right Column" fullWidth />
-                              </Box>
-
-                              <IconButton onClick={() => handleRemoveConditionRow(join.id, cond.id)} size="small" sx={{ color: "#ef4444" }}>
-                                <RemoveCircleOutlineRoundedIcon fontSize="small" />
-                              </IconButton>
+                  ) : null}
+                  <Box
+                    component="textarea"
+                    value={effectiveSqlExpression}
+                    onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => setCustomSql(event.target.value)}
+                    sx={{
+                      flex: 1,
+                      minHeight: 340,
+                      m: 0,
+                      fontSize: 13,
+                      color: "#ffffff",
+                      fontFamily: "monospace",
+                      bgcolor: "transparent",
+                      border: "none",
+                      outline: "none",
+                      resize: "none",
+                    }}
+                  />
+                </Box>
+              ) : (
+                <Box
+                  sx={{
+                    height: "100%",
+                    bgcolor: "#ffffff",
+                    borderRadius: 2,
+                    border: "1px solid #e5e7eb",
+                    display: "flex",
+                    flexDirection: "column",
+                    overflow: "hidden",
+                  }}
+                >
+                  {previewColumnsState.length === 0 ? (
+                    <Box sx={{ p: 2.5 }}>
+                      <Typography sx={{ fontSize: 13, color: "#94a3b8" }}>
+                        Validate the SQL to preview the resulting schema and sample rows from Snowflake.
+                      </Typography>
+                    </Box>
+                  ) : (
+                    <>
+                      <Box
+                        sx={{
+                          px: 2,
+                          py: 1.5,
+                          borderBottom: "1px solid #e5e7eb",
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          gap: 2,
+                          flexWrap: "wrap",
+                        }}
+                      >
+                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                          <Typography
+                            sx={{
+                              fontSize: 11,
+                              fontWeight: 700,
+                              color: "#94a3b8",
+                              letterSpacing: "0.05em",
+                            }}
+                          >
+                            SOURCES:
+                          </Typography>
+                          {selectedTables.map((table) => (
+                            <Box
+                              key={table.id}
+                              sx={{
+                                px: 1.5,
+                                py: 0.25,
+                                borderRadius: "12px",
+                                border: "1px solid #bfdbfe",
+                                color: "#3b82f6",
+                                fontSize: 11,
+                                fontWeight: 600,
+                              }}
+                            >
+                              {table.name}
                             </Box>
                           ))}
-                          <Box sx={{ mt: 0.5, pl: 4.5 }}>
-                            <FocusButton variant="text" size="small" onClick={() => handleAddConditionRow(join.id)} customColor="#3b82f6">
-                              + Add Condition
-                            </FocusButton>
-                          </Box>
                         </Box>
+                        <Typography sx={{ fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>
+                          {previewColumnsState.length} columns · {previewRowsState.length} sample rows
+                        </Typography>
                       </Box>
-                    );
-                  })
-                )}
-              </Box>
 
-              {joins.length > 0 && (
-                <Box sx={{ mt: 2, bgcolor: "#0f172a", borderRadius: 2, p: 2 }}>
-                  <Typography sx={{ fontSize: 10, fontWeight: 800, color: "#64748b", mb: 1, letterSpacing: "0.05em" }}>JOIN PREVIEW</Typography>
-                  <Box component="pre" sx={{ m: 0, fontSize: 12, color: "#38bdf8", fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
-                    {joinSqlPreview}
-                  </Box>
+                      <Box sx={{ flex: 1, overflow: "auto" }}>
+                          <FocusTable columns={previewColumns}>
+                            {previewRows.map((row) => (
+                              <tr key={row.index} style={{ borderBottom: "1px solid #f1f5f9" }}>
+                                {previewColumns.map((column) => {
+                                const typedRow = row as Record<string, unknown>;
+                                const value = typedRow[column.key as string];
+                                const renderedValue =
+                                  value === null || value === undefined
+                                    ? ""
+                                    : typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+                                      ? String(value)
+                                      : JSON.stringify(value);
+                                return (
+                                  <td
+                                    key={`${row.index}-${column.key}`}
+                                    style={{
+                                      padding: "12px 16px",
+                                      fontSize: 13,
+                                      color: column.key === "index" ? "#94a3b8" : "#0f172a",
+                                      whiteSpace: "nowrap",
+                                    }}
+                                  >
+                                    {renderedValue}
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </FocusTable>
+                      </Box>
+                    </>
+                  )}
                 </Box>
               )}
             </Box>
-
-            {/* Filters Section */}
-            <Box sx={{ borderBottom: "1px solid #e5e7eb" }}>
-              <FilterConditions
-                tables={involvedTables}
-                initialGroups={React.useMemo(() => editingSource?.filters || [], [editingSource])}
-                onChange={(groups, sql) => {
-                  setFilterGroups(groups);
-                  setFilterSql(sql);
-                }}
-              />
-            </Box>
-
-            {/* Bottom Tabs */}
-            <Box sx={{ flex: 1, display: "flex", flexDirection: "column", bgcolor: "#f8fafc", minHeight: 400 }}>
-              <Box sx={{ display: "flex", borderBottom: "1px solid #e5e7eb", px: 3, pt: 2, gap: 3, bgcolor: "white" }}>
-                <Box
-                  onClick={() => setActiveTab("SQL")}
-                  sx={{ pb: 1.5, borderBottom: activeTab === "SQL" ? "2px solid #22c55e" : "2px solid transparent", cursor: "pointer" }}
-                >
-                  <Typography sx={{ fontSize: 13, fontWeight: 700, color: activeTab === "SQL" ? "#0f172a" : "#64748b", display: "flex", alignItems: "center", gap: 1 }}>
-                    <span style={{ color: "#22c55e" }}>●</span> SQL Expression
-                  </Typography>
-                </Box>
-                <Box
-                  onClick={() => setActiveTab("Preview")}
-                  sx={{ pb: 1.5, borderBottom: activeTab === "Preview" ? "2px solid #22c55e" : "2px solid transparent", cursor: "pointer" }}
-                >
-                  <Typography sx={{ fontSize: 13, fontWeight: 700, color: activeTab === "Preview" ? "#0f172a" : "#64748b" }}>
-                    👁 Preview Columns
-                  </Typography>
-                </Box>
-              </Box>
-
-              <Box sx={{ flex: 1, p: 3 }}>
-                {activeTab === "SQL" && (
-                  <Box sx={{ height: "100%", bgcolor: "#0f172a", borderRadius: 2, p: 2, display: "flex", flexDirection: "column" }}>
-                    <Box component="textarea"
-                      value={customSql || fullSqlExpression}
-                      onChange={(e: any) => setCustomSql(e.target.value)}
-                      sx={{ flex: 1, m: 0, fontSize: 13, color: "white", fontFamily: "monospace", bgcolor: "transparent", border: "none", outline: "none", resize: "none" }}
-                    />
-                  </Box>
-                )}
-
-                {activeTab === "Preview" && (
-                  <Box sx={{ height: "100%", bgcolor: "white", borderRadius: 2, border: "1px solid #e5e7eb", display: "flex", flexDirection: "column", overflow: "hidden" }}>
-
-                    {/* Header: Sources Chips */}
-                    <Box sx={{ px: 2, py: 1.5, borderBottom: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                        <Typography sx={{ fontSize: 11, fontWeight: 700, color: "#94a3b8", letterSpacing: "0.05em" }}>SOURCES:</Typography>
-                        {involvedTables.map(t => (
-                          <Box key={t.id} sx={{ px: 1.5, py: 0.25, borderRadius: "12px", border: "1px solid #bfdbfe", color: "#3b82f6", fontSize: 11, fontWeight: 600 }}>
-                            {t.name}
-                          </Box>
-                        ))}
-                      </Box>
-                      <Typography sx={{ fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>
-                        {involvedTables.reduce((acc, t) => acc + getColumnsForTable(t.id as string).length, 0)} columns &middot; 5 sample rows
-                      </Typography>
-                    </Box>
-
-                    {/* Table Area */}
-                    <Box sx={{ flex: 1, overflow: "auto", maxWidth: "100%", whiteSpace: "nowrap" }}>
-                      <FocusTable columns={[
-                        { key: "index", label: "#" },
-                        ...involvedTables.flatMap(t => getColumnsForTable(t.id as string).map(c => ({
-                          key: `${t.name}_${c.name}`,
-                          label: (
-                            <Box sx={{ display: "flex", flexDirection: "column", gap: 0.5 }}>
-                              <Typography sx={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>{c.name}</Typography>
-                              <Box sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
-                                <Box sx={{ px: 1, py: 0.25, borderRadius: 1, fontSize: 10, fontWeight: 700, bgcolor: c.type === "VARCHAR" ? "#f1f5f9" : "#ffedd5", color: c.type === "VARCHAR" ? "#475569" : "#c2410c" }}>
-                                  {c.type}
-                                </Box>
-                                <Typography sx={{ fontSize: 10, color: "#94a3b8" }}>{t.name}</Typography>
-                              </Box>
-                            </Box>
-                          )
-                        })))
-                      ]}>
-                        {[1, 2, 3, 4, 5].map((rowIdx) => (
-                          <tr key={rowIdx} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                            <td style={{ padding: "12px 16px", fontSize: 12, color: "#94a3b8" }}>{rowIdx}</td>
-                            {involvedTables.flatMap(t => getColumnsForTable(t.id as string).map(c => {
-                              // Generate mock data based on type
-                              let mockVal: any = `Sample ${rowIdx}`;
-                              if (c.type === "BIGINT" || c.type === "INT") mockVal = 10000 + rowIdx;
-                              else if (c.type === "DECIMAL") mockVal = (Math.random() * 1000).toFixed(2);
-                              else if (c.type === "DATE") mockVal = `2023-01-0${rowIdx}`;
-                              else if (c.name.includes("NAME")) mockVal = ["Alice Johnson", "Bob Smith", "Carol White", "David Brown", "Eve Davis"][rowIdx - 1];
-
-                              return (
-                                <td key={`${t.name}_${c.name}`} style={{ padding: "12px 16px", fontSize: 13, color: c.type === "DECIMAL" ? "#ea580c" : "#0f172a" }}>
-                                  {mockVal}
-                                </td>
-                              );
-                            }))}
-                          </tr>
-                        ))}
-                      </FocusTable>
-                    </Box>
-
-                    {/* Footer Actions inside Preview */}
-                    <Box sx={{ p: 2, borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", alignItems: "center", bgcolor: "#fafafa" }}>
-                      <Box sx={{ display: "flex", gap: 1 }}>
-                        <FocusButton variant="contained" size="small" rounded="full" customBackgroundColor="#6366f1" startIcon={<span style={{ fontSize: 16 }}>👁</span>}>
-                          Refresh Preview
-                        </FocusButton>
-                        <FocusButton variant="outlined" size="small" rounded="full" onClick={() => setActiveTab("SQL")} customColor="#475569" customBorderColor="#cbd5e1">
-                          — Back to SQL Editor
-                        </FocusButton>
-                      </Box>
-                      <Typography sx={{ fontSize: 11, color: "#94a3b8" }}>Data is generated from source table schemas</Typography>
-                    </Box>
-                  </Box>
-                )}
-              </Box>
-            </Box>
           </Box>
-          {/* Footer */}
-          <Box sx={{ px: 3, py: 2, borderTop: "1px solid #e5e7eb", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <Box sx={{ display: "flex", gap: 1 }}>
-              <FocusButton variant="outlined" size="small" rounded="full" customColor="#10b981" customBorderColor="#10b981">
-                ✓ Validate SQL
-              </FocusButton>
-            </Box>
-            <Box sx={{ display: "flex", gap: 1 }}>
-              <FocusButton variant="text" size="small" rounded="full" onClick={onClose} customColor="#64748b">
-                Cancel
-              </FocusButton>
-              <FocusButton
-                variant="contained"
-                size="small"
-                rounded="full"
-                customBackgroundColor="#0f766e"
-                disabled={!hasName || !hasJoins}
-                onClick={handleConfirm}
-              >
-                {editingSource ? "Update Derived Source" : "+ Add Derived Source"}
-              </FocusButton>
-            </Box>
           </Box>
         </Box>
-
       </Box>
 
+      <Box
+        sx={{
+          px: 3,
+          py: 2,
+          borderTop: "1px solid #e5e7eb",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+        }}
+      >
+        <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+          {selectedColumnEntries.length} columns selected · {joins.length} joins configured
+        </Typography>
+        <Box sx={{ display: "flex", gap: 1 }}>
+          <FocusButton variant="text" size="small" rounded="full" onClick={onClose} customColor="#64748b">
+            Cancel
+          </FocusButton>
+          <FocusButton
+            variant="outlined"
+            size="small"
+            rounded="full"
+            onClick={handleValidateSql}
+            disabled={!selectedTableIds.length || isValidating}
+          >
+            {isValidating ? "Validating..." : "Validate SQL"}
+          </FocusButton>
+          <FocusButton
+            variant="contained"
+            size="small"
+            rounded="full"
+            onClick={handleConfirm}
+            disabled={
+              !sourceName.trim() ||
+              selectedTableIds.length === 0 ||
+              selectedColumnEntries.length === 0 ||
+              isSaving
+            }
+          >
+            {isSaving ? "Saving..." : "Add Derived Table"}
+          </FocusButton>
+        </Box>
+      </Box>
 
+      <JoinModal
+        isOpen={isJoinModalOpen}
+        onClose={() => {
+          setIsJoinModalOpen(false);
+          setEditingJoin(null);
+        }}
+        tables={selectedTables}
+        drivingTableIdOverride={drivingTable}
+        editingJoin={editingJoin}
+        onConfirm={(join: JoinConfig) => {
+          const normalizedJoin = orientJoinAroundDrivingTable(join, drivingTable);
+          setJoins((prev) => {
+            const next = prev.filter((item) => item.id !== join.id);
+            return [...next, normalizedJoin];
+          });
+        }}
+      />
     </Dialog>
   );
 }

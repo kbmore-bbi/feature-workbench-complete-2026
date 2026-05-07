@@ -17,90 +17,146 @@ import KeyIcon from "@mui/icons-material/Key";
 import LinkIcon from "@mui/icons-material/Link";
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
+import type { Column, DerivedSource, JoinConfig, TableMeta } from "@/features/sttm/types/sttm.types";
 
 import { FilterConditions } from "./filter-conditions";
 import { JoinModal } from "./join-modal";
 import { TableEdge } from "./table-edge";
 import { TableNode, type TableNodeData } from "./table-node";
-import type { Column, JoinConfig, TableMeta, DerivedSource } from "@/features/sttm/types/sttm.types";
 import { AddDerivedModal } from "./add-derived-modal";
 
 const nodeTypes = { tableNode: TableNode };
 const edgeTypes = { tableEdge: TableEdge };
+const EMPTY_SELECTED_COLUMNS: Record<string, string[]> = {};
+
+function buildHandleId(
+  table: { database?: string; schema?: string; name?: string },
+  columnName: string,
+  index: number,
+  kind: "source" | "target"
+) {
+  return `${table.database}.${table.schema}.${table.name}.${columnName}-${index}-${kind}`;
+}
+
+function resolveHandleId(
+  table: TableMeta | undefined,
+  columnName: string | undefined,
+  kind: "source" | "target"
+) {
+  if (!table || !columnName) return undefined;
+  const index = (table.columns ?? []).findIndex((column) => column.name === columnName);
+  if (index === -1) return undefined;
+  return buildHandleId(table, columnName, index, kind);
+}
+
+function parseHandleId(
+  handleId: string | null | undefined,
+  kind: "source" | "target"
+) {
+  if (!handleId) return null;
+  const suffix = `-${kind}`;
+  if (!handleId.endsWith(suffix)) return null;
+  const withoutKind = handleId.slice(0, -suffix.length);
+  const lastDash = withoutKind.lastIndexOf("-");
+  if (lastDash === -1) return null;
+  return withoutKind.slice(withoutKind.lastIndexOf(".") + 1, lastDash);
+}
 
 function tagChipPalette(tag?: string) {
   const t = (tag || "").toLowerCase();
+  if (t.includes("derived")) return { tagBg: "#dcfce3", tagFg: "#166534" };
   if (t.includes("staging")) return { tagBg: "#f3e8ff", tagFg: "#7c3aed" };
   if (t.includes("sales")) return { tagBg: "#dbeafe", tagFg: "#1d4ed8" };
   if (t.includes("core")) return { tagBg: "#f3f4f6", tagFg: "#4b5563" };
   if (t.includes("transaction")) return { tagBg: "#ffedd5", tagFg: "#c2410c" };
   if (t.includes("master")) return { tagBg: "#e0e7ff", tagFg: "#4338ca" };
-  if (t.includes("billing") || t.includes("finance"))
+  if (t.includes("billing") || t.includes("finance")) {
     return { tagBg: "#ecfdf5", tagFg: "#047857" };
+  }
   return { tagBg: "#f1f5f9", tagFg: "#475569" };
 }
 
-function buildColumnsForTable(tableName: string, colCountHint: number): Column[] {
-  const t = tableName.toLowerCase();
-  if (t.includes("order")) {
-    return [
-      { name: "ORDER_ID", type: "BIGINT", isPrimaryKey: true },
-      { name: "CUST_ID", type: "INT", isForeignKey: true },
-      { name: "ORDER_DATE", type: "DATE" },
-      { name: "AMOUNT", type: "DECIMAL" },
-      { name: "STATUS", type: "VARCHAR" },
-      { name: "PRODUCT_ID", type: "INT", isForeignKey: true },
-    ];
-  }
-  if (t.includes("customer")) {
-    return [
-      { name: "CUST_ID", type: "BIGINT", isPrimaryKey: true },
-      { name: "NAME", type: "VARCHAR" },
-      { name: "EMAIL", type: "VARCHAR" },
-      { name: "REGION", type: "VARCHAR" },
-      { name: "CREATED_AT", type: "DATE" },
-      { name: "UPDATED_AT", type: "DATE" },
-    ];
-  }
-  const base = tableName.toUpperCase().replace(/[^A-Z0-9]/g, "_");
-  const cols: Column[] = [
-    { name: `${base}_ID`, type: "BIGINT", isPrimaryKey: true },
-    { name: "REF_ID", type: "INT", isForeignKey: true },
-    { name: "CREATED_AT", type: "DATE" },
-    { name: "UPDATED_AT", type: "DATE" },
-    { name: "STATUS", type: "VARCHAR" },
-    { name: "AMOUNT", type: "DECIMAL" },
-  ];
-  while (cols.length < Math.max(3, colCountHint)) {
-    cols.push({ name: `COL_${cols.length + 1}`, type: "VARCHAR" });
-  }
-  return cols.slice(0, Math.max(6, colCountHint));
+function normalizeColumns(
+  columns: Column[] | undefined,
+  tableId: string,
+  tableName: string
+): Column[] {
+  return (columns ?? []).map((column) => ({
+    ...column,
+    tableId: column.tableId ?? tableId,
+    tableName: column.tableName ?? tableName,
+  }));
 }
 
-export default function SttmTableRelationshipFlow() {
-  const { fullData, drivingTableId, derivedSources, updateDerivedSource } = useSttmBuilderContext();
+type TableRelationshipFlowProps = {
+  tables?: TableMeta[];
+  joins?: JoinConfig[];
+  onJoinsChange?: (joins: JoinConfig[]) => void;
+  showFilters?: boolean;
+  selectableColumns?: boolean;
+  selectedColumnsByTable?: Record<string, string[]>;
+  onToggleColumn?: (tableId: string, columnName: string, checked: boolean) => void;
+  drivingTableId?: string | null;
+  allowDerivedEditing?: boolean;
+  emptyStateText?: string;
+};
+
+export default function SttmTableRelationshipFlow({
+  tables,
+  joins,
+  onJoinsChange,
+  showFilters = true,
+  selectableColumns = false,
+  selectedColumnsByTable = EMPTY_SELECTED_COLUMNS,
+  onToggleColumn,
+  drivingTableId: controlledDrivingTableId,
+  allowDerivedEditing = true,
+  emptyStateText = "Select one or more tables from Source selection. They will appear here so you can define joins and relationships.",
+}: TableRelationshipFlowProps) {
+  const {
+    fullData,
+    drivingTableId,
+    relationships,
+    setRelationships,
+    derivedSources,
+    sourceAttributeGroups,
+    updateDerivedSource,
+  } = useSttmBuilderContext();
 
   const [editingDerivedSource, setEditingDerivedSource] = useState<DerivedSource | null>(null);
   const [isDerivedModalOpen, setIsDerivedModalOpen] = useState(false);
+  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [editingJoin, setEditingJoin] = useState<JoinConfig | null>(null);
+  const effectiveDrivingTableId = controlledDrivingTableId ?? drivingTableId;
 
-  const activeSourceTables: TableMeta[] = useMemo(() => {
-    const tables: TableMeta[] = [];
+  const contextTables: TableMeta[] = useMemo(() => {
+    const groupsByQualifiedName = new Map(
+      sourceAttributeGroups.map((group) => [group.qualifiedName, group.columns])
+    );
+    const selectedTables: TableMeta[] = [];
 
     for (const db of fullData?.sources ?? []) {
-      for (const sch of db.schemas ?? []) {
-        for (const tbl of sch.tables ?? []) {
-          if (!tbl.isSelected) continue;
+      for (const schema of db.schemas ?? []) {
+        for (const table of schema.tables ?? []) {
+          if (!table.isSelected) continue;
 
-          const chip = tagChipPalette(tbl.tag);
-          tables.push({
-            id: `${db.dbId}:${sch.schemaId}:${tbl.tableId}`,
-            name: tbl.tableName,
-            schema: sch.schemaName,
+          const qualifiedName = table.qualifiedName;
+          const columnItems = normalizeColumns(
+            table.columnItems?.length ? table.columnItems : groupsByQualifiedName.get(qualifiedName),
+            table.tableId,
+            table.tableName
+          );
+          const chip = tagChipPalette(table.tag);
+
+          selectedTables.push({
+            id: table.tableId,
+            name: table.tableName,
+            schema: schema.schemaName,
             database: db.dbName,
-            rowCount: String(tbl.rows ?? "—"),
-            colCount: tbl.columns ?? 6,
-            columns: buildColumnsForTable(tbl.tableName, tbl.columns ?? 6),
-            tag: tbl.tag ?? "Source",
+            rowCount: table.rows ?? "—",
+            colCount: columnItems.length || table.columns || 0,
+            columns: columnItems,
+            tag: table.tag ?? "Source",
             tagBg: chip.tagBg,
             tagFg: chip.tagFg,
           });
@@ -108,68 +164,129 @@ export default function SttmTableRelationshipFlow() {
       }
     }
 
-    const derived: TableMeta[] = (derivedSources || []).map((ds: DerivedSource) => ({
-      id: ds.id,
-      name: ds.sourceName,
-      schema: "DERIVED",
-      database: "DERIVED",
-      rowCount: "—",
-      colCount: ds.columns.length,
-      columns: ds.columns,
-      tag: "Derived",
-      tagBg: "#dcfce3",
-      tagFg: "#166534",
-    }));
+    const derived: TableMeta[] = (derivedSources || [])
+      .filter((source) => source.isSelected)
+      .map((source) => {
+      const chip = tagChipPalette("Derived");
+      return {
+        id: source.id,
+        name: source.sourceName,
+        schema: "DERIVED",
+        database: "DERIVED",
+        rowCount: "—",
+        colCount: source.columns.length,
+        columns: normalizeColumns(source.columns, source.id, source.sourceName),
+        tag: "Derived",
+        tagBg: chip.tagBg,
+        tagFg: chip.tagFg,
+      };
+    });
 
-    return [...tables, ...derived];
-  }, [fullData, derivedSources]);
+    return [...selectedTables, ...derived];
+  }, [derivedSources, fullData, sourceAttributeGroups]);
 
-  const [joins, setJoins] = useState<JoinConfig[]>([]);
-  const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
-  const [editingJoin, setEditingJoin] = useState<JoinConfig | null>(null);
+  const activeTables = useMemo(() => {
+    const source = tables ?? contextTables;
+    return source.map((table, idx) => {
+      const tableId =
+        table.id ?? `${table.database ?? "db"}:${table.schema ?? "schema"}:${table.name ?? idx}`;
+      const tag = table.tag ?? "Source";
+      const chip = tagChipPalette(tag);
+      const tableName = table.name ?? "—";
+
+      return {
+        ...table,
+        id: tableId,
+        tag,
+        tagBg: table.tagBg ?? chip.tagBg,
+        tagFg: table.tagFg ?? chip.tagFg,
+        rowCount: table.rowCount ?? "—",
+        colCount: table.colCount ?? table.columns?.length ?? 0,
+        columns: normalizeColumns(table.columns, tableId, tableName),
+      };
+    });
+  }, [contextTables, tables]);
+
+  const currentJoins = joins ?? relationships;
+  const setJoinState = useCallback(
+    (next: JoinConfig[] | ((prev: JoinConfig[]) => JoinConfig[])) => {
+      if (onJoinsChange) {
+        const resolved = typeof next === "function" ? next(currentJoins) : next;
+        onJoinsChange(resolved);
+        return;
+      }
+      setRelationships(typeof next === "function" ? next(currentJoins) : next);
+    },
+    [currentJoins, onJoinsChange, setRelationships]
+  );
 
   useEffect(() => {
-    setJoins([]);
-  }, [drivingTableId]);
-
-  useEffect(() => {
-    const ids = new Set(activeSourceTables.map((t) => t.id));
-    setJoins((prev) =>
+    const ids = new Set(activeTables.map((table) => table.id));
+    const filterJoins = (prev: JoinConfig[]) =>
       prev.filter(
-        (j) =>
-          !!j.leftTableId &&
-          !!j.rightTableId &&
-          ids.has(j.leftTableId) &&
-          ids.has(j.rightTableId)
-      )
-    );
-  }, [activeSourceTables]);
+        (join) =>
+          !!join.leftTableId &&
+          !!join.rightTableId &&
+          ids.has(join.leftTableId) &&
+          ids.has(join.rightTableId)
+      );
+
+    if (onJoinsChange) {
+      const filtered = filterJoins(currentJoins);
+      if (filtered.length !== currentJoins.length) {
+        onJoinsChange(filtered);
+      }
+      return;
+    }
+
+    const filtered = filterJoins(currentJoins);
+    if (filtered.length !== currentJoins.length) {
+      setRelationships(filtered);
+    }
+  }, [activeTables, currentJoins, onJoinsChange, setRelationships]);
 
   const initialNodes = useMemo(() => {
-    return activeSourceTables.map((t, idx) => ({
-      id: t.id ?? `${t.database ?? "db"}:${t.schema ?? "schema"}:${t.name ?? idx}`,
+    return activeTables.map((table, idx) => ({
+      id: table.id as string,
       type: "tableNode",
       position: { x: 40 + idx * 300, y: 48 },
       data: {
-        label: t.name ?? "—",
-        schema: t.schema ?? "—",
-        database: t.database ?? "—",
-        tag: t.tag ?? "Source",
-        tagBg: t.tagBg ?? "#f1f5f9",
-        tagFg: t.tagFg ?? "#475569",
-        rowCount: t.rowCount ?? "—",
-        colCount: t.colCount ?? 0,
-        columns: t.columns ?? [],
-        onEdit: t.schema === "DERIVED" ? () => {
-          const ds = derivedSources.find((s: DerivedSource) => s.id === t.id);
-          if (ds) {
-            setEditingDerivedSource(ds);
-            setIsDerivedModalOpen(true);
-          }
-        } : undefined,
+        label: table.name ?? "—",
+        schema: table.schema ?? "—",
+        database: table.database ?? "—",
+        tag: table.tag ?? "Source",
+        tagBg: table.tagBg ?? "#f1f5f9",
+        tagFg: table.tagFg ?? "#475569",
+        rowCount: table.rowCount ?? "—",
+        colCount: table.colCount ?? table.columns?.length ?? 0,
+        columns: table.columns ?? [],
+        selectableColumns,
+        selectedColumns: selectedColumnsByTable[table.id as string] ?? [],
+        onToggleColumn:
+          selectableColumns && onToggleColumn
+            ? (columnName: string, checked: boolean) =>
+                onToggleColumn(table.id as string, columnName, checked)
+            : undefined,
+        onEdit:
+          allowDerivedEditing && table.schema === "DERIVED"
+            ? () => {
+                const source = derivedSources.find((item) => item.id === table.id);
+                if (source) {
+                  setEditingDerivedSource(source);
+                  setIsDerivedModalOpen(true);
+                }
+              }
+            : undefined,
       } satisfies TableNodeData,
     }));
-  }, [activeSourceTables]);
+  }, [
+    activeTables,
+    allowDerivedEditing,
+    derivedSources,
+    onToggleColumn,
+    selectableColumns,
+    selectedColumnsByTable,
+  ]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
 
@@ -178,25 +295,34 @@ export default function SttmTableRelationshipFlow() {
   }, [initialNodes, setNodes]);
 
   const derivedEdges: Edge[] = useMemo(() => {
-    return joins
-      .map((j) => {
-        const first = j.conditions?.[0];
-        if (!j.id || !j.leftTableId || !j.rightTableId || !first) return null;
+    const joinEdges = currentJoins
+      .map((join) => {
+        const first = join.conditions?.[0];
+        if (!join.id || !join.leftTableId || !join.rightTableId || !first) return null;
         if (!first.leftColumn || !first.rightColumn) return null;
+
+        const leftTable = activeTables.find((table) => table.id === join.leftTableId);
+        const rightTable = activeTables.find((table) => table.id === join.rightTableId);
+        const sourceHandle = resolveHandleId(leftTable, first.leftColumn, "source");
+        const targetHandle = resolveHandleId(rightTable, first.rightColumn, "target");
+        if (!sourceHandle || !targetHandle) return null;
+
         return {
-          id: j.id,
-          source: j.leftTableId,
-          target: j.rightTableId,
-          sourceHandle: `${first.leftColumn}-source`,
-          targetHandle: `${first.rightColumn}-target`,
+          id: join.id,
+          source: join.leftTableId,
+          target: join.rightTableId,
+          sourceHandle,
+          targetHandle,
           type: "tableEdge",
           data: {
-            joinType: j.joinType ?? "INNER",
-            conditionCount: j.conditions?.length ?? 0,
+            joinType: join.joinType ?? "INNER",
+            conditionCount: join.conditions?.length ?? 0,
+            locked: join.locked ?? false,
+            source: join.source ?? "USER_DEFINED",
             onDelete: (id: string) =>
-              setJoins((prev) => prev.filter((x) => x.id !== id)),
+              setJoinState((prev) => prev.filter((item) => item.id !== id)),
             onEdit: (id: string) => {
-              const joinToEdit = joins.find((x) => x.id === id);
+              const joinToEdit = currentJoins.find((item) => item.id === id);
               if (joinToEdit) {
                 setEditingJoin(joinToEdit);
                 setIsJoinModalOpen(true);
@@ -207,7 +333,31 @@ export default function SttmTableRelationshipFlow() {
         } satisfies Edge;
       })
       .filter(Boolean) as Edge[];
-  }, [joins]);
+
+    const lineageEdges: Edge[] = (derivedSources || [])
+      .filter((source) => source.isSelected)
+      .flatMap((source) => {
+        const sourceTableIds = source.tableIds ?? [];
+        return sourceTableIds
+          .filter((tableId) => activeTables.some((table) => table.id === tableId))
+          .map((tableId, index) => ({
+            id: `derived-lineage:${source.id}:${tableId}:${index}`,
+            source: tableId,
+            target: source.id,
+            type: "tableEdge",
+            data: {
+              joinType: "INNER",
+              label: tableId === source.drivingTableId ? "DRIVING → DERIVED" : "SOURCE → DERIVED",
+              readOnly: true,
+              dashed: true,
+              conditionCount: 1,
+            },
+            markerEnd: { type: MarkerType.ArrowClosed, color: "#166534" },
+          }));
+      });
+
+    return [...joinEdges, ...lineageEdges];
+  }, [activeTables, currentJoins, derivedSources, setJoinState]);
 
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
 
@@ -215,45 +365,33 @@ export default function SttmTableRelationshipFlow() {
     setEdges(derivedEdges);
   }, [derivedEdges, setEdges]);
 
-  const handleAddJoin = (join: JoinConfig) => {
-    setJoins((prev) => {
-      const existingIdx = prev.findIndex((j) => j.id === join.id);
-      if (existingIdx >= 0) {
-        const updated = [...prev];
-        updated[existingIdx] = join;
-        return updated;
-      }
-      return [...prev, join];
-    });
-  };
+  const onConnect = useCallback(
+    (params: Connection) => {
+      const leftTableId = params.source;
+      const rightTableId = params.target;
+      const leftColumn = parseHandleId(params.sourceHandle, "source");
+      const rightColumn = parseHandleId(params.targetHandle, "target");
 
-  const onConnect = useCallback((params: Connection) => {
-    const leftTableId = params.source;
-    const rightTableId = params.target;
-    const leftColumn = params.sourceHandle?.replace("-source", "");
-    const rightColumn = params.targetHandle?.replace("-target", "");
+      if (!leftTableId || !rightTableId || !leftColumn || !rightColumn) return;
 
-    if (!leftTableId || !rightTableId || !leftColumn || !rightColumn) return;
-
-    const existing = joins.find(
-      (j) => j.leftTableId === leftTableId && j.rightTableId === rightTableId
-    );
-    setEditingJoin(
-      existing ?? {
-        id: `${leftTableId}__${rightTableId}`,
-        leftTableId,
-        rightTableId,
-        joinType: "INNER",
-        conditions: [
-          { leftColumn, operator: "=", rightColumn },
-        ],
-      }
-    );
-    setIsJoinModalOpen(true);
-  }, [joins]);
-
-  const joinCount = joins.length;
-  const joinBadgeLabel = joinCount === 1 ? "1 join" : `${joinCount} joins`;
+      const existing = currentJoins.find(
+        (join) => join.leftTableId === leftTableId && join.rightTableId === rightTableId
+      );
+      setEditingJoin(
+        existing ?? {
+          id: `${leftTableId}__${rightTableId}`,
+          leftTableId,
+          rightTableId,
+          joinType: "INNER",
+          source: "USER_DEFINED",
+          locked: false,
+          conditions: [{ leftColumn, operator: "=", rightColumn }],
+        }
+      );
+      setIsJoinModalOpen(true);
+    },
+    [currentJoins]
+  );
 
   const joinLegend = [
     { label: "INNER JOIN", bg: "#111827" },
@@ -261,6 +399,9 @@ export default function SttmTableRelationshipFlow() {
     { label: "RIGHT JOIN", bg: "#0d9488" },
     { label: "FULL JOIN", bg: "#9333ea" },
   ];
+
+  const joinCount = currentJoins.length;
+  const joinBadgeLabel = joinCount === 1 ? "1 join" : `${joinCount} joins`;
 
   return (
     <div className="flex flex-col gap-3">
@@ -278,10 +419,10 @@ export default function SttmTableRelationshipFlow() {
               setEditingJoin(null);
               setIsJoinModalOpen(true);
             }}
-            disabled={activeSourceTables.length === 0}
+            disabled={activeTables.length === 0}
             style={{
-              opacity: activeSourceTables.length === 0 ? 0.5 : 1,
-              cursor: activeSourceTables.length === 0 ? "not-allowed" : "pointer"
+              opacity: activeTables.length === 0 ? 0.5 : 1,
+              cursor: activeTables.length === 0 ? "not-allowed" : "pointer",
             }}
           >
             + Add Join
@@ -291,10 +432,7 @@ export default function SttmTableRelationshipFlow() {
         <div className="canvas-area__flow-host">
           {nodes.length === 0 ? (
             <div className="canvas-area__empty" aria-hidden>
-              <div className="canvas-area__empty-inner">
-                Select one or more tables from Source selection. They will appear
-                here so you can define joins and relationships.
-              </div>
+              <div className="canvas-area__empty-inner">{emptyStateText}</div>
             </div>
           ) : null}
           <ReactFlow
@@ -305,8 +443,6 @@ export default function SttmTableRelationshipFlow() {
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            fitView={nodes.length > 0}
-            fitViewOptions={{ padding: 0.2 }}
             proOptions={{ hideAttribution: true }}
             defaultEdgeOptions={{
               type: "tableEdge",
@@ -322,13 +458,13 @@ export default function SttmTableRelationshipFlow() {
         <div className="canvas-legend">
           <div className="canvas-legend__row">
             <span className="canvas-legend__label">LEGEND:</span>
-            {joinLegend.map((jt) => (
+            {joinLegend.map((item) => (
               <span
-                key={jt.label}
+                key={item.label}
                 className="canvas-legend__chip"
-                style={{ backgroundColor: jt.bg }}
+                style={{ backgroundColor: item.bg }}
               >
-                {jt.label}
+                {item.label}
               </span>
             ))}
             <span className="canvas-legend__hint">
@@ -347,7 +483,7 @@ export default function SttmTableRelationshipFlow() {
         </div>
       </div>
 
-      <FilterConditions tables={activeSourceTables} />
+      {showFilters ? <FilterConditions tables={activeTables} /> : null}
 
       <JoinModal
         isOpen={isJoinModalOpen}
@@ -355,28 +491,39 @@ export default function SttmTableRelationshipFlow() {
           setIsJoinModalOpen(false);
           setEditingJoin(null);
         }}
-        tables={activeSourceTables}
+        tables={activeTables}
+        drivingTableIdOverride={effectiveDrivingTableId}
         editingJoin={editingJoin}
-        onConfirm={(join: JoinConfig) => {
-          setJoins((prev) => {
-            const next = prev.filter((j) => j.id !== join.id);
-            return [...next, join];
-          });
-        }}
-      />
-      <AddDerivedModal
-        isOpen={isDerivedModalOpen}
-        onClose={() => {
-          setIsDerivedModalOpen(false);
-          setEditingDerivedSource(null);
-        }}
-        editingSource={editingDerivedSource}
-        onConfirm={(source) => {
-          updateDerivedSource(source);
-          setIsDerivedModalOpen(false);
-          setEditingDerivedSource(null);
-        }}
-      />
+          onConfirm={(join: JoinConfig) => {
+            setJoinState((prev) => {
+              const next = prev.filter((item) => item.id !== join.id);
+              return [
+                ...next,
+                {
+                  ...join,
+                  source: join.source ?? "USER_DEFINED",
+                  locked: join.locked ?? false,
+                },
+              ];
+            });
+          }}
+        />
+
+      {allowDerivedEditing ? (
+        <AddDerivedModal
+          isOpen={isDerivedModalOpen}
+          onClose={() => {
+            setIsDerivedModalOpen(false);
+            setEditingDerivedSource(null);
+          }}
+          editingSource={editingDerivedSource}
+          onConfirm={(source) => {
+            updateDerivedSource(source);
+            setIsDerivedModalOpen(false);
+            setEditingDerivedSource(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import { SttmBuilderProvider } from '@/features/sttm/context/sttm-builder-context';
+import ChatWidget from '@/features/ai-agent/chat-widget';
 
 export default function SttmLayout({
     children,
@@ -9,7 +10,10 @@ export default function SttmLayout({
 }) {
     return (
         <div>
-            <SttmBuilderProvider>{children}</SttmBuilderProvider>
+            <SttmBuilderProvider>
+                {children}
+                <ChatWidget />
+            </SttmBuilderProvider>
         </div>
     );
 }

@@ -7,6 +7,8 @@ import {
   fetchSchemas,
   fetchTables,
   fetchAttributes,
+  fetchDerivedSources,
+  fetchRelationships,
   runAutoMap as runAutoMapThunk,
   sendChatMessage as sendChatMessageThunk,
   toggleSource as toggleSourceAction,
@@ -14,9 +16,11 @@ import {
   clearSources as clearSourcesAction,
   clearTargets as clearTargetsAction,
   setDrivingTable as setDrivingTableAction,
+  setRelationships as setRelationshipsAction,
   addDerivedSource as addDerivedSourceAction,
   updateDerivedSource as updateDerivedSourceAction,
   removeDerivedSource as removeDerivedSourceAction,
+  toggleDerivedSource as toggleDerivedSourceAction,
 } from "@/features/sttm/store/sttm-builder-slice";
 import type {
   DerivedSource,
@@ -37,6 +41,7 @@ export function SttmBuilderProvider({
   // Load databases on mount
   useEffect(() => {
     dispatch(fetchDatabases());
+    dispatch(fetchDerivedSources());
   }, [dispatch]);
 
   const value = useMemo<ContextValue>(() => {
@@ -78,6 +83,7 @@ export function SttmBuilderProvider({
       // Actions — data loading
       reloadInitialData: () => {
         dispatch(fetchDatabases());
+        dispatch(fetchDerivedSources());
       },
 
       loadSchemas: (type: SelectionSide, dbId: string) => {
@@ -99,6 +105,7 @@ export function SttmBuilderProvider({
           .filter((t) => t.isSelected)
           .map((t) => t.qualifiedName);
         dispatch(fetchAttributes({ qualifiedNames: selectedNames, side: "source" }));
+        dispatch(fetchRelationships());
       },
 
       selectTarget: (tableId: string) => {
@@ -133,6 +140,8 @@ export function SttmBuilderProvider({
       drivingTableId: state.drivingTableId,
       setDrivingTable: (tableId: string | null) =>
         dispatch(setDrivingTableAction({ tableId })),
+      relationships: state.relationships,
+      setRelationships: (joins) => dispatch(setRelationshipsAction({ joins })),
       derivedSources: state.derivedSources,
       addDerivedSource: (source: DerivedSource) =>
         dispatch(addDerivedSourceAction(source)),
@@ -140,6 +149,8 @@ export function SttmBuilderProvider({
         dispatch(updateDerivedSourceAction(source)),
       removeDerivedSource: (id: string) =>
         dispatch(removeDerivedSourceAction({ id })),
+      toggleDerivedSource: (id: string) =>
+        dispatch(toggleDerivedSourceAction({ id })),
     };
   }, [state, dispatch]);
 

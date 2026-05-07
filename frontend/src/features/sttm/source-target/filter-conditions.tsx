@@ -41,6 +41,7 @@ interface FilterConditionsProps {
   controlSizes?: FilterControlSizes;
   onChange?: (groups: RuleGroup[], sql: string) => void;
   initialGroups?: RuleGroup[];
+  showPreview?: boolean;
 }
 
 const DEFAULT_CONTROL_SIZES: Required<FilterControlSizes> = {
@@ -55,6 +56,7 @@ export function FilterConditions({
   controlSizes,
   onChange,
   initialGroups,
+  showPreview = true,
 }: FilterConditionsProps) {
   const cw = { ...DEFAULT_CONTROL_SIZES, ...controlSizes };
 
@@ -540,7 +542,7 @@ export function FilterConditions({
         )}
       </Box>
 
-      {tables.length > 0 && (
+      {showPreview && tables.length > 0 && (
         <Box className="filter-preview">
           <div className="filter-preview__title">WHERE CLAUSE PREVIEW</div>
           <pre className="filter-preview__code">
@@ -551,4 +553,3 @@ export function FilterConditions({
     </Box>
   );
 }
-

@@ -6,9 +6,11 @@ import type {
   BuilderErrorState,
   BuilderLoadState,
   ChatMessage,
+  Column,
   ColumnGroup,
   DatabaseNode,
   DerivedSource,
+  JoinConfig,
   MappingSuggestion,
   SchemaNode,
   SourceTargetInfo,
@@ -39,6 +41,76 @@ function cloneBranch(branch: DatabaseNode[]): DatabaseNode[] {
   }));
 }
 
+function mergeColumnsIntoTables(
+  tables: TableNode[],
+  groups: ColumnGroup[]
+): TableNode[] {
+  return tables.map((table) => {
+    const group = groups.find((item) => item.qualifiedName === table.qualifiedName);
+    if (!group) return table;
+    return {
+      ...table,
+      columns: group.columns.length,
+      columnItems: group.columns,
+    };
+  });
+}
+
+function mergeColumnsIntoBranch(
+  branch: DatabaseNode[],
+  groups: ColumnGroup[]
+): DatabaseNode[] {
+  for (const db of branch) {
+    for (const schema of db.schemas) {
+      schema.tables = mergeColumnsIntoTables(schema.tables, groups);
+    }
+  }
+  return branch;
+}
+
+function buildSelectedColumnsByTable(
+  groups: ColumnGroup[]
+): Record<string, string[]> | null {
+  if (!groups.length) return null;
+
+  const out: Record<string, string[]> = {};
+  for (const group of groups) {
+    const selected = group.columns
+      .filter((column) => !!column.name)
+      .map((column) => column.name as string);
+    if (selected.length) {
+      out[group.qualifiedName] = selected;
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function buildRelationshipPayload(joins: JoinConfig[]) {
+  return joins
+    .filter(
+      (join) =>
+        !!join.leftTableId &&
+        !!join.rightTableId &&
+        !!join.conditions?.length
+    )
+    .map((join) => ({
+      left_table: makeTableRef(join.leftTableId as string),
+      right_table: makeTableRef(join.rightTableId as string),
+      constraint_name: join.constraintName ?? null,
+      join_type: join.joinType ?? "INNER",
+      source: join.source ?? "USER_DEFINED",
+      locked: join.locked ?? false,
+      conditions: (join.conditions ?? [])
+        .filter((condition) => !!condition.leftColumn && !!condition.rightColumn)
+        .map((condition) => ({
+          left_column: condition.leftColumn as string,
+          right_column: condition.rightColumn as string,
+          operator: condition.operator ?? "=",
+        })),
+    }))
+    .filter((join) => join.conditions.length > 0);
+}
+
 // ─── state shape ───────────────────────────────────────────────────
 type SttmBuilderState = {
   sourceDatabases: DatabaseNode[];
@@ -65,6 +137,7 @@ type SttmBuilderState = {
   errorState: BuilderErrorState;
 
   drivingTableId: string | null;
+  relationships: JoinConfig[];
   derivedSources: DerivedSource[];
 };
 
@@ -73,6 +146,7 @@ const initialLoadState: BuilderLoadState = {
   schemasByDb: {},
   tablesBySchema: {},
   attributes: "idle",
+  relationships: "idle",
   autoMap: "idle",
   chat: "idle",
 };
@@ -112,6 +186,7 @@ const initialState: SttmBuilderState = {
   errorState: initialErrorState,
 
   drivingTableId: null,
+  relationships: [],
   derivedSources: [],
 };
 
@@ -215,15 +290,184 @@ export const fetchAttributes = createAsyncThunk(
     try {
       const attrs = await dbService.getTableAttributes(qualifiedNames);
       const groups: ColumnGroup[] = attrs.map(
-        (item: { table: TableRef; columns: Array<{ column_name: string; data_type: string }> }) => ({
+        (item: {
+          table: TableRef;
+          columns: Array<{
+            column_name: string;
+            data_type: string;
+            is_primary_key?: boolean;
+            is_foreign_key?: boolean;
+          }>;
+        }) => ({
           table: item.table.table,
           qualifiedName: `${item.table.database}.${item.table.schema}.${item.table.table}`,
-          columns: item.columns.map((c) => ({ name: c.column_name, type: c.data_type })),
+          columns: item.columns.map(
+            (c): Column => ({
+              name: c.column_name,
+              type: c.data_type,
+              isPrimaryKey: !!c.is_primary_key,
+              isForeignKey: !!c.is_foreign_key,
+              tableName: item.table.table,
+            })
+          ),
         })
       );
       return { side, groups };
     } catch (err) {
       return rejectWithValue(getErrorMessage(err, "Unable to load attributes."));
+    }
+  }
+);
+
+/** Fetch relationships for currently selected source tables. */
+export const fetchRelationships = createAsyncThunk(
+  "sttmBuilder/fetchRelationships",
+  async (_, { getState, rejectWithValue }) => {
+    const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
+    const selectedSourceTables = state.sources.filter((table) => table.isSelected);
+
+    if (selectedSourceTables.length < 2) {
+      return [];
+    }
+
+    try {
+      const relationships = await dbService.getTableRelationships(
+        selectedSourceTables.map((table) => makeTableRef(table.qualifiedName))
+      );
+
+      return relationships.map(
+        (item: {
+          left_table: TableRef;
+          right_table: TableRef;
+          constraint_name?: string | null;
+          join_type?: "INNER" | "LEFT" | "RIGHT" | "FULL";
+          source?: "FOREIGN_KEY" | "USER_DEFINED" | null;
+          locked?: boolean;
+          conditions?: Array<{
+            left_column?: string;
+            right_column?: string;
+            operator?: string;
+          }>;
+        }): JoinConfig => {
+          const leftTableId = `${item.left_table.database}.${item.left_table.schema}.${item.left_table.table}`;
+          const rightTableId = `${item.right_table.database}.${item.right_table.schema}.${item.right_table.table}`;
+          const baseId = item.constraint_name?.trim()
+            ? item.constraint_name
+            : `${leftTableId}__${rightTableId}`;
+
+          return {
+            id: baseId,
+            leftTableId,
+            rightTableId,
+            joinType: item.join_type ?? "INNER",
+            constraintName: item.constraint_name ?? undefined,
+            source: item.source ?? "FOREIGN_KEY",
+            locked: item.locked ?? true,
+          conditions: (item.conditions ?? [])
+              .filter(
+                (condition) =>
+                  (condition.left_column || (condition as { fk_column?: string }).fk_column) &&
+                  (condition.right_column || (condition as { pk_column?: string }).pk_column)
+              )
+              .map((condition) => ({
+                leftColumn:
+                  (condition.left_column ??
+                    (condition as { fk_column?: string }).fk_column) as string,
+                rightColumn:
+                  (condition.right_column ??
+                    (condition as { pk_column?: string }).pk_column) as string,
+                operator: condition.operator ?? "=",
+              })),
+          };
+        }
+      );
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err, "Unable to load table relationships."));
+    }
+  }
+);
+
+export const fetchDerivedSources = createAsyncThunk(
+  "sttmBuilder/fetchDerivedSources",
+  async (_, { rejectWithValue }) => {
+    try {
+      const rows = await dbService.listDerivedSources();
+      return rows.map(
+        (row: {
+          derived_source_id: string;
+          derived_source_name: string;
+          sql_text?: string;
+          source_tables?: Array<{ database: string; schema: string; table: string }>;
+          driving_table?: { database: string; schema: string; table: string } | null;
+          relationships?: Array<{
+            id?: string;
+            left_table: { database: string; schema: string; table: string };
+            right_table: { database: string; schema: string; table: string };
+            join_type?: "INNER" | "LEFT" | "RIGHT" | "FULL";
+            constraint_name?: string | null;
+            source?: "FOREIGN_KEY" | "USER_DEFINED" | null;
+            locked?: boolean;
+            conditions?: Array<{
+              left_column: string;
+              right_column: string;
+              operator?: string;
+            }>;
+          }>;
+          filters?: any[];
+          selected_columns_by_table?: Record<string, string[]>;
+          preview_columns?: Array<{
+            name: string;
+            data_type: string;
+            is_primary_key?: boolean;
+          }>;
+        }): DerivedSource => {
+          const sourceTables = row.source_tables ?? [];
+          const selectedColumns = row.selected_columns_by_table ?? {};
+          const sourceTableIds = sourceTables.map(
+            (table) => `${table.database}.${table.schema}.${table.table}`
+          );
+
+          return {
+            id: row.derived_source_id,
+            sourceName: row.derived_source_name,
+            sqlText: row.sql_text,
+            drivingTableId: row.driving_table
+              ? `${row.driving_table.database}.${row.driving_table.schema}.${row.driving_table.table}`
+              : undefined,
+            tableIds: sourceTableIds,
+            joins: (row.relationships ?? []).map((relationship, index) => ({
+              id:
+                relationship.id ??
+                relationship.constraint_name ??
+                `${relationship.left_table.database}.${relationship.left_table.schema}.${relationship.left_table.table}__${relationship.right_table.database}.${relationship.right_table.schema}.${relationship.right_table.table}__${index}`,
+              joinType: relationship.join_type ?? "INNER",
+              leftTableId: `${relationship.left_table.database}.${relationship.left_table.schema}.${relationship.left_table.table}`,
+              rightTableId: `${relationship.right_table.database}.${relationship.right_table.schema}.${relationship.right_table.table}`,
+              conditions: (relationship.conditions ?? []).map((condition, conditionIndex) => ({
+                id: `cond-${index + 1}-${conditionIndex + 1}`,
+                leftColumn: condition.left_column,
+                operator: condition.operator ?? "=",
+                rightColumn: condition.right_column,
+              })),
+            })),
+            filters: row.filters ?? [],
+            columns: Object.entries(selectedColumns).flatMap(([tableId, columns]) =>
+              columns.map((columnName) => ({
+                name: columnName,
+                tableId,
+                tableName: tableId.split(".").pop(),
+              }))
+            ),
+            previewColumns: (row.preview_columns ?? []).map((column) => ({
+              name: column.name,
+              dataType: column.data_type,
+              isPrimaryKey: column.is_primary_key,
+            })),
+          };
+        }
+      );
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err, "Unable to load derived sources."));
     }
   }
 );
@@ -241,11 +485,16 @@ export const runAutoMap = createAsyncThunk(
         interface: "AUTO_MAP",
         thread_id: state.agentThreadId,
         source_tables: selectedSourceTables.map((t) => makeTableRef(t.qualifiedName)),
-        attributes: state.targetAttributeGroup.columns.map((col) => ({
-          target_table: makeTableRef(state.targetAttributeGroup!.qualifiedName),
-          target_attribute: col.name,
-          source_mappings: null,
-        })),
+        driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
+        relationships: buildRelationshipPayload(state.relationships),
+        selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
+        attributes: state.targetAttributeGroup.columns
+          .filter((col) => !!col.name)
+          .map((col) => ({
+            target_table: makeTableRef(state.targetAttributeGroup!.qualifiedName),
+            target_attribute: col.name as string,
+            source_mappings: null,
+          })),
       });
       return response;
     } catch (err) {
@@ -266,6 +515,12 @@ export const sendChatMessage = createAsyncThunk(
         interface: "CHAT",
         thread_id: state.agentThreadId,
         message: trimmed,
+        source_tables: state.sources
+          .filter((table) => table.isSelected)
+          .map((table) => makeTableRef(table.qualifiedName)),
+        driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
+        relationships: buildRelationshipPayload(state.relationships),
+        selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
       });
       return { userMessage: trimmed, response };
     } catch (err) {
@@ -331,8 +586,13 @@ export const sttmBuilderSlice = createSlice({
         }
       }
       state.drivingTableId = null;
+      state.relationships = [];
       state.sourceAttributeGroups = [];
       state.mappingSuggestions = [];
+      state.derivedSources = state.derivedSources.map((source) => ({
+        ...source,
+        isSelected: false,
+      }));
     },
 
     clearTargets: (state) => {
@@ -352,19 +612,34 @@ export const sttmBuilderSlice = createSlice({
       state.drivingTableId = action.payload.tableId;
     },
 
+    setRelationships: (state, action: PayloadAction<{ joins: JoinConfig[] }>) => {
+      state.relationships = action.payload.joins;
+    },
+
     addDerivedSource: (state, action: PayloadAction<DerivedSource>) => {
-      state.derivedSources.push(action.payload);
+      state.derivedSources.push({ ...action.payload, isSelected: false });
     },
 
     updateDerivedSource: (state, action: PayloadAction<DerivedSource>) => {
       const idx = state.derivedSources.findIndex((s) => s.id === action.payload.id);
       if (idx !== -1) {
-        state.derivedSources[idx] = action.payload;
+        state.derivedSources[idx] = {
+          ...action.payload,
+          isSelected: state.derivedSources[idx].isSelected ?? false,
+        };
       }
     },
 
     removeDerivedSource: (state, action: PayloadAction<{ id: string }>) => {
       state.derivedSources = state.derivedSources.filter((s) => s.id !== action.payload.id);
+    },
+
+    toggleDerivedSource: (state, action: PayloadAction<{ id: string }>) => {
+      state.derivedSources = state.derivedSources.map((source) =>
+        source.id === action.payload.id
+          ? { ...source, isSelected: !source.isSelected }
+          : source
+      );
     },
   },
 
@@ -398,6 +673,13 @@ export const sttmBuilderSlice = createSlice({
         state.sourceDatabases = [];
         state.targetDatabases = [];
       });
+
+    builder.addCase(fetchDerivedSources.fulfilled, (state, action) => {
+      state.derivedSources = action.payload.map((source: DerivedSource) => ({
+        ...source,
+        isSelected: source.isSelected ?? false,
+      }));
+    });
 
     // ── fetchSchemas ──
     builder
@@ -449,15 +731,21 @@ export const sttmBuilderSlice = createSlice({
         if (!cached && rawTables && db) {
           const schema = db.schemas.find((s) => s.schemaId === schemaId);
           if (schema) {
-            schema.tables = rawTables.map((t: { table_name: string }) => ({
+            schema.tables = rawTables.map(
+              (t: { table_name: string; row_count?: number | null; column_count?: number }) => ({
               tableId: `${databaseName}.${schemaName}.${t.table_name}`,
               tableName: t.table_name,
               qualifiedName: `${databaseName}.${schemaName}.${t.table_name}`,
               isSelected: false,
               tag: type === "source" ? "Source" : "Target",
-              rows: "--",
-              columns: 0,
-            }));
+              rows:
+                t.row_count !== null && t.row_count !== undefined
+                  ? String(t.row_count)
+                  : "--",
+              columns: t.column_count ?? 0,
+              columnItems: [],
+            })
+            );
             schema.tablesLoaded = true;
           }
         }
@@ -478,6 +766,7 @@ export const sttmBuilderSlice = createSlice({
           state.sources = flatTables;
           state.sourceInfo = { dbName: databaseName, schemaName };
           state.sourceAttributeGroups = [];
+          state.relationships = [];
           state.mappingSuggestions = [];
         } else {
           state.targets = flatTables;
@@ -505,14 +794,33 @@ export const sttmBuilderSlice = createSlice({
         const { side, groups } = action.payload;
         if (side === "source") {
           state.sourceAttributeGroups = groups;
+          state.sources = mergeColumnsIntoTables(state.sources, groups);
+          mergeColumnsIntoBranch(state.sourceDatabases, groups);
         } else {
           state.targetAttributeGroup = groups[0] ?? null;
+          state.targets = mergeColumnsIntoTables(state.targets, groups);
+          mergeColumnsIntoBranch(state.targetDatabases, groups);
         }
         state.loadState.attributes = "success";
       })
       .addCase(fetchAttributes.rejected, (state, action) => {
         state.loadState.attributes = "error";
         state.errorState.attributes = action.payload as string;
+      });
+
+    // ── fetchRelationships ──
+    builder
+      .addCase(fetchRelationships.pending, (state) => {
+        state.loadState.relationships = "loading";
+        state.errorState.relationships = undefined;
+      })
+      .addCase(fetchRelationships.fulfilled, (state, action) => {
+        state.loadState.relationships = "success";
+        state.relationships = action.payload;
+      })
+      .addCase(fetchRelationships.rejected, (state, action) => {
+        state.loadState.relationships = "error";
+        state.errorState.relationships = action.payload as string;
       });
 
     // ── runAutoMap ──
@@ -580,9 +888,11 @@ export const {
   clearSources,
   clearTargets,
   setDrivingTable,
+  setRelationships,
   addDerivedSource,
   updateDerivedSource,
   removeDerivedSource,
+  toggleDerivedSource,
 } = sttmBuilderSlice.actions;
 
 export default sttmBuilderSlice.reducer;

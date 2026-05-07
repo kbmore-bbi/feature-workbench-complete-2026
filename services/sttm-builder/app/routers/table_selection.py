@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 
 from app.api.deps import get_table_selection_service
 from app.core.table_selection import TableSelectionService
-from app.schema.table_selection import DatabaseItem, TableAttributes, TableItem
+from app.schema.table_selection import DatabaseItem, RelationshipItem, RelationshipRequest, TableAttributes, TableItem
 from app.schema.table_selection import SchemaItem
 
 router = APIRouter(prefix="/table-selection", tags=["Table Selection"])
@@ -41,3 +41,11 @@ def get_attributes(
     svc: TableSelectionService = Depends(get_table_selection_service),
 ):
     return svc.list_attributes_for_tables(tables)
+
+
+@router.post("/relationships", response_model=list[RelationshipItem])
+def get_relationships(
+    body: RelationshipRequest,
+    svc: TableSelectionService = Depends(get_table_selection_service),
+):
+    return svc.list_relationships_for_tables(body.tables)

@@ -5,13 +5,17 @@ from fastapi import Depends, Query, Request
 
 from app.auth.models import AppPersona
 from app.core.config import Settings, get_settings
-from app.core.snowflake import SnowflakeClient
-from app.core.snowflake import build_caller_token
+from app.core.snowflake import (
+    SnowflakeClient,
+    build_caller_token,
+    using_local_dev_auth,
+)
 from app.core.snowflake_agent import SnowflakeAgentClient
+from app.core.derived_source import DerivedSourceService
 from app.core.semantic_model import SemanticModelService
 from app.core.table_selection import TableSelectionService
-from app.core.user import UserService
 from app.core.sttm_builder import STTMBuilderService
+from app.core.user import UserService
 
 _SPCS_USER_TOKEN_HEADER = "sf-context-current-user-token"
 
@@ -55,22 +59,51 @@ def get_snowflake_client(
 
 def get_snowflake_agent_client(
     request: Request,
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> SnowflakeAgentClient:
     """Returns a Cortex Agent client authenticated with the caller's Snowflake context."""
     user_token = request.headers.get(_SPCS_USER_TOKEN_HEADER, "")
-    return SnowflakeAgentClient(token=build_caller_token(user_token))
+    if using_local_dev_auth(settings, user_token):
+        context = client.get_rest_session_context()
+        return SnowflakeAgentClient(
+            token=context.token,
+            host=context.host,
+            auth_mode="snowflake_token",
+        )
+
+    return SnowflakeAgentClient(
+        token=build_caller_token(user_token),
+        host=settings.resolved_snowflake_host or None,
+    )
 
 
 def get_table_selection_service(
     client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> TableSelectionService:
-    return TableSelectionService(client)
+    return TableSelectionService(client, settings)
+
+
+def get_derived_source_service(
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DerivedSourceService:
+    return DerivedSourceService(client.session, settings)
 
 
 def get_sttm_builder_service(
     agent_client: Annotated[SnowflakeAgentClient, Depends(get_snowflake_agent_client)],
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+    semantic_model_service: Annotated[SemanticModelService, Depends(get_semantic_model_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> STTMBuilderService:
-    return STTMBuilderService(agent_client)
+    return STTMBuilderService(
+        agent_client,
+        settings=settings,
+        session=client.session,
+        semantic_model_service=semantic_model_service,
+    )
 
 
 def get_user_service(

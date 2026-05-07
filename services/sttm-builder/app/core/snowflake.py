@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from typing import Any, Optional
 
 import snowflake.connector
@@ -10,6 +11,12 @@ from app.core.exceptions import AuthenticationError, SnowflakeConnectionError
 logger = logging.getLogger(__name__)
 
 _SERVICE_TOKEN_PATH = "/snowflake/session/token"
+
+
+@dataclass
+class RestSessionContext:
+    token: str
+    host: str
 
 
 def get_service_token() -> str:
@@ -80,6 +87,57 @@ def using_local_dev_auth(settings: Settings, user_token: str | None = None) -> b
     return settings.local_dev_auth_enabled and not (user_token or "").strip()
 
 
+def _normalize_host(host: str, account: str) -> str:
+    resolved_host = (host or "").strip().replace("_", "-").lower()
+    if resolved_host.endswith(".snowflakecomputing.com"):
+        return resolved_host
+
+    normalized_account = (account or "").strip().replace("_", "-").lower()
+    if normalized_account.endswith(".snowflakecomputing.com"):
+        return normalized_account
+    if normalized_account:
+        return f"{normalized_account}.snowflakecomputing.com"
+    return resolved_host
+
+
+def get_local_rest_session_context(
+    settings: Settings,
+    role: Optional[str] = None,
+) -> RestSessionContext:
+    connection = None
+    try:
+        connection = snowflake.connector.connect(**_direct_connection_kwargs(settings, role))
+        rest = getattr(connection, "_rest", None)
+        token = getattr(rest, "_token", None) if rest else None
+        if not token:
+            raise SnowflakeConnectionError(
+                "Failed to extract the Snowflake connector session token for local REST calls."
+            )
+
+        host = _normalize_host(
+            getattr(connection, "host", "") or settings.resolved_snowflake_host,
+            settings.snowflake_account,
+        )
+        if not host:
+            raise SnowflakeConnectionError(
+                "Failed to determine the Snowflake host for local REST calls."
+            )
+
+        return RestSessionContext(token=token, host=host)
+    except Exception as exc:
+        if isinstance(exc, SnowflakeConnectionError):
+            raise
+        raise SnowflakeConnectionError(
+            f"Failed to initialize local Snowflake REST session context: {exc}"
+        ) from exc
+    finally:
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                logger.debug("Failed to close local REST bootstrap connection", exc_info=True)
+
+
 class SnowflakeClient:
     """
     Wraps a Snowpark Session authenticated as the calling user via SPCS caller's rights.
@@ -116,6 +174,28 @@ class SnowflakeClient:
     @property
     def session(self) -> Session:
         return self._session
+
+    def get_rest_session_context(self) -> RestSessionContext:
+        server_connection = getattr(self._session, "_conn", None)
+        connector_connection = getattr(server_connection, "_conn", None) if server_connection else None
+        rest = getattr(connector_connection, "_rest", None) if connector_connection else None
+        token = getattr(rest, "_token", None) if rest else None
+
+        if not token:
+            raise SnowflakeConnectionError(
+                "Failed to extract the Snowflake connector session token from the active session."
+            )
+
+        host = _normalize_host(
+            getattr(connector_connection, "host", ""),
+            getattr(connector_connection, "account", ""),
+        )
+        if not host:
+            raise SnowflakeConnectionError(
+                "Failed to determine the Snowflake host from the active session."
+            )
+
+        return RestSessionContext(token=token, host=host)
 
     def close(self) -> None:
         self._session.close()

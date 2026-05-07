@@ -2,15 +2,12 @@
 
 import React from "react";
 import SourceTargetList from "./source-target-list";
-import { Box, Typography, Paper, InputBase, Button, IconButton, Chip, Stack } from "@mui/material";
+import { Box, Typography, Paper, InputBase, Button, Stack } from "@mui/material";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import FilterListRoundedIcon from "@mui/icons-material/FilterListRounded";
 import AddIcon from "@mui/icons-material/Add";
-import CodeIcon from "@mui/icons-material/Code";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import { FocusButton } from "@/components/ui/focus-button";
-import { FocusChip } from "@/components/ui/focus-chip";
 import { AddDerivedModal } from "./add-derived-modal";
 
 /** Shared with search field + Filters control */
@@ -55,7 +52,7 @@ const filtersControlSx = {
 } as const;
 
 export default function SourceTargetPanel({ type }: { type: "source" | "target" }) {
-  const { clearSources, clearTargets, fullData, drivingTableId, derivedSources, addDerivedSource, removeDerivedSource } = useSttmBuilderContext();
+  const { clearSources, clearTargets, fullData, drivingTableId, addDerivedSource } = useSttmBuilderContext();
   const [isDerivedModalOpen, setIsDerivedModalOpen] = React.useState(false);
 
   const title = type === "source" ? "SOURCE TABLES" : "TARGET TABLES";
@@ -229,33 +226,6 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
             )}
           </Box>
 
-          {derivedSources && derivedSources.length > 0 && (
-            <Box sx={{ bgcolor: "#ecfdf5", px: 2, py: 1.5, display: "flex", alignItems: "center", gap: 1.5 }}>
-              <Typography sx={{ fontSize: 12, fontWeight: 700, color: "#166534" }}>Derived:</Typography>
-              <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1 }}>
-                {derivedSources.map((ds: any) => (
-                  <FocusChip
-                    key={ds.id}
-                    label={ds.sourceName}
-                    rounded={true}
-                    size="small"
-                    customBackgroundColor="#dcfce3"
-                    customColor="#166534"
-                    onDelete={() => removeDerivedSource(ds.id)}
-                    sx={{
-                      fontWeight: 600,
-                      "& .MuiChip-deleteIcon": {
-                        color: "#166534",
-                        fontSize: 14,
-                        opacity: 0.7,
-                        "&:hover": { opacity: 1, color: "#14532d" }
-                      }
-                    }}
-                  />
-                ))}
-              </Box>
-            </Box>
-          )}
         </Box>
       )}
 

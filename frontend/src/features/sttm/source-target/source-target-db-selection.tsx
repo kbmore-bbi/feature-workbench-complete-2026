@@ -7,6 +7,8 @@ import SchemaRoundedIcon from "@mui/icons-material/SchemaRounded";
 import TableRowsRoundedIcon from "@mui/icons-material/TableRowsRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
+import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
 import {
   Box,
   Button,
@@ -45,6 +47,8 @@ function SidebarStateShell({ children }: { children: React.ReactNode }) {
 export default function DataSelectionPanel() {
   const {
     fullData,
+    derivedSources,
+    toggleDerivedSource,
     loadState,
     errorState,
     reloadInitialData,
@@ -57,6 +61,11 @@ export default function DataSelectionPanel() {
   const [expandedSchemas, setExpandedSchemas] = useState<Record<string, boolean>>(
     {}
   );
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    source: true,
+    target: true,
+    derived: true,
+  });
 
   if (loadState.initial === "loading" || !fullData) {
     return (
@@ -372,152 +381,305 @@ export default function DataSelectionPanel() {
   ) => {
     return (
       <Box sx={{ mb: 2.5 }}>
-        <Typography
+        <Box
+          onClick={() =>
+            setExpandedSections((prev) => ({
+              ...prev,
+              [type]: !prev[type],
+            }))
+          }
           sx={{
             px: 1.5,
             mb: 1,
-            fontSize: 10,
-            fontWeight: 700,
-            color: "var(--color-muted)",
-            textTransform: "uppercase",
-            letterSpacing: "0.05em",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            cursor: "pointer",
           }}
         >
-          {title}
-        </Typography>
+          <Typography
+            sx={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "var(--color-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+          >
+            {title}
+          </Typography>
+          {expandedSections[type] ? (
+            <KeyboardArrowDownRoundedIcon
+              sx={{ fontSize: 16, color: "var(--color-muted)" }}
+            />
+          ) : (
+            <KeyboardArrowRightRoundedIcon
+              sx={{ fontSize: 16, color: "var(--color-muted)" }}
+            />
+          )}
+        </Box>
 
-        {items.filter(shouldShowDatabase).map((db) => {
-          const expandKey = `${type}:${db.dbId}`;
-          const isDbExpanded = Boolean(expandedDbs[expandKey]);
-          const isSchemasLoading = loadState.schemasByDb[expandKey] === "loading";
-          const schemasError = errorState.schemasByDb[expandKey];
+        <Collapse in={expandedSections[type]} timeout="auto">
+          <Box sx={{ maxHeight: 240, overflowY: "auto", pr: 0.5 }}>
+            {items.filter(shouldShowDatabase).map((db) => {
+              const expandKey = `${type}:${db.dbId}`;
+              const isDbExpanded = Boolean(expandedDbs[expandKey]);
+              const isSchemasLoading = loadState.schemasByDb[expandKey] === "loading";
+              const schemasError = errorState.schemasByDb[expandKey];
 
-          return (
-            <Box key={db.dbId} sx={{ mb: 0.4 }}>
-              <Box
-                onClick={() => {
-                  if (!isSchemasLoading) {
-                    void toggleDb(type, db.dbId);
-                  }
-                }}
-                sx={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 0.5,
-                  px: 1,
-                  py: 0.6,
-                  borderRadius: "6px",
-                  cursor: isSchemasLoading ? "default" : "pointer",
-                  backgroundColor: db.isSelected
-                    ? "var(--color-surface-muted)"
-                    : "transparent",
-                  "&:hover": {
-                    backgroundColor: isSchemasLoading
-                      ? undefined
-                      : "var(--color-surface-muted)",
-                  },
-                }}
-              >
-                {isDbExpanded ? (
-                  <KeyboardArrowDownRoundedIcon
-                    sx={{ fontSize: 16, color: "var(--color-muted)" }}
-                  />
-                ) : (
-                  <KeyboardArrowRightRoundedIcon
-                    sx={{ fontSize: 16, color: "var(--color-muted)" }}
-                  />
-                )}
+              return (
+                <Box key={db.dbId} sx={{ mb: 0.4 }}>
+                  <Box
+                    onClick={() => {
+                      if (!isSchemasLoading) {
+                        void toggleDb(type, db.dbId);
+                      }
+                    }}
+                    sx={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 0.5,
+                      px: 1,
+                      py: 0.6,
+                      borderRadius: "6px",
+                      cursor: isSchemasLoading ? "default" : "pointer",
+                      backgroundColor: db.isSelected
+                        ? "var(--color-surface-muted)"
+                        : "transparent",
+                      "&:hover": {
+                        backgroundColor: isSchemasLoading
+                          ? undefined
+                          : "var(--color-surface-muted)",
+                      },
+                    }}
+                  >
+                    {isDbExpanded ? (
+                      <KeyboardArrowDownRoundedIcon
+                        sx={{ fontSize: 16, color: "var(--color-muted)" }}
+                      />
+                    ) : (
+                      <KeyboardArrowRightRoundedIcon
+                        sx={{ fontSize: 16, color: "var(--color-muted)" }}
+                      />
+                    )}
 
-                <StorageRoundedIcon
-                  sx={{
-                    fontSize: 15,
-                    color: db.isSelected
-                      ? "var(--color-primary-save)"
-                      : "var(--color-text)",
-                  }}
-                />
-
-                <Typography
-                  sx={{
-                    flex: 1,
-                    fontSize: 12,
-                    fontWeight: db.isSelected ? 700 : 500,
-                    color: "var(--color-text)",
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {db.dbName}
-                </Typography>
-
-                {isSchemasLoading ? <CircularProgress size={14} /> : null}
-              </Box>
-
-              <Collapse in={isDbExpanded} timeout="auto" unmountOnExit>
-                <Box sx={{ mt: 0.2 }}>
-                  {isSchemasLoading ? (
-                    <Box
+                    <StorageRoundedIcon
                       sx={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 1,
-                        pl: 3,
-                        py: 0.75,
+                        fontSize: 15,
+                        color: db.isSelected
+                          ? "var(--color-primary-save)"
+                          : "var(--color-text)",
+                      }}
+                    />
+
+                    <Typography
+                      sx={{
+                        flex: 1,
+                        fontSize: 12,
+                        fontWeight: db.isSelected ? 700 : 500,
+                        color: "var(--color-text)",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
                       }}
                     >
-                      <CircularProgress size={14} />
-                      <Typography
-                        sx={{
-                          fontSize: 11,
-                          color: "var(--color-muted)",
-                        }}
-                      >
-                        Loading schemas...
-                      </Typography>
-                    </Box>
-                  ) : schemasError ? (
-                    <Box sx={{ pl: 3, pr: 1, py: 0.5 }}>
-                      <Typography
-                        sx={{
-                          fontSize: 11,
-                          color: "var(--color-danger, #d32f2f)",
-                          lineHeight: 1.3,
-                        }}
-                      >
-                        {schemasError}
-                      </Typography>
+                      {db.dbName}
+                    </Typography>
 
-                      <Button
-                        variant="text"
-                        onClick={() => {
-                          void loadSchemas(type, db.dbId);
-                        }}
-                        sx={{
-                          mt: 0.25,
-                          px: 0,
-                          minWidth: "auto",
-                          fontSize: 11,
-                          textTransform: "none",
-                          color: "var(--color-primary-save)",
-                        }}
-                      >
-                        Retry
-                      </Button>
+                    {isSchemasLoading ? <CircularProgress size={14} /> : null}
+                  </Box>
+
+                  <Collapse in={isDbExpanded} timeout="auto" unmountOnExit>
+                    <Box sx={{ mt: 0.2 }}>
+                      {isSchemasLoading ? (
+                        <Box
+                          sx={{
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 1,
+                            pl: 3,
+                            py: 0.75,
+                          }}
+                        >
+                          <CircularProgress size={14} />
+                          <Typography
+                            sx={{
+                              fontSize: 11,
+                              color: "var(--color-muted)",
+                            }}
+                          >
+                            Loading schemas...
+                          </Typography>
+                        </Box>
+                      ) : schemasError ? (
+                        <Box sx={{ pl: 3, pr: 1, py: 0.5 }}>
+                          <Typography
+                            sx={{
+                              fontSize: 11,
+                              color: "var(--color-danger, #d32f2f)",
+                              lineHeight: 1.3,
+                            }}
+                          >
+                            {schemasError}
+                          </Typography>
+
+                          <Button
+                            variant="text"
+                            onClick={() => {
+                              void loadSchemas(type, db.dbId);
+                            }}
+                            sx={{
+                              mt: 0.25,
+                              px: 0,
+                              minWidth: "auto",
+                              fontSize: 11,
+                              textTransform: "none",
+                              color: "var(--color-primary-save)",
+                            }}
+                          >
+                            Retry
+                          </Button>
+                        </Box>
+                      ) : (
+                        db.schemas
+                          .filter(
+                            (schema) =>
+                              !searchText.trim() || matchesSearch(schema.schemaName)
+                          )
+                          .map((schema) => renderSchema(schema, db.dbId, type))
+                      )}
                     </Box>
-                  ) : (
-                    db.schemas
-                      .filter(
-                        (schema) =>
-                          !searchText.trim() || matchesSearch(schema.schemaName)
-                      )
-                      .map((schema) => renderSchema(schema, db.dbId, type))
-                  )}
+                  </Collapse>
                 </Box>
-              </Collapse>
-            </Box>
-          );
-        })}
+              );
+            })}
+          </Box>
+        </Collapse>
+      </Box>
+    );
+  };
+
+  const renderDerivedSourcesSection = () => {
+    return (
+      <Box sx={{ mb: 2.5 }}>
+        <Box
+          onClick={() =>
+            setExpandedSections((prev) => ({
+              ...prev,
+              derived: !prev.derived,
+            }))
+          }
+          sx={{
+            px: 1.5,
+            mb: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            cursor: "pointer",
+          }}
+        >
+          <Typography
+            sx={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: "var(--color-muted)",
+              textTransform: "uppercase",
+              letterSpacing: "0.05em",
+            }}
+          >
+            Derived Sources Selection
+          </Typography>
+          {expandedSections.derived ? (
+            <KeyboardArrowDownRoundedIcon
+              sx={{ fontSize: 16, color: "var(--color-muted)" }}
+            />
+          ) : (
+            <KeyboardArrowRightRoundedIcon
+              sx={{ fontSize: 16, color: "var(--color-muted)" }}
+            />
+          )}
+        </Box>
+
+        <Collapse in={expandedSections.derived} timeout="auto">
+          <Box sx={{ maxHeight: 200, overflowY: "auto", pr: 0.5, px: 0.5 }}>
+            {derivedSources.length ? (
+              derivedSources.map((source) => (
+                <Box
+                  key={source.id}
+                  onClick={() => toggleDerivedSource(source.id)}
+                  sx={{
+                    mb: 0.75,
+                    px: 1,
+                    py: 0.9,
+                    borderRadius: "8px",
+                    border: "1px solid",
+                    borderColor: source.isSelected ? "#16a34a" : "#d1fae5",
+                    backgroundColor: source.isSelected ? "#dcfce7" : "#ecfdf5",
+                    cursor: "pointer",
+                    transition: "120ms ease",
+                    "&:hover": {
+                      backgroundColor: source.isSelected ? "#dcfce7" : "#e7f9ee",
+                    },
+                  }}
+                >
+                  <Box
+                    sx={{
+                      display: "flex",
+                      alignItems: "flex-start",
+                      gap: 1,
+                    }}
+                  >
+                    {source.isSelected ? (
+                      <CheckCircleRoundedIcon
+                        sx={{ mt: 0.1, fontSize: 16, color: "#16a34a", flexShrink: 0 }}
+                      />
+                    ) : (
+                      <RadioButtonUncheckedRoundedIcon
+                        sx={{ mt: 0.1, fontSize: 16, color: "#22c55e", flexShrink: 0 }}
+                      />
+                    )}
+                    <Box sx={{ minWidth: 0, flex: 1 }}>
+                  <Typography
+                    sx={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      color: "#166534",
+                      lineHeight: 1.3,
+                      whiteSpace: "normal",
+                      overflowWrap: "anywhere",
+                      wordBreak: "break-word",
+                    }}
+                  >
+                    {source.sourceName}
+                  </Typography>
+                  <Typography
+                    sx={{
+                      mt: 0.4,
+                      fontSize: 11,
+                      color: "#047857",
+                      lineHeight: 1.35,
+                    }}
+                  >
+                    {(source.tableIds?.length ?? 0)} source tables · {(source.columns?.length ?? 0)} selected columns
+                  </Typography>
+                    </Box>
+                  </Box>
+                </Box>
+              ))
+            ) : (
+              <Typography
+                sx={{
+                  px: 1,
+                  py: 0.5,
+                  fontSize: 11,
+                  color: "var(--color-muted)",
+                }}
+              >
+                No derived sources saved yet.
+              </Typography>
+            )}
+          </Box>
+        </Collapse>
       </Box >
     );
   };
@@ -591,6 +753,7 @@ export default function DataSelectionPanel() {
       <Box sx={{ flex: 1, overflowY: "auto", px: 1 }}>
         {renderDatabaseSection("Source Selection", fullData.sources, "source")}
         {renderDatabaseSection("Target Selection", fullData.targets, "target")}
+        {renderDerivedSourcesSection()}
       </Box>
     </Box>
   );

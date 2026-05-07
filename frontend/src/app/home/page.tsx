@@ -11,7 +11,6 @@ import CloseIcon from '@mui/icons-material/Close';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import { useRouter } from 'next/navigation';
 import Footer from '@/features/layout/app-footer';
-import AppHeader from '@/features/layout/app-header';
 
 /* --- FEATURE CARD SUB-COMPONENT --- */
 const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
@@ -63,7 +62,7 @@ export default function HomePage() {
         </Box>
       </Box>
 
-      <Container sx={{ mt: 8, 'max-width': '90%' }}>
+      <Container sx={{ mt: 8, maxWidth: '90% !important' }}>
         <Box sx={{
           display: 'flex',
           flexDirection: 'row !important',

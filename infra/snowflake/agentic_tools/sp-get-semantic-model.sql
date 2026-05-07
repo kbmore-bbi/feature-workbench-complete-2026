@@ -46,7 +46,7 @@ BEGIN
 
     query := ''
         SELECT SEMANTIC_MODEL
-        FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODEL
+        FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODELS
         WHERE SCOPE          = UPPER('''''' || SCOPE || '''''')
           AND DB_NAME        = UPPER('''''' || DB_NAME || '''''')
           AND SCHEMA_NAME    = UPPER('''''' || SCHEMA_NAME || '''''')

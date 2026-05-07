@@ -2,6 +2,7 @@ import json
 import os
 import uuid
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -23,10 +24,21 @@ class SnowflakeAgentClient:
     _ENDPOINT = "/api/v2/cortex/agent:run"
     _DEFAULT_MODEL = "claude-sonnet-4"
 
-    def __init__(self, token: str, model: str | None = None) -> None:
+    def __init__(
+        self,
+        token: str,
+        model: str | None = None,
+        *,
+        host: str | None = None,
+        auth_mode: str = "oauth_bearer",
+    ) -> None:
         self._token = token
         self.model = model or os.getenv("SNOWFLAKE_AGENT_ORCHESTRATION_MODEL", self._DEFAULT_MODEL)
-        self._base_url = f"https://{os.environ['SNOWFLAKE_HOST']}"
+        resolved_host = (host or os.getenv("SNOWFLAKE_HOST", "")).strip()
+        if not resolved_host:
+            raise SnowflakeAgentError("SNOWFLAKE_HOST is not set for Cortex Agent requests.")
+        self._base_url = f"https://{resolved_host}"
+        self._auth_mode = auth_mode
 
     # ------------------------------------------------------------------
     # Public API
@@ -54,23 +66,19 @@ class SnowflakeAgentClient:
             "messages": messages,
         }
 
-        if agent:
+        if agent and self._auth_mode != "snowflake_token":
             payload["agent"] = agent
 
         if thread_id:
             payload["thread_id"] = thread_id
 
-        headers = {
-            "Authorization": f"Bearer {self._token}",
-            "X-Snowflake-Authorization-Token-Type": "OAUTH",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        }
+        headers = self._build_headers()
+        endpoint = self._build_endpoint(agent)
 
         try:
             with httpx.Client(timeout=120.0) as client:
                 response = client.post(
-                    f"{self._base_url}{self._ENDPOINT}",
+                    f"{self._base_url}{endpoint}",
                     headers=headers,
                     json=payload,
                 )
@@ -87,11 +95,51 @@ class SnowflakeAgentClient:
         try:
             data = response.json()
         except json.JSONDecodeError as exc:
+            raw_text = response.text.strip()
+            if raw_text:
+                return raw_text, thread_id or str(uuid.uuid4())
             raise SnowflakeAgentError(
                 f"Cortex Agent response is not valid JSON: {exc}"
             ) from exc
 
         return self._extract_text_and_thread(data, thread_id)
+
+    def _build_headers(self) -> dict[str, str]:
+        if self._auth_mode == "snowflake_token":
+            return {
+                "Authorization": f'Snowflake Token="{self._token}"',
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+
+        return {
+            "Authorization": f"Bearer {self._token}",
+            "X-Snowflake-Authorization-Token-Type": "OAUTH",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+
+    def _build_endpoint(self, agent: str | None) -> str:
+        if self._auth_mode != "snowflake_token":
+            return self._ENDPOINT
+
+        if not agent:
+            raise SnowflakeAgentError(
+                "Local Snowflake-token Cortex Agent requests require a fully-qualified agent name."
+            )
+
+        parts = agent.split(".", 2)
+        if len(parts) != 3 or not all(parts):
+            raise SnowflakeAgentError(
+                "Expected fully-qualified agent name in DATABASE.SCHEMA.AGENT format for local requests."
+            )
+
+        database, schema, agent_name = parts
+        return (
+            f"/api/v2/databases/{quote(database, safe='')}"
+            f"/schemas/{quote(schema, safe='')}"
+            f"/agents/{quote(agent_name, safe='')}:run"
+        )
 
     # ------------------------------------------------------------------
     # Response parsing

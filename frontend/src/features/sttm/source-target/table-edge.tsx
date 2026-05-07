@@ -11,9 +11,25 @@ import {
 export interface TableEdgeData {
   joinType?: string;
   conditionCount?: number;
+  label?: string;
+  readOnly?: boolean;
+  dashed?: boolean;
   onDelete?: (id: string) => void;
   onEdit?: (id: string) => void;
   [key: string]: unknown;
+}
+
+function joinStrokeColor(joinType?: string) {
+  switch ((joinType ?? "INNER").toUpperCase()) {
+    case "LEFT":
+      return "#1d4ed8";
+    case "RIGHT":
+      return "#0f766e";
+    case "FULL":
+      return "#7c3aed";
+    default:
+      return "#111827";
+  }
 }
 
 export function TableEdge({
@@ -38,7 +54,11 @@ export function TableEdge({
 
   const edgeData = data as TableEdgeData | undefined;
   const joinType = edgeData?.joinType || "INNER";
+  const label = edgeData?.label ?? `${joinType} · ${edgeData?.conditionCount ?? 1}`;
   const count = edgeData?.conditionCount ?? 1;
+  const stroke = joinStrokeColor(joinType);
+  const readOnly = edgeData?.readOnly ?? false;
+  const dashed = edgeData?.dashed ?? false;
 
   return (
     <>
@@ -46,8 +66,9 @@ export function TableEdge({
         id={id}
         path={edgePath}
         style={{
-          stroke: selected ? "#4f46e5" : "#cbd5e1",
+          stroke: selected ? "#4f46e5" : stroke,
           strokeWidth: selected ? 2.5 : 2,
+          strokeDasharray: dashed ? "6 4" : undefined,
         }}
       />
 
@@ -59,41 +80,46 @@ export function TableEdge({
           }}
         >
           <div className="tedge-label__inner">
-            <button
-              className="tedge-label__icon-btn tedge-label__icon-btn--edit"
-              onClick={(e) => {
-                e.stopPropagation();
-                edgeData?.onEdit?.(id);
-              }}
-              title="Edit Join"
-            >
-              ✎
-            </button>
+            {!readOnly ? (
+              <button
+                className="tedge-label__icon-btn tedge-label__icon-btn--edit"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  edgeData?.onEdit?.(id);
+                }}
+                title="Edit Join"
+              >
+                ✎
+              </button>
+            ) : null}
             <div
               style={{
                 fontSize: 11,
                 fontWeight: 700,
-                color: "#64748b",
-                padding: "0 2px",
+                color: selected ? "#4338ca" : stroke,
+                padding: "0 4px",
+                minWidth: 56,
+                textAlign: "center",
               }}
-              title={`${joinType} JOIN (${count} condition${count === 1 ? "" : "s"})`}
+              title={label}
             >
-              {count}
+              {label}
             </div>
-            <button
-              className="tedge-label__icon-btn tedge-label__icon-btn--delete"
-              onClick={(e) => {
-                e.stopPropagation();
-                edgeData?.onDelete?.(id);
-              }}
-              title="Delete Join"
-            >
-              ✕
-            </button>
+            {!readOnly ? (
+              <button
+                className="tedge-label__icon-btn tedge-label__icon-btn--delete"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  edgeData?.onDelete?.(id);
+                }}
+                title="Delete Join"
+              >
+                ✕
+              </button>
+            ) : null}
           </div>
         </div>
       </EdgeLabelRenderer>
     </>
   );
 }
-

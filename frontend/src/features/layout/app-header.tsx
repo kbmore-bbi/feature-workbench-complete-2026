@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Image from "next/image";
 import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
@@ -7,6 +8,8 @@ import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownR
 import { Avatar, Box, IconButton, Tooltip, Typography } from "@mui/material";
 import { useThemeMode } from "@/app/Providers";
 import Link from 'next/link';
+import { authService } from "@/services/authService";
+import type { UserSession } from "@/types/user";
 
 type AppHeaderProps = {
   userName?: string;
@@ -18,8 +21,35 @@ export default function AppHeader({
   role = "Publisher",
 }: AppHeaderProps) {
   const { mode, toggleMode } = useThemeMode();
+  const [session, setSession] = useState<UserSession | null>(null);
 
-  const initials = userName
+  useEffect(() => {
+    let cancelled = false;
+
+    authService
+      .getSession()
+      .then((response) => {
+        if (!cancelled) {
+          setSession(response);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSession(null);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const resolvedUserName = session?.display_name?.trim() || session?.email || userName;
+  const resolvedRole = session?.app_persona
+    ? `${session.app_persona.charAt(0)}${session.app_persona.slice(1).toLowerCase()}`
+    : role;
+
+  const initials = resolvedUserName
     .split(" ")
     .map((item) => item[0])
     .join("")
@@ -85,10 +115,10 @@ export default function AppHeader({
 
       <Box className="leading-tight">
         <Typography className="font-[var(--font-body)] text-[12px] font-semibold ">
-          {userName}
+          {resolvedUserName}
         </Typography>
         <Typography className="font-[var(--font-body)] text-[11px]/70">
-          {role}
+          {resolvedRole}
         </Typography>
       </Box>
 

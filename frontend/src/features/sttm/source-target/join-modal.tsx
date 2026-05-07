@@ -16,6 +16,7 @@ interface JoinModalProps {
   tables: TableMeta[];
   initialLeftTableId?: string;
   initialRightTableId?: string;
+  drivingTableIdOverride?: string | null;
   editingJoin?: JoinConfig | null;
   onConfirm: (join: JoinConfig) => void;
 }
@@ -26,6 +27,7 @@ export function JoinModal({
   tables,
   initialLeftTableId,
   initialRightTableId,
+  drivingTableIdOverride,
   editingJoin,
   onConfirm,
 }: JoinModalProps) {
@@ -45,15 +47,18 @@ export function JoinModal({
   const [rows, setRows] = useState<PairRow[]>([]);
 
   const drivingTableMetaId = React.useMemo(() => {
+    if (drivingTableIdOverride) {
+      return tables.find((table) => table.id === drivingTableIdOverride)?.id || "";
+    }
     if (!drivingTableId) return "";
-    return tables.find(t => t.id?.endsWith(`:${drivingTableId}`))?.id || "";
-  }, [drivingTableId, tables]);
+    return tables.find((table) => table.id?.endsWith(`:${drivingTableId}`) || table.id === drivingTableId)?.id || "";
+  }, [drivingTableId, drivingTableIdOverride, tables]);
 
   useEffect(() => {
     if (isOpen) {
       if (editingJoin) {
         setJoinType(editingJoin.joinType ?? "INNER");
-        setLeftTableId(drivingTableMetaId || editingJoin.leftTableId || "");
+        setLeftTableId(editingJoin.leftTableId || drivingTableMetaId || "");
         setRightTableId(editingJoin.rightTableId ?? "");
         const conds = editingJoin.conditions?.length
           ? editingJoin.conditions
@@ -79,7 +84,14 @@ export function JoinModal({
         ]);
       }
     }
-  }, [isOpen, initialLeftTableId, initialRightTableId, tables, editingJoin, drivingTableId]);
+  }, [
+    drivingTableMetaId,
+    editingJoin,
+    initialLeftTableId,
+    initialRightTableId,
+    isOpen,
+    tables,
+  ]);
 
   if (!isOpen) return null;
 
@@ -106,6 +118,9 @@ export function JoinModal({
       joinType,
       leftTableId,
       rightTableId,
+      constraintName: editingJoin?.constraintName,
+      source: editingJoin ? "USER_DEFINED" : "USER_DEFINED",
+      locked: false,
       conditions: validRows.map((r) => ({
         leftColumn: r.leftColumn,
         operator: r.operator,
@@ -139,6 +154,8 @@ export function JoinModal({
 
   const leftTable = tables.find((t) => t.id === leftTableId);
   const rightTable = tables.find((t) => t.id === rightTableId);
+  const leftIsDerived = leftTable?.tag?.toLowerCase().includes("derived") ?? false;
+  const rightIsDerived = rightTable?.tag?.toLowerCase().includes("derived") ?? false;
 
   const leftColumnOptions = (leftTable?.columns ?? [])
     .filter((c) => !!c.name)
@@ -181,6 +198,25 @@ export function JoinModal({
     { label: "≥", value: ">=" },
     { label: "≤", value: "<=" },
   ];
+
+  const DerivedChip = () => (
+    <Box
+      sx={{
+        display: "inline-flex",
+        alignItems: "center",
+        px: 1,
+        py: 0.3,
+        borderRadius: "999px",
+        backgroundColor: "#dcfce7",
+        color: "#166534",
+        fontSize: 10,
+        fontWeight: 800,
+        letterSpacing: "0.02em",
+      }}
+    >
+      Derived
+    </Box>
+  );
 
   return (
     <div className="join-modal-overlay">
@@ -260,6 +296,11 @@ export function JoinModal({
                 }}
                 disabled={true}
               />
+              {leftIsDerived ? (
+                <Box sx={{ mt: 0.9 }}>
+                  <DerivedChip />
+                </Box>
+              ) : null}
             </Box>
 
             <Box sx={{ flex: 1, minWidth: 0 }}>
@@ -275,6 +316,11 @@ export function JoinModal({
                   setRows((prev) => prev.map((r) => ({ ...r, rightColumn: "" })));
                 }}
               />
+              {rightIsDerived ? (
+                <Box sx={{ mt: 0.9 }}>
+                  <DerivedChip />
+                </Box>
+              ) : null}
             </Box>
           </Box>
 
@@ -404,4 +450,3 @@ export function JoinModal({
     </div>
   );
 }
-

@@ -66,4 +66,51 @@ export const dbService = {
 
     return response.data;
   },
+
+  getTableRelationships: async (
+    tables: Array<{ database: string; schema: string; table: string }>
+  ) => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay([]);
+    }
+
+    const response = await api.post("/v1/table-selection/relationships", {
+      tables,
+    });
+    return response.data;
+  },
+
+  listDerivedSources: async () => {
+    const response = await api.get("/v1/derived-sources");
+    return response.data;
+  },
+
+  validateDerivedSource: async (payload: {
+    derived_source_id?: string | null;
+    derived_source_name: string;
+    sql_text: string;
+    source_tables: Array<{ database: string; schema: string; table: string }>;
+    driving_table?: { database: string; schema: string; table: string } | null;
+    relationships?: unknown[];
+    filters?: unknown[];
+    selected_columns_by_table?: Record<string, string[]>;
+  }) => {
+    const response = await api.post("/v1/derived-sources/validate", payload);
+    return response.data;
+  },
+
+  saveDerivedSource: async (payload: {
+    derived_source_id?: string | null;
+    derived_source_name: string;
+    sql_text: string;
+    source_tables: Array<{ database: string; schema: string; table: string }>;
+    driving_table?: { database: string; schema: string; table: string } | null;
+    relationships?: unknown[];
+    filters?: unknown[];
+    selected_columns_by_table?: Record<string, string[]>;
+  }) => {
+    const response = await api.post("/v1/derived-sources", payload);
+    return response.data;
+  },
 };

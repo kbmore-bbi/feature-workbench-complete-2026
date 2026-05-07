@@ -3,7 +3,6 @@ import "./globals.css";
 import '@/theme/theme.css';
 import ThemeProvider from '@/theme/ThemeProvider';
 import Providers from "./Providers";
-import ChatWidget from '@/features/ai-agent/chat-widget';
 import AppHeader from "@/features/layout/app-header";
 
 export const metadata: Metadata = {
@@ -25,7 +24,6 @@ export default function RootLayout({
         <Providers>
           <AppHeader />
           {children}
-          <ChatWidget />
         </Providers>
       </body>
     </html>

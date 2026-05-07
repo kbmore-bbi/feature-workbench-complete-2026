@@ -21,8 +21,8 @@ die() {
 }
 
 find_python() {
-  if [[ -x "${VENV_DIR}/bin/python" ]]; then
-    printf '%s\n' "${VENV_DIR}/bin/python"
+  if venv_python_path >/dev/null 2>&1; then
+    venv_python_path
     return 0
   fi
 
@@ -33,6 +33,25 @@ find_python() {
 
   if command -v python >/dev/null 2>&1; then
     command -v python
+    return 0
+  fi
+
+  return 1
+}
+
+venv_python_path() {
+  if [[ -x "${VENV_DIR}/bin/python" ]]; then
+    printf '%s\n' "${VENV_DIR}/bin/python"
+    return 0
+  fi
+
+  if [[ -x "${VENV_DIR}/Scripts/python.exe" ]]; then
+    printf '%s\n' "${VENV_DIR}/Scripts/python.exe"
+    return 0
+  fi
+
+  if [[ -x "${VENV_DIR}/Scripts/python" ]]; then
+    printf '%s\n' "${VENV_DIR}/Scripts/python"
     return 0
   fi
 
@@ -83,7 +102,7 @@ ensure_venv() {
   local bootstrap_python
   bootstrap_python="$(find_python)" || die "Python 3 is required but was not found."
 
-  if [[ -x "${VENV_DIR}/bin/python" ]]; then
+  if venv_python_path >/dev/null 2>&1; then
     return 0
   fi
 
@@ -92,7 +111,10 @@ ensure_venv() {
 }
 
 deps_installed() {
-  "${VENV_DIR}/bin/python" - <<'PY' >/dev/null 2>&1
+  local venv_python
+  venv_python="$(venv_python_path)" || return 1
+
+  "${venv_python}" - <<'PY' >/dev/null 2>&1
 import fastapi  # noqa: F401
 import uvicorn  # noqa: F401
 import httpx  # noqa: F401
@@ -105,17 +127,23 @@ PY
 }
 
 install_deps() {
+  local venv_python
+  venv_python="$(venv_python_path)" || die "Virtual environment Python was not found."
+
   if deps_installed; then
     log "Backend dependencies already available in ${VENV_DIR}"
     return 0
   fi
 
   log "Installing backend dependencies"
-  "${VENV_DIR}/bin/python" -m pip install --upgrade pip
-  "${VENV_DIR}/bin/python" -m pip install -e "${SERVICE_DIR}"
+  "${venv_python}" -m pip install --upgrade pip
+  "${venv_python}" -m pip install -e "${SERVICE_DIR}"
 }
 
 start_backend() {
+  local venv_python
+  venv_python="$(venv_python_path)" || die "Virtual environment Python was not found."
+
   local reload_args=()
   if [[ "${RELOAD}" == "true" ]]; then
     reload_args+=(--reload)
@@ -135,7 +163,7 @@ start_backend() {
   APP_NAME="${APP_NAME:-BBI AI Migration Workbench API}" \
   APP_VERSION="${APP_VERSION:-local}" \
   PORT="${PORT}" \
-  "${VENV_DIR}/bin/python" -m uvicorn app.main:app --host "${HOST}" --port "${PORT}" "${reload_args[@]}"
+  "${venv_python}" -m uvicorn app.main:app --host "${HOST}" --port "${PORT}" "${reload_args[@]}"
 }
 
 main() {

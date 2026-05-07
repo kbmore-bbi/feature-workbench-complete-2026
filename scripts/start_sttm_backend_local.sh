@@ -98,6 +98,45 @@ sync_env_file() {
   log "Updated ${ENV_FILE} with missing keys from .env.example"
 }
 
+env_value() {
+  local key="$1"
+  [[ -f "${ENV_FILE}" ]] || return 0
+
+  local line
+  line="$(grep -E "^${key}=" "${ENV_FILE}" | tail -n 1 || true)"
+  line="${line#*=}"
+  line="${line%$'\r'}"
+  printf '%s\n' "${line}"
+}
+
+validate_local_auth_config() {
+  local local_dev_auth_enabled
+  local snowflake_account
+  local snowflake_user
+  local snowflake_password
+  local snowflake_warehouse
+
+  local_dev_auth_enabled="$(env_value LOCAL_DEV_AUTH_ENABLED)"
+  snowflake_account="$(env_value SNOWFLAKE_ACCOUNT)"
+  snowflake_user="$(env_value SNOWFLAKE_USER)"
+  snowflake_password="$(env_value SNOWFLAKE_PASSWORD)"
+  snowflake_warehouse="$(env_value SNOWFLAKE_WAREHOUSE)"
+
+  if [[ "${local_dev_auth_enabled,,}" != "true" ]]; then
+    die "LOCAL_DEV_AUTH_ENABLED is not set to true in ${ENV_FILE}. Local STTM auth will fail without Snowflake ingress headers."
+  fi
+
+  local missing=()
+  [[ -n "${snowflake_account}" ]] || missing+=("SNOWFLAKE_ACCOUNT")
+  [[ -n "${snowflake_user}" ]] || missing+=("SNOWFLAKE_USER")
+  [[ -n "${snowflake_password}" ]] || missing+=("SNOWFLAKE_PASSWORD")
+  [[ -n "${snowflake_warehouse}" ]] || missing+=("SNOWFLAKE_WAREHOUSE")
+
+  if (( ${#missing[@]} > 0 )); then
+    die "Missing required local Snowflake settings in ${ENV_FILE}: ${missing[*]}"
+  fi
+}
+
 ensure_venv() {
   local bootstrap_python
   bootstrap_python="$(find_python)" || die "Python 3 is required but was not found."
@@ -168,6 +207,7 @@ start_backend() {
 
 main() {
   ensure_env_file
+  validate_local_auth_config
   ensure_venv
   install_deps
   start_backend

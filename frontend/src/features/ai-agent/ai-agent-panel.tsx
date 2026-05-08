@@ -66,8 +66,8 @@ function MessageContent({ content }: { content: string }) {
             px: 1.5,
             py: 1.25,
             borderRadius: 1.5,
-            backgroundColor: "#0f172a",
-            color: "#e2e8f0",
+            backgroundColor: "var(--aia-assitant-header-color)",
+            color: "var(--aia-assitant-header-textColor)",
             fontSize: 12,
             overflowX: "auto",
             whiteSpace: "pre-wrap",
@@ -281,7 +281,7 @@ export default function AIAgentPanel({
         backgroundColor: "#ffffff",
       }}
     >
-      <Box sx={{ p: 2.25, backgroundColor: "#000000", color: "#ffffff" }}>
+      <Box sx={{ p: 2.25, backgroundColor: 'var(--aia-assitant-header-color)', color: 'var(--aia-assitant-header-textColor' }}>
         <Stack
           sx={{
             flexDirection: "row",
@@ -291,13 +291,13 @@ export default function AIAgentPanel({
           }}
         >
           <Stack sx={{ flexDirection: "row", gap: 1.5, alignItems: "center" }}>
-            <Avatar sx={{ bgcolor: "#2a2a2a", width: 36, height: 36 }}>
+            <Avatar sx={{ bgcolor: 'var(--aia-assitant-avatar-bgColor)', width: 36, height: 36 }}>
               <SmartToyIcon sx={{ fontSize: 20 }} />
             </Avatar>
             <Box>
               <Typography
                 variant="subtitle2"
-                sx={{ fontWeight: 700, lineHeight: 1.2, color: "#ffffff" }}
+                sx={{ fontWeight: 700, lineHeight: 1.2, color: 'var(--aia-assitant-textColor)' }}
               >
                 STTM AI Agent
               </Typography>
@@ -327,11 +327,11 @@ export default function AIAgentPanel({
             <IconButton
               size="small"
               onClick={onToggleExpanded}
-              sx={{ color: "#94a3b8" }}
+              sx={{ color: 'var(--aia-assitant-textColor)' }}
             >
               {expanded ? <CloseFullscreenIcon fontSize="small" /> : <OpenInFullIcon fontSize="small" />}
             </IconButton>
-            <IconButton size="small" sx={{ color: "#94a3b8" }}>
+            <IconButton size="small" sx={{ color: 'var(--aia-assitant-textColor)' }}>
               <VolumeUpIcon fontSize="small" />
             </IconButton>
           </Stack>
@@ -342,14 +342,14 @@ export default function AIAgentPanel({
             mt: 2,
             p: 1.25,
             borderRadius: "8px",
-            backgroundColor: "#161616",
+            backgroundColor: 'var(--aia-assitant-subheader-color)',
             display: "flex",
             alignItems: "center",
             gap: 1,
           }}
         >
-          <TableChartIcon sx={{ fontSize: 16, color: "#94a3b8" }} />
-          <Typography variant="caption" sx={{ color: "#cbd5e1" }}>
+          <TableChartIcon sx={{ fontSize: 16, color: 'var(--aia-assitant-table-textColor)'  }} />
+          <Typography variant="caption" sx={{ color: 'var(--aia-assitant-table-textColor)' }}>
             {statsLabel}
           </Typography>
         </Box>
@@ -378,7 +378,7 @@ export default function AIAgentPanel({
               sx={{ justifyContent: isAssistant ? "flex-start" : "flex-end" }}
             >
               {isAssistant ? (
-                <Avatar sx={{ bgcolor: "#000000", width: 28, height: 28 }}>
+                <Avatar sx={{ bgcolor: 'var(--aia-assitant-header-color)', width: 28, height: 28 }}>
                   <SmartToyIcon sx={{ fontSize: 16 }} />
                 </Avatar>
               ) : null}

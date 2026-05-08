@@ -301,8 +301,8 @@ export default function BuilderContentHeader({
               minWidth: 136,
               px: 1.75,
               borderRadius: "4px",
-              backgroundColor: "var(--color-primary-save)",
-              border: "1px solid var(--color-primary-save)",
+              backgroundColor: "var(--aia-mapping-button-color)",
+              border: "1px solid var(--aia-mapping-button-color)",
               color: "#ffffff",
               fontSize: "12px",
               fontWeight: 600,
@@ -310,8 +310,8 @@ export default function BuilderContentHeader({
               textTransform: "none",
               boxShadow: "none",
               "&:hover": {
-                backgroundColor: "var(--color-primary-hover)",
-                borderColor: "var(--color-primary-hover)",
+                backgroundColor: "var(--aia-mapping-button-hoverColor)",
+                borderColor: "var(--aia-mapping-button-hoverColor)",
                 boxShadow: "none",
               },
             }}
@@ -354,8 +354,8 @@ export default function BuilderContentHeader({
                 minWidth: 132,
                 px: 1.5,
                 borderRadius: "4px",
-                backgroundColor: "var(--color-primary-save)",
-                border: "1px solid var(--color-primary-save)",
+                backgroundColor: "var(--aia-mapping-button-color)",
+                border: "1px solid var(--aia-mapping-button-color)",
                 color: "#ffffff",
                 fontSize: "12px",
                 fontWeight: 600,
@@ -363,8 +363,8 @@ export default function BuilderContentHeader({
                 textTransform: "none",
                 boxShadow: "none",
                 "&:hover": {
-                  backgroundColor: "var(--color-primary-hover)",
-                  borderColor: "var(--color-primary-hover)",
+                  backgroundColor: "var(--aia-mapping-button-hoverColor)",
+                  borderColor: "var(--aia-mapping-button-hoverColor)",
                   boxShadow: "none",
                 },
               }}

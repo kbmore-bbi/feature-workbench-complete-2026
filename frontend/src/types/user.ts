@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 export type PermissionSet = {
   can_read: boolean;
   can_edit: boolean;
@@ -13,3 +14,9 @@ export type UserSession = {
   app_persona: 'VIEWER' | 'PUBLISHER' | 'ADMIN';
   ui_permissions: PermissionSet;
 };
+=======
+export type User = {
+    id: string;
+    name:string;
+}
+>>>>>>> 9e0edb4435aae18a9a6e994b9396f0b13bfa7aa4

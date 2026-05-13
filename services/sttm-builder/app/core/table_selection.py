@@ -286,15 +286,22 @@ class TableSelectionService:
         }
 
     def _get_relationship_payload(self, table: TableRef) -> dict:
-        proc_name = (
-            f"{self._quote_identifier(self._settings.snowflake_database)}."
-            f"{self._quote_identifier(self._settings.snowflake_schema)}."
-            '"SP_GET_TABLE_RELATIONSHIPS"'
+        proc_name = self._settings.resolved_relationships_procedure
+        if not proc_name:
+            raise SnowflakeQueryError(
+                "Could not resolve the table relationship procedure. "
+                "Set SNOWFLAKE_RELATIONSHIPS_PROCEDURE or provide "
+                "SNOWFLAKE_DATABASE/SNOWFLAKE_SCHEMA."
+            )
+
+        proc_parts = proc_name.split(".", 2)
+        quoted_proc_name = ".".join(
+            self._quote_identifier(part) for part in proc_parts if part
         )
         try:
             rows = self._session.sql(
                 "CALL "
-                f"{proc_name}("
+                f"{quoted_proc_name}("
                 f"{self._quote_literal(table.database)}, "
                 f"{self._quote_literal(table.schema)}, "
                 f"{self._quote_literal(table.table)})"

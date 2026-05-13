@@ -14,12 +14,24 @@ def extract_snowflake_context(request: Request, settings: Settings) -> dict[str,
 
     if not snowflake_user or not snowflake_user_token:
         if settings.local_dev_auth_enabled:
-            if not settings.snowflake_user or not settings.snowflake_password:
+            if not settings.snowflake_user:
                 raise HTTPException(
                     status_code=500,
                     detail=(
-                        "Local development auth is enabled, but SNOWFLAKE_USER or "
-                        "SNOWFLAKE_PASSWORD is not configured"
+                        "Local development auth is enabled, but SNOWFLAKE_USER is "
+                        "not configured"
+                    ),
+                )
+
+            if (
+                not settings.local_dev_uses_externalbrowser
+                and not settings.snowflake_password
+            ):
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "Local development auth is enabled, but SNOWFLAKE_PASSWORD is "
+                        "not configured"
                     ),
                 )
 

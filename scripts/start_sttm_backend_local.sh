@@ -109,28 +109,37 @@ env_value() {
   printf '%s\n' "${line}"
 }
 
+to_lower() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 validate_local_auth_config() {
   local local_dev_auth_enabled
+  local snowflake_authenticator
   local snowflake_account
   local snowflake_user
   local snowflake_password
   local snowflake_warehouse
 
   local_dev_auth_enabled="$(env_value LOCAL_DEV_AUTH_ENABLED)"
+  snowflake_authenticator="$(env_value SNOWFLAKE_AUTHENTICATOR)"
   snowflake_account="$(env_value SNOWFLAKE_ACCOUNT)"
   snowflake_user="$(env_value SNOWFLAKE_USER)"
   snowflake_password="$(env_value SNOWFLAKE_PASSWORD)"
   snowflake_warehouse="$(env_value SNOWFLAKE_WAREHOUSE)"
 
-  if [[ "${local_dev_auth_enabled,,}" != "true" ]]; then
+  if [[ "$(to_lower "${local_dev_auth_enabled}")" != "true" ]]; then
     die "LOCAL_DEV_AUTH_ENABLED is not set to true in ${ENV_FILE}. Local STTM auth will fail without Snowflake ingress headers."
   fi
 
   local missing=()
   [[ -n "${snowflake_account}" ]] || missing+=("SNOWFLAKE_ACCOUNT")
   [[ -n "${snowflake_user}" ]] || missing+=("SNOWFLAKE_USER")
-  [[ -n "${snowflake_password}" ]] || missing+=("SNOWFLAKE_PASSWORD")
   [[ -n "${snowflake_warehouse}" ]] || missing+=("SNOWFLAKE_WAREHOUSE")
+
+  if [[ "$(to_lower "${snowflake_authenticator}")" != "externalbrowser" ]]; then
+    [[ -n "${snowflake_password}" ]] || missing+=("SNOWFLAKE_PASSWORD")
+  fi
 
   if (( ${#missing[@]} > 0 )); then
     die "Missing required local Snowflake settings in ${ENV_FILE}: ${missing[*]}"
@@ -194,8 +203,9 @@ start_backend() {
   log "Local note: Snowflake ingress auth headers are not present on localhost."
   log "Default mode still expects deployed SPCS ingress and caller context."
   log "For local frontend/API testing, set LOCAL_DEV_AUTH_ENABLED=true in ${ENV_FILE}"
-  log "and provide SNOWFLAKE_USER / SNOWFLAKE_PASSWORD so the backend can connect"
-  log "directly as that developer's Snowflake identity."
+  log "and provide either SNOWFLAKE_USER / SNOWFLAKE_PASSWORD"
+  log "or SNOWFLAKE_USER with SNOWFLAKE_AUTHENTICATOR=externalbrowser"
+  log "so the backend can connect as that developer's Snowflake identity."
 
   cd "${SERVICE_DIR}"
   APP_ENV="${APP_ENV:-local}" \

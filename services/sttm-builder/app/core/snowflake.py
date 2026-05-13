@@ -58,17 +58,24 @@ def build_caller_token(user_token: str) -> str:
 
 
 def _direct_connection_kwargs(settings: Settings, role: Optional[str] = None) -> dict[str, Any]:
-    if not settings.snowflake_user or not settings.snowflake_password:
+    if not settings.snowflake_user:
         raise SnowflakeConnectionError(
-            "Local development auth is enabled, but SNOWFLAKE_USER or "
-            "SNOWFLAKE_PASSWORD is not configured."
+            "Local development auth is enabled, but SNOWFLAKE_USER is not configured."
         )
 
     kwargs: dict[str, Any] = {
         "account": settings.snowflake_account,
         "user": settings.snowflake_user,
-        "password": settings.snowflake_password,
     }
+    if settings.local_dev_uses_externalbrowser:
+        kwargs["authenticator"] = "externalbrowser"
+    else:
+        if not settings.snowflake_password:
+            raise SnowflakeConnectionError(
+                "Local development auth is enabled, but SNOWFLAKE_PASSWORD is not configured."
+            )
+        kwargs["password"] = settings.snowflake_password
+
     if settings.snowflake_warehouse:
         kwargs["warehouse"] = settings.snowflake_warehouse
     if settings.snowflake_database:

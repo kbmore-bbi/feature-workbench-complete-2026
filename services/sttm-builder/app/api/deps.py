@@ -92,6 +92,12 @@ def get_derived_source_service(
     return DerivedSourceService(client.session, settings)
 
 
+def get_semantic_model_service(
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> SemanticModelService:
+    return SemanticModelService(settings)
+
+
 def get_sttm_builder_service(
     agent_client: Annotated[SnowflakeAgentClient, Depends(get_snowflake_agent_client)],
     client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
@@ -111,9 +117,3 @@ def get_user_service(
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> UserService:
     return UserService(client, settings)
-
-
-def get_semantic_model_service(
-    settings: Annotated[Settings, Depends(get_settings)],
-) -> SemanticModelService:
-    return SemanticModelService(settings)

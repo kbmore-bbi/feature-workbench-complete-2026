@@ -125,6 +125,52 @@ export function FilterConditions({
     });
   }, [tables]);
 
+  const normalizeFieldValue = React.useCallback(
+    (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) return "";
+
+      const direct = allFields.find((field) => field.value === trimmed);
+      if (direct) return direct.value;
+
+      const unquoted = trimmed.replace(/^"+|"+$/g, "");
+      const parts = unquoted.split(".");
+      const candidateColumn = (parts[parts.length - 1] || "").replace(/^"+|"+$/g, "");
+      if (!candidateColumn) return trimmed;
+
+      const matches = allFields.filter((field) =>
+        field.value.toLowerCase().endsWith(`.${candidateColumn.toLowerCase()}`)
+      );
+      if (matches.length === 1) return matches[0].value;
+
+      return trimmed;
+    },
+    [allFields]
+  );
+
+  const normalizeRuleNode = React.useCallback(
+    (node: RuleGroup | RuleCondition): RuleGroup | RuleCondition => {
+      if (node.type === "condition") {
+        return {
+          ...node,
+          field: normalizeFieldValue(node.field),
+          valueField: node.valueField ? normalizeFieldValue(node.valueField) : node.valueField,
+          secondaryValueField: node.secondaryValueField
+            ? normalizeFieldValue(node.secondaryValueField)
+            : node.secondaryValueField,
+        };
+      }
+
+      return {
+        ...node,
+        children: node.children.map((child) => normalizeRuleNode(child)) as Array<
+          RuleGroup | RuleCondition
+        >,
+      };
+    },
+    [normalizeFieldValue]
+  );
+
   const [rootGroups, _setRootGroups] = useState<RuleGroup[]>(initialGroups || []);
   const [activeTab, setActiveTab] = useState<"filters" | "grouping" | "sorting">("filters");
   const [groupByItems, setGroupByItems] = useState<GroupByItem[]>(
@@ -146,9 +192,9 @@ export function FilterConditions({
 
   React.useEffect(() => {
     if (initialGroups) {
-      _setRootGroups(initialGroups);
+      _setRootGroups(initialGroups.map((group) => normalizeRuleNode(group) as RuleGroup));
     }
-  }, [initialGroups]);
+  }, [initialGroups, normalizeRuleNode]);
 
   React.useEffect(() => {
     const next = initialGroupBy ?? [];
@@ -162,10 +208,10 @@ export function FilterConditions({
       }
       return next.map((field) => ({
         id: Math.random().toString(36).slice(2, 9),
-        field,
+        field: normalizeFieldValue(field),
       }));
     });
-  }, [initialGroupBy]);
+  }, [initialGroupBy, normalizeFieldValue]);
 
   React.useEffect(() => {
     const next = (initialOrderBy ?? []).map((value) => {
@@ -185,11 +231,11 @@ export function FilterConditions({
       if (same) return prev;
       return next.map((item) => ({
         id: Math.random().toString(36).slice(2, 9),
-        field: item.field,
+        field: normalizeFieldValue(item.field),
         direction: item.direction,
       }));
     });
-  }, [initialOrderBy]);
+  }, [initialOrderBy, normalizeFieldValue]);
 
   const generateSQL = React.useCallback((node: RuleNode, level: number = 0): string => {
     const indent = "  ".repeat(level);

@@ -9,6 +9,7 @@ from app.core.datahub import DataHubAdapter
 from app.core.snowflake import (
     SnowflakeClient,
     build_caller_token,
+    get_local_cached_client,
     using_local_dev_auth,
 )
 from app.core.snowflake_agent import SnowflakeAgentClient
@@ -53,6 +54,11 @@ def get_snowflake_client(
     """
     user_token = request.headers.get(_SPCS_USER_TOKEN_HEADER, "")
     effective_role = role or _default_role_for_principal(request, settings)
+    if using_local_dev_auth(settings, user_token) and settings.local_dev_uses_externalbrowser:
+        client = get_local_cached_client(settings, effective_role)
+        yield client
+        return
+
     client = SnowflakeClient(
         settings=settings,
         user_token=user_token,

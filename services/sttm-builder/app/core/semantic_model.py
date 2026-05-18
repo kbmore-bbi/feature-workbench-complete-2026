@@ -11,6 +11,7 @@ from app.core.exceptions import SnowflakeAgentError, SnowflakeQueryError
 from app.core.snowflake import (
     SnowflakeClient,
     build_caller_token,
+    get_local_cached_client,
     get_local_rest_session_context,
     using_local_dev_auth,
 )
@@ -209,7 +210,15 @@ class SemanticModelService:
         job = _jobs[job_id]
         job.status = "running"
 
-        sf_client = SnowflakeClient(settings=self._settings, user_token=user_token)
+        if (
+            using_local_dev_auth(self._settings, user_token)
+            and self._settings.local_dev_uses_externalbrowser
+        ):
+            sf_client = get_local_cached_client(self._settings)
+            should_close_client = False
+        else:
+            sf_client = SnowflakeClient(settings=self._settings, user_token=user_token)
+            should_close_client = True
         try:
             session = sf_client.session
             agent_client = self._build_agent_client(user_token)
@@ -253,7 +262,8 @@ class SemanticModelService:
             job.errors.append(str(exc))
             job.completed_at = datetime.now(timezone.utc)
         finally:
-            sf_client.close()
+            if should_close_client:
+                sf_client.close()
 
     def _build_agent_client(self, user_token: str) -> SnowflakeAgentClient:
         if using_local_dev_auth(self._settings, user_token):

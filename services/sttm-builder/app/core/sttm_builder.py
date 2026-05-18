@@ -47,11 +47,12 @@ class STTMBuilderService:
         self._session = session
         self._semantic_model_service = semantic_model_service
 
-        agent_name = settings.snowflake_sttm_builder_agent.strip()
+        agent_name = settings.resolved_sttm_builder_agent.strip()
         if not agent_name:
             raise SnowflakeAgentError(
-                "SNOWFLAKE_STTM_BUILDER_AGENT env var is not set. "
-                "Expected format: DATABASE.SCHEMA.AGENT_NAME"
+                "Could not resolve the STTM builder agent. Set "
+                "SNOWFLAKE_STTM_BUILDER_AGENT or provide the metadata "
+                "database/schema configuration."
             )
         self._agent_name = agent_name
 

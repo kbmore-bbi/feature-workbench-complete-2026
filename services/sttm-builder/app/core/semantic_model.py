@@ -28,10 +28,12 @@ class SemanticModelService:
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
-        self._agent_name = settings.snowflake_semantic_model_agent
+        self._agent_name = settings.resolved_semantic_model_agent
         if not self._agent_name:
             raise SnowflakeAgentError(
-                "SNOWFLAKE_SEMANTIC_MODEL_AGENT is not set. Expected: DATABASE.SCHEMA.AGENT_NAME"
+                "Could not resolve the semantic model agent. Set "
+                "SNOWFLAKE_SEMANTIC_MODEL_AGENT or provide the metadata "
+                "database/schema configuration."
             )
         self._table = settings.qualify_table_name(settings.snowflake_semantic_model_table)
 

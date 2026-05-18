@@ -83,6 +83,28 @@ const DEFAULT_CONTROL_SIZES: Required<FilterControlSizes> = {
   groupLogicWidthPx: 88,
 };
 
+function serializeRuleNode(node: RuleNode): string {
+  if (node.type === "condition") {
+    return JSON.stringify({
+      type: "condition",
+      field: node.field,
+      operator: node.operator,
+      value: node.value,
+      valueMode: node.valueMode ?? "literal",
+      valueField: node.valueField ?? "",
+      secondaryValue: node.secondaryValue ?? "",
+      secondaryValueMode: node.secondaryValueMode ?? "literal",
+      secondaryValueField: node.secondaryValueField ?? "",
+    });
+  }
+
+  return JSON.stringify({
+    type: "group",
+    logic: node.logic,
+    children: node.children.map((child) => serializeRuleNode(child)),
+  });
+}
+
 export function FilterConditions({
   tables,
   controlSizes,
@@ -192,7 +214,12 @@ export function FilterConditions({
 
   React.useEffect(() => {
     if (initialGroups) {
-      _setRootGroups(initialGroups.map((group) => normalizeRuleNode(group) as RuleGroup));
+      const normalized = initialGroups.map((group) => normalizeRuleNode(group) as RuleGroup);
+      _setRootGroups((prev) => {
+        const prevSignature = prev.map((group) => serializeRuleNode(group)).join("|");
+        const nextSignature = normalized.map((group) => serializeRuleNode(group)).join("|");
+        return prevSignature === nextSignature ? prev : normalized;
+      });
     }
   }, [initialGroups, normalizeRuleNode]);
 

@@ -208,11 +208,19 @@ start_backend() {
   log "so the backend can connect as that developer's Snowflake identity."
 
   cd "${SERVICE_DIR}"
-  APP_ENV="${APP_ENV:-local}" \
-  APP_NAME="${APP_NAME:-BBI AI Migration Workbench API}" \
-  APP_VERSION="${APP_VERSION:-local}" \
-  PORT="${PORT}" \
-  "${venv_python}" -m uvicorn app.main:app --host "${HOST}" --port "${PORT}" "${reload_args[@]}"
+  if (( ${#reload_args[@]} > 0 )); then
+    APP_ENV="${APP_ENV:-local}" \
+    APP_NAME="${APP_NAME:-BBI AI Migration Workbench API}" \
+    APP_VERSION="${APP_VERSION:-local}" \
+    PORT="${PORT}" \
+    "${venv_python}" -m uvicorn app.main:app --host "${HOST}" --port "${PORT}" "${reload_args[@]}"
+  else
+    APP_ENV="${APP_ENV:-local}" \
+    APP_NAME="${APP_NAME:-BBI AI Migration Workbench API}" \
+    APP_VERSION="${APP_VERSION:-local}" \
+    PORT="${PORT}" \
+    "${venv_python}" -m uvicorn app.main:app --host "${HOST}" --port "${PORT}"
+  fi
 }
 
 main() {

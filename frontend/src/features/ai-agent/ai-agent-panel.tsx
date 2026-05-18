@@ -4,6 +4,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Avatar,
   Box,
+  Button,
   CircularProgress,
   IconButton,
   InputBase,
@@ -17,6 +18,8 @@ import TableChartIcon from "@mui/icons-material/TableChart";
 import VolumeUpIcon from "@mui/icons-material/VolumeUp";
 import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
+import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
+import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 
@@ -34,8 +37,38 @@ function renderInline(text: string) {
   });
 }
 
-function MessageContent({ content }: { content: string }) {
+function formatInterpretationMessage(content: string) {
   const normalized = content.replace(/\r\n/g, "\n").trim();
+  const prefix = "This is our interpretation of your question:";
+  if (!normalized.startsWith(prefix)) {
+    return content;
+  }
+
+  const body = normalized.slice(prefix.length).trim();
+  if (!body) return content;
+
+  const sentences = body
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+
+  if (sentences.length === 0) return content;
+
+  const lines = ["## Interpretation"];
+  if (sentences[0]) {
+    lines.push(`- **Goal:** ${sentences[0]}`);
+  }
+  if (sentences[1]) {
+    lines.push(`- **Approach:** ${sentences[1]}`);
+  }
+  if (sentences.length > 2) {
+    lines.push(`- **Notes:** ${sentences.slice(2).join(" ")}`);
+  }
+  return lines.join("\n");
+}
+
+function MessageContent({ content }: { content: string }) {
+  const normalized = formatInterpretationMessage(content).replace(/\r\n/g, "\n").trim();
   const lines = normalized.split("\n");
   const blocks: React.ReactNode[] = [];
   let index = 0;
@@ -229,6 +262,85 @@ function MessageContent({ content }: { content: string }) {
   return <Box sx={{ display: "grid", gap: 1.25 }}>{blocks}</Box>;
 }
 
+function TracePanel({
+  messageId,
+  steps,
+  expanded,
+  onToggle,
+}: {
+  messageId: string;
+  steps: string[];
+  expanded: boolean;
+  onToggle: (messageId: string) => void;
+}) {
+  return (
+    <Box
+      sx={{
+        mt: 1.25,
+        borderRadius: 1.5,
+        border: "1px solid #e2e8f0",
+        backgroundColor: "#f8fafc",
+        overflow: "hidden",
+      }}
+    >
+      <Button
+        onClick={() => onToggle(messageId)}
+        variant="text"
+        sx={{
+          width: "100%",
+          px: 1.25,
+          py: 0.9,
+          justifyContent: "space-between",
+          textTransform: "none",
+          color: "#334155",
+          borderRadius: 0,
+          "&:hover": { backgroundColor: "#f1f5f9" },
+        }}
+      >
+        <Stack direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+          {expanded ? (
+            <KeyboardArrowDownIcon sx={{ fontSize: 16, color: "#64748b" }} />
+          ) : (
+            <KeyboardArrowRightIcon sx={{ fontSize: 16, color: "#64748b" }} />
+          )}
+          <Typography sx={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>
+            Execution
+          </Typography>
+          <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+            {steps.length} step{steps.length === 1 ? "" : "s"}
+          </Typography>
+        </Stack>
+      </Button>
+      {expanded ? (
+        <Stack spacing={0.8} sx={{ px: 1.5, pb: 1.25, pt: 0.25 }}>
+          {steps.map((step, stepIndex) => (
+            <Stack
+              key={`${messageId}-trace-${stepIndex}`}
+              direction="row"
+              spacing={1}
+              sx={{ alignItems: "flex-start" }}
+            >
+              <Box
+                sx={{
+                  mt: 0.6,
+                  width: 5,
+                  height: 5,
+                  borderRadius: "50%",
+                  backgroundColor: "#94a3b8",
+                  flexShrink: 0,
+                }}
+              />
+              <Typography sx={{ fontSize: 12, lineHeight: 1.6, color: "#475569" }}>
+                {step}
+              </Typography>
+            </Stack>
+          ))}
+        </Stack>
+      ) : null}
+    </Box>
+  );
+}
+
 export default function AIAgentPanel({
   expanded = false,
   onToggleExpanded,
@@ -239,12 +351,21 @@ export default function AIAgentPanel({
   const {
     chatLoading,
     chatMessages,
+    datahubStatus,
+    dismissPendingDerivedSourceDraft,
     mappingCount,
+    openPendingDerivedSourceDraft,
+    pendingDerivedSourceDraft,
     relationships,
+    semanticBundleLabel,
+    semanticLevel,
+    semanticStatus,
+    semanticViewName,
     selectedSourceCount,
     sendChatMessage,
   } = useSttmBuilderContext();
   const [draft, setDraft] = useState("");
+  const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const statsLabel = useMemo(() => {
@@ -252,6 +373,10 @@ export default function AIAgentPanel({
     const joinLabel = joinCount === 1 ? "1 relationship" : `${joinCount} relationships`;
     return `${selectedSourceCount} tables · ${mappingCount} mappings · ${joinLabel}`;
   }, [mappingCount, relationships.length, selectedSourceCount]);
+  const hasStreamingMessage = useMemo(
+    () => chatMessages.some((message) => message.isStreaming),
+    [chatMessages]
+  );
 
   const handleSend = () => {
     const message = draft.trim();
@@ -265,6 +390,13 @@ export default function AIAgentPanel({
     if (!node) return;
     node.scrollTop = node.scrollHeight;
   }, [chatLoading, chatMessages]);
+
+  const toggleTrace = (messageId: string) => {
+    setExpandedTraces((current) => ({
+      ...current,
+      [messageId]: !current[messageId],
+    }));
+  };
 
   return (
     <Paper
@@ -353,6 +485,94 @@ export default function AIAgentPanel({
             {statsLabel}
           </Typography>
         </Box>
+
+        {semanticStatus || semanticLevel || semanticViewName || datahubStatus || semanticBundleLabel ? (
+          <Stack
+            direction="row"
+            spacing={0.75}
+            useFlexGap
+            sx={{ mt: 1.25, flexWrap: "wrap" }}
+          >
+            {semanticBundleLabel ? (
+              <Box
+                sx={{
+                  px: 1,
+                  py: 0.4,
+                  borderRadius: "999px",
+                  backgroundColor: "#1f2937",
+                  color: "#e5e7eb",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  maxWidth: "100%",
+                }}
+              >
+                {semanticBundleLabel}
+              </Box>
+            ) : null}
+            {semanticLevel ? (
+              <Box
+                sx={{
+                  px: 1,
+                  py: 0.4,
+                  borderRadius: "999px",
+                  backgroundColor: "#1e293b",
+                  color: "#e2e8f0",
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                {semanticLevel}
+              </Box>
+            ) : null}
+            {semanticStatus ? (
+              <Box
+                sx={{
+                  px: 1,
+                  py: 0.4,
+                  borderRadius: "999px",
+                  backgroundColor: "#052e16",
+                  color: "#86efac",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: "capitalize",
+                }}
+              >
+                {semanticStatus}
+              </Box>
+            ) : null}
+            {semanticViewName ? (
+              <Box
+                sx={{
+                  px: 1,
+                  py: 0.4,
+                  borderRadius: "999px",
+                  backgroundColor: "#172554",
+                  color: "#bfdbfe",
+                  fontSize: 11,
+                  fontWeight: 700,
+                }}
+              >
+                Semantic view
+              </Box>
+            ) : null}
+            {datahubStatus ? (
+              <Box
+                sx={{
+                  px: 1,
+                  py: 0.4,
+                  borderRadius: "999px",
+                  backgroundColor: "#27272a",
+                  color: "#d4d4d8",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  textTransform: "capitalize",
+                }}
+              >
+                DataHub {datahubStatus}
+              </Box>
+            ) : null}
+          </Stack>
+        ) : null}
       </Box>
 
       <Box
@@ -370,9 +590,12 @@ export default function AIAgentPanel({
       >
         {chatMessages.map((message, index) => {
           const isAssistant = message.role === "assistant";
+          const messageId = message.id ?? `${message.role}-${index}-${message.content.slice(0, 24)}`;
+          const traceSteps = message.traceSteps ?? [];
+          const isTraceExpanded = message.isStreaming || !!expandedTraces[messageId];
           return (
             <Stack
-              key={`${message.role}-${index}-${message.content.slice(0, 24)}`}
+              key={messageId}
               direction="row"
               spacing={1.5}
               sx={{ justifyContent: isAssistant ? "flex-start" : "flex-end" }}
@@ -396,12 +619,63 @@ export default function AIAgentPanel({
                 <Box sx={{ fontSize: 14, overflowX: "auto" }}>
                   <MessageContent content={message.content} />
                 </Box>
+                {traceSteps.length ? (
+                  <TracePanel
+                    messageId={messageId}
+                    steps={traceSteps}
+                    expanded={isTraceExpanded}
+                    onToggle={toggleTrace}
+                  />
+                ) : null}
+                {message.isStreaming ? (
+                  <Stack
+                    direction="row"
+                    spacing={1}
+                    sx={{ mt: 1.25, alignItems: "center", color: "#475569" }}
+                  >
+                    <CircularProgress size={12} thickness={5} sx={{ color: "#2563eb" }} />
+                    <Typography variant="caption" sx={{ color: "#475569" }}>
+                      Working through this request…
+                    </Typography>
+                  </Stack>
+                ) : null}
+                {message.options?.length ? (
+                  <Stack
+                    direction="row"
+                    spacing={0.75}
+                    useFlexGap
+                    sx={{ mt: 1.25, flexWrap: "wrap" }}
+                  >
+                    {message.options.map((option) => (
+                      <Button
+                        key={option}
+                        size="small"
+                        variant="outlined"
+                        onClick={() => sendChatMessage(option)}
+                        disabled={chatLoading}
+                        sx={{
+                          textTransform: "none",
+                          borderRadius: "999px",
+                          borderColor: "#bfdbfe",
+                          color: "#1d4ed8",
+                          fontSize: 12,
+                          "&:hover": {
+                            borderColor: "#93c5fd",
+                            backgroundColor: "#eff6ff",
+                          },
+                        }}
+                      >
+                        {option}
+                      </Button>
+                    ))}
+                  </Stack>
+                ) : null}
               </Paper>
             </Stack>
           );
         })}
 
-        {chatLoading ? (
+        {chatLoading && !hasStreamingMessage ? (
           <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
             <Avatar sx={{ bgcolor: "#000000", width: 28, height: 28 }}>
               <SmartToyIcon sx={{ fontSize: 16 }} />
@@ -425,6 +699,53 @@ export default function AIAgentPanel({
               </Typography>
             </Paper>
           </Stack>
+        ) : null}
+
+        {pendingDerivedSourceDraft ? (
+          <Paper
+            elevation={0}
+            sx={{
+              p: 1.5,
+              borderRadius: "12px",
+              border: "1px solid #dbeafe",
+              backgroundColor: "#eff6ff",
+              display: "grid",
+              gap: 1,
+            }}
+          >
+            <Box>
+              <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#1d4ed8" }}>
+                Analyst-generated derived SQL is ready
+              </Typography>
+              <Typography sx={{ fontSize: 12, color: "#334155", mt: 0.25 }}>
+                Open it in the derived-source builder to validate, preview, and save it through the existing flow.
+              </Typography>
+            </Box>
+            <Stack direction="row" spacing={1}>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={openPendingDerivedSourceDraft}
+                sx={{
+                  textTransform: "none",
+                  borderRadius: "999px",
+                  boxShadow: "none",
+                  backgroundColor: "#1d4ed8",
+                  "&:hover": { backgroundColor: "#1e40af", boxShadow: "none" },
+                }}
+              >
+                Open In Derived Builder
+              </Button>
+              <Button
+                size="small"
+                variant="text"
+                onClick={dismissPendingDerivedSourceDraft}
+                sx={{ textTransform: "none", color: "#475569" }}
+              >
+                Dismiss
+              </Button>
+            </Stack>
+          </Paper>
         ) : null}
       </Box>
 

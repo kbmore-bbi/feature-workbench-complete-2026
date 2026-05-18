@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 
 from app.core.error_codes import ErrorCode
 from app.core.exceptions import AppError
+from app.schema.contracts import ApiError
 from app.schema.errors import ErrorDetail, ErrorResponse
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,12 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
             code=exc.code,
             message=exc.message,
             details=[ErrorDetail(**d) for d in exc.details],
+            error=ApiError(
+                title=exc.message,
+                status=exc.status_code,
+                detail=exc.message,
+                code=exc.code.value,
+            ),
         ).model_dump(),
     )
 
@@ -43,6 +50,12 @@ async def request_validation_error_handler(
             code=ErrorCode.VALIDATION_ERROR,
             message="Request validation failed",
             details=details,
+            error=ApiError(
+                title="Request validation failed",
+                status=422,
+                detail="One or more request fields failed validation.",
+                code=ErrorCode.VALIDATION_ERROR.value,
+            ),
         ).model_dump(),
     )
 
@@ -60,5 +73,11 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
         content=ErrorResponse(
             code=ErrorCode.INTERNAL_ERROR,
             message="An unexpected error occurred.",
+            error=ApiError(
+                title="An unexpected error occurred.",
+                status=500,
+                detail="An unexpected error occurred.",
+                code=ErrorCode.INTERNAL_ERROR.value,
+            ),
         ).model_dump(),
     )

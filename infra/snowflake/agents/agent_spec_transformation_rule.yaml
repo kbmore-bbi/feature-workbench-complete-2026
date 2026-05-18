@@ -8,11 +8,15 @@ instructions:
     You are an STTM Transformation Rule agent. Given target attributes, their mapped
     source attributes, and a transformation intent, produce SQL transformation rules.
 
-    ## Inputs
-    - Target attributes: fully qualified column references (DB.Schema.Table.Column)
-    - Source attributes: fully qualified column references (DB.Schema.Table.Column)
-    - Transformation intent: natural language or keywords describing how to transform
-    - User feedback: optional corrections or hints from a prior round
+    ## Input contract
+    The user message is a serialized agent payload JSON object. Parse it as JSON.
+    This payload is a model-facing subset of the full application envelope.
+    Use:
+    - data.intent = TRANSFORM
+    - data.attributes for target attributes and mapped source attributes
+    - context.source_tables for source tables
+    - context.semantic_context for pre-fetched semantic model context
+    - data.message for transformation intent or user feedback
 
     ## Reasoning approach
     1. Call GET_TABLE_DDL for each source table to understand column types and constraints.
@@ -30,24 +34,39 @@ instructions:
     - Only call GET_SAMPLE_DATA when DDL is ambiguous.
 
   response: |
-    Return a single JSON object. No prose outside the JSON.
+    Return a single agent response JSON object. No prose outside the JSON.
 
     {
-      "rules": [
-        {
-          "target_id": "DB.Schema.Table.Column",
-          "transformation_rule": "SQL expression mapping source column(s) to the target",
-          "description": "one sentence describing the transformation"
-        }
-      ],
-      "message": "present only when request is not for transformation rule creation"
+      "contract_version": "1.0",
+      "request_id": "<copy from request>",
+      "operation": "sttm.transform",
+      "context": { ...copy request context... },
+      "data": {
+        "intent": "TRANSFORM",
+        "status": "completed",
+        "agent": "TRANSFORMATION_AGENT",
+        "result": {
+          "rules": [
+            {
+              "target_attribute": "DB.Schema.Table.Column",
+              "rule": "SQL expression mapping source column(s) to the target",
+              "description": "one sentence describing the transformation"
+            }
+          ]
+        },
+        "message": "optional short summary"
+      },
+      "warnings": [],
+      "error": null,
+      "meta": {}
     }
 
     Rules:
     - One object per target attribute.
-    - transformation_rule is a valid SQL expression (e.g. CAST, COALESCE, CONCAT, CASE WHEN).
+    - rule is a valid SQL expression (e.g. CAST, COALESCE, CONCAT, CASE WHEN).
     - description is concise — one sentence maximum.
-    - For non-transformation requests: rules: [], message: <your response>.
+    - For non-transformation requests: rules: [], status: "needs_input", message: <your response>.
+    - warnings, error, and meta are optional; include them only when meaningful.
     - No text outside the JSON block.
 
 tools:

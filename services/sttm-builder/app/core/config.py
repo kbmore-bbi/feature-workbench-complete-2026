@@ -104,14 +104,32 @@ class Settings(BaseSettings):
         default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODELS",
         alias="SNOWFLAKE_SEMANTIC_MODEL_TABLE",
     )
+    snowflake_semantic_bundles_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_BUNDLES",
+        alias="SNOWFLAKE_SEMANTIC_BUNDLES_TABLE",
+    )
+    snowflake_semantic_overrides_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_OVERRIDES",
+        alias="SNOWFLAKE_SEMANTIC_OVERRIDES_TABLE",
+    )
     snowflake_derived_sources_table: str = Field(
         default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_DERIVED_SOURCES",
         alias="SNOWFLAKE_DERIVED_SOURCES_TABLE",
+    )
+    snowflake_derived_view_prefix: str = Field(
+        default="VW_DERIVED_SOURCE_",
+        alias="SNOWFLAKE_DERIVED_VIEW_PREFIX",
     )
     snowflake_agent_orchestration_model: str = Field(
         default="claude-sonnet-4",
         alias="SNOWFLAKE_AGENT_ORCHESTRATION_MODEL",
     )
+    datahub_enabled: bool = Field(default=False, alias="DATAHUB_ENABLED")
+    datahub_graphql_url: str = Field(default="", alias="DATAHUB_GRAPHQL_URL")
+    datahub_ui_url: str = Field(default="", alias="DATAHUB_UI_URL")
+    datahub_token: str = Field(default="", alias="DATAHUB_TOKEN")
+    datahub_dataset_env: str = Field(default="PROD", alias="DATAHUB_DATASET_ENV")
+    datahub_timeout_seconds: float = Field(default=10.0, alias="DATAHUB_TIMEOUT_SECONDS")
     cors_allowed_origins: str = Field(default="", alias="CORS_ALLOWED_ORIGINS")
 
     @computed_field
@@ -154,6 +172,8 @@ class Settings(BaseSettings):
             return self.snowflake_database.strip()
         for candidate in (
             self.snowflake_semantic_model_table,
+            self.snowflake_semantic_bundles_table,
+            self.snowflake_semantic_overrides_table,
             self.snowflake_derived_sources_table,
         ):
             parts = _split_qualified_name(candidate)
@@ -167,6 +187,8 @@ class Settings(BaseSettings):
             return self.snowflake_schema.strip()
         for candidate in (
             self.snowflake_semantic_model_table,
+            self.snowflake_semantic_bundles_table,
+            self.snowflake_semantic_overrides_table,
             self.snowflake_derived_sources_table,
         ):
             parts = _split_qualified_name(candidate)

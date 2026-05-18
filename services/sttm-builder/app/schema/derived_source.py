@@ -21,6 +21,7 @@ class DerivedSourceDefinition(BaseModel):
     derived_source_name: str = Field(min_length=1)
     sql_text: str = Field(min_length=1)
     source_tables: list[TableRef] = Field(min_length=1)
+    parent_derived_source_ids: list[str] = Field(default_factory=list)
     driving_table: TableRef | None = None
     relationships: list[RelationshipContextItem] = Field(default_factory=list)
     filters: list[dict[str, Any]] = Field(default_factory=list)
@@ -41,6 +42,12 @@ class DerivedSourceValidateResponse(BaseModel):
 class DerivedSourceRecord(DerivedSourceDefinition):
     derived_source_id: str
     preview_columns: list[DerivedSourcePreviewColumn] = Field(default_factory=list)
+    base_source_tables: list[TableRef] = Field(default_factory=list)
+    lineage_depth: int = 0
+    semantic_bundle_id: str | None = None
+    semantic_view_name: str | None = None
+    semantic_level: str | None = None
+    upstream_hash: str | None = None
     created_by: str | None = None
     created_at: str | None = None
     updated_at: str | None = None

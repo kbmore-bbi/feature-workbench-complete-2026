@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background,
   BackgroundVariant,
@@ -24,6 +24,8 @@ import AddCircleOutlineRoundedIcon from "@mui/icons-material/AddCircleOutlineRou
 import TableChartOutlinedIcon from "@mui/icons-material/TableChartOutlined";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
+import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
+import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 
 import { dbService } from "@/services/dbService";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
@@ -31,9 +33,21 @@ import { FocusButton } from "@/components/ui/focus-button";
 import { FocusTable } from "@/components/ui/focus-table/focus-table";
 import { FilterConditions, type RuleGroup } from "./filter-conditions";
 import { JoinModal } from "./join-modal";
+import {
+  hydrateBuilderFromSql,
+  suggestBusinessName,
+  type ComputedColumn,
+  type DetectedFunction,
+} from "./sql-hydration";
 import { TableEdge } from "./table-edge";
 import { TableNode, type TableNodeData } from "./table-node";
-import type { Column, DerivedSource, JoinConfig, TableMeta } from "@/features/sttm/types/sttm.types";
+import type {
+  Column,
+  DerivedSource,
+  JoinConfig,
+  PendingDerivedSourceDraft,
+  TableMeta,
+} from "@/features/sttm/types/sttm.types";
 
 const nodeTypes = { tableNode: TableNode };
 const edgeTypes = { tableEdge: TableEdge };
@@ -75,6 +89,7 @@ interface AddDerivedModalProps {
   isOpen: boolean;
   onClose: () => void;
   editingSource?: DerivedSource | null;
+  draftSource?: PendingDerivedSourceDraft | null;
   onConfirm: (source: DerivedSource) => void;
 }
 
@@ -158,10 +173,22 @@ function orientJoinAroundDrivingTable(
   };
 }
 
+function joinSignature(join: JoinConfig) {
+  const conditions = (join.conditions ?? [])
+    .map(
+      (condition) =>
+        `${condition.leftColumn ?? ""}:${condition.operator ?? "="}:${condition.rightColumn ?? ""}`
+    )
+    .sort()
+    .join("|");
+  return `${join.leftTableId ?? ""}->${join.rightTableId ?? ""}:${join.joinType ?? "INNER"}:${conditions}`;
+}
+
 export function AddDerivedModal({
   isOpen,
   onClose,
   editingSource,
+  draftSource,
   onConfirm,
 }: AddDerivedModalProps) {
   const { fullData, drivingTableId, relationships, sourceAttributeGroups, derivedSources } = useSttmBuilderContext();
@@ -273,6 +300,13 @@ export function AddDerivedModal({
   const [filterSql, setFilterSql] = useState("");
   const [customSql, setCustomSql] = useState("");
   const [activeTab, setActiveTab] = useState<"SQL" | "Preview">("SQL");
+  const [detectedFunctions, setDetectedFunctions] = useState<DetectedFunction[]>([]);
+  const [computedColumns, setComputedColumns] = useState<ComputedColumn[]>([]);
+  const [queryClauses, setQueryClauses] = useState<{
+    groupBy: string[];
+    having: string | null;
+    orderBy: string[];
+  }>({ groupBy: [], having: null, orderBy: [] });
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
   const [editingJoin, setEditingJoin] = useState<JoinConfig | null>(null);
   const [isValidating, setIsValidating] = useState(false);
@@ -285,6 +319,62 @@ export function AddDerivedModal({
     type: "success" | "error";
     message: string;
   } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const sqlEditorRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const applySqlHydration = (
+    sqlText: string,
+    options?: { preserveManualName?: boolean; fallbackTableIds?: string[]; fallbackDriving?: string | null }
+  ) => {
+    const hydrated = hydrateBuilderFromSql(sqlText, availableTables);
+    if (!hydrated) {
+      setValidationState({
+        type: "error",
+        message: "We could not fully map this SQL back into the visual builder. You can still edit the SQL directly.",
+      });
+      return;
+    }
+
+    const nextTableIds =
+      hydrated.selectedTableIds.length > 0
+        ? hydrated.selectedTableIds
+        : options?.fallbackTableIds ?? selectedTableIds;
+    const nextDriving =
+      hydrated.drivingTableId ??
+      options?.fallbackDriving ??
+      nextTableIds[0] ??
+      null;
+
+    setSelectedTableIds(nextTableIds);
+    setDrivingTable(nextDriving);
+    setSelectedColumnsByTable((prev) =>
+      Object.keys(hydrated.selectedColumnsByTable).length > 0
+        ? hydrated.selectedColumnsByTable
+        : prev
+    );
+    setJoins(hydrated.joins.length > 0 ? hydrated.joins.map((join) => orientJoinAroundDrivingTable(join, nextDriving)) : []);
+    setFilterGroups(hydrated.filterGroups);
+    setDetectedFunctions(hydrated.detectedFunctions);
+    setComputedColumns(hydrated.computedColumns);
+    setQueryClauses(hydrated.clauses);
+
+    if (!options?.preserveManualName) {
+      const suggestedName = suggestBusinessName(
+        draftSource?.requestSummary ?? sourceName,
+        availableTables.filter((table) => nextTableIds.includes(table.id as string)),
+      );
+      setSourceName((prev) => {
+        if (editingSource?.sourceName) return editingSource.sourceName;
+        if (draftSource?.sourceNameSuggestion && draftSource.sourceNameSuggestion.trim()) {
+          return suggestBusinessName(
+            draftSource.requestSummary ?? draftSource.sourceNameSuggestion,
+            availableTables.filter((table) => nextTableIds.includes(table.id as string)),
+          );
+        }
+        return prev.trim() ? prev : suggestedName;
+      });
+    }
+  };
 
   useEffect(() => {
     if (!isOpen) return;
@@ -295,9 +385,11 @@ export function AddDerivedModal({
       null;
     const initialTableIds = editingSource?.tableIds?.length
       ? editingSource.tableIds
-      : fallbackDriving
-        ? [fallbackDriving]
-        : [];
+      : draftSource?.selectedTableIds?.length
+        ? draftSource.selectedTableIds
+        : fallbackDriving
+          ? [fallbackDriving]
+          : [];
 
     const initialSelectedColumns =
       editingSource?.columns?.length
@@ -308,20 +400,25 @@ export function AddDerivedModal({
             acc[tableId] = [...(acc[tableId] ?? []), columnName];
             return acc;
           }, {})
-        : Object.fromEntries(
-            initialTableIds.map((tableId) => {
-              return [tableId, []];
-            })
-          );
+        : draftSource?.selectedColumnsByTable && Object.keys(draftSource.selectedColumnsByTable).length
+          ? draftSource.selectedColumnsByTable
+          : Object.fromEntries(initialTableIds.map((tableId) => [tableId, []]));
 
-    setSourceName(editingSource?.sourceName ?? "");
+    setSourceName(
+      editingSource?.sourceName ??
+        draftSource?.sourceNameSuggestion ??
+        suggestBusinessName(draftSource?.requestSummary, availableTables.filter((table) => initialTableIds.includes(table.id as string)))
+    );
     setSelectedTableIds(initialTableIds);
     setSelectedColumnsByTable(initialSelectedColumns);
     setJoins(editingSource?.joins ?? []);
-    setDrivingTable(editingSource?.drivingTableId ?? fallbackDriving);
+    setDrivingTable(editingSource?.drivingTableId ?? draftSource?.drivingTableId ?? fallbackDriving);
     setFilterGroups(editingSource?.filters ?? []);
     setFilterSql("");
-    setCustomSql("");
+    setCustomSql(editingSource?.sqlText ?? draftSource?.sqlText ?? "");
+    setDetectedFunctions([]);
+    setComputedColumns([]);
+    setQueryClauses({ groupBy: [], having: null, orderBy: [] });
     setActiveTab("SQL");
     setEditingJoin(null);
     setIsJoinModalOpen(false);
@@ -334,7 +431,17 @@ export function AddDerivedModal({
     );
     setPreviewRowsState(editingSource?.previewRows ?? []);
     setValidationState(null);
-  }, [availableTables, drivingTableId, editingSource, isOpen]);
+
+    const sqlSeed = editingSource?.sqlText ?? draftSource?.sqlText ?? "";
+    if (sqlSeed.trim()) {
+      queueMicrotask(() => {
+        applySqlHydration(sqlSeed, {
+          fallbackTableIds: initialTableIds,
+          fallbackDriving: editingSource?.drivingTableId ?? draftSource?.drivingTableId ?? fallbackDriving,
+        });
+      });
+    }
+  }, [availableTables, drivingTableId, draftSource, editingSource, isOpen]);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -388,7 +495,8 @@ export function AddDerivedModal({
               drivingTable
             )
           );
-          return [...manual, ...auto];
+          const manualSignatures = new Set(manual.map(joinSignature));
+          return [...manual, ...auto.filter((join) => !manualSignatures.has(joinSignature(join)))];
         });
         return;
       }
@@ -442,7 +550,8 @@ export function AddDerivedModal({
 
         setJoins((prev) => {
           const manual = prev.filter((join) => !join.locked);
-          return [...manual, ...autoJoins];
+          const manualSignatures = new Set(manual.map(joinSignature));
+          return [...manual, ...autoJoins.filter((join) => !manualSignatures.has(joinSignature(join)))];
         });
       } catch {
         if (!cancelled) {
@@ -764,6 +873,21 @@ export function AddDerivedModal({
       lines.push(`  ${filterSql.split("\n").join("\n  ")}`);
     }
 
+    if (queryClauses.groupBy.length > 0) {
+      lines.push("GROUP BY");
+      lines.push(`  ${queryClauses.groupBy.join(",\n  ")}`);
+    }
+
+    if (queryClauses.having?.trim()) {
+      lines.push("HAVING");
+      lines.push(`  ${queryClauses.having}`);
+    }
+
+    if (queryClauses.orderBy.length > 0) {
+      lines.push("ORDER BY");
+      lines.push(`  ${queryClauses.orderBy.join(",\n  ")}`);
+    }
+
     return lines.join("\n");
   }, [
     derivedSourceMap,
@@ -771,6 +895,9 @@ export function AddDerivedModal({
     filterGroups.length,
     filterSql,
     joins,
+    queryClauses.groupBy,
+    queryClauses.having,
+    queryClauses.orderBy,
     selectedColumnEntries,
     selectedTables,
     tableAliasById,
@@ -789,6 +916,7 @@ export function AddDerivedModal({
     derived_source_name: sourceName.trim(),
     sql_text: effectiveSqlExpression,
     source_tables: persistedSourceTables,
+    parent_derived_source_ids: selectedTableIds.filter((tableId) => derivedSourceMap.has(tableId)),
     driving_table:
       drivingTable && !isDerivedSourceId(drivingTable) ? toTableRef(drivingTable) : null,
     relationships: joins.map(toRelationshipPayload),
@@ -805,7 +933,7 @@ export function AddDerivedModal({
       setValidationState({ type: "error", message: "Select at least one source table to validate the SQL." });
       return;
     }
-    if (!selectedColumnEntries.length) {
+    if (!customSql.trim() && !selectedColumnEntries.length) {
       setValidationState({ type: "error", message: "Select one or more columns to include in the derived table." });
       return;
     }
@@ -842,6 +970,63 @@ export function AddDerivedModal({
     } finally {
       setIsValidating(false);
     }
+  };
+
+  const handleApplySqlToBuilder = () => {
+    if (!effectiveSqlExpression.trim()) {
+      setValidationState({ type: "error", message: "Paste, upload, or generate SQL first." });
+      return;
+    }
+    applySqlHydration(effectiveSqlExpression, { preserveManualName: false });
+    setValidationState({
+      type: "success",
+      message: "SQL applied to the relationship canvas, selected columns, and filter builder.",
+    });
+  };
+
+  const handleCopySql = async () => {
+    try {
+      await navigator.clipboard.writeText(effectiveSqlExpression);
+      setValidationState({ type: "success", message: "SQL copied to clipboard." });
+    } catch {
+      setValidationState({ type: "error", message: "Unable to copy the SQL right now." });
+    }
+  };
+
+  const handleUploadSql = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const content = await file.text();
+      setCustomSql(content);
+      applySqlHydration(content, { preserveManualName: false });
+      setValidationState({
+        type: "success",
+        message: `Loaded SQL from ${file.name} and synced it to the builder.`,
+      });
+    } catch {
+      setValidationState({ type: "error", message: "Unable to read that SQL file." });
+    } finally {
+      event.target.value = "";
+    }
+  };
+
+  const insertSqlSnippet = (snippet: string) => {
+    const editor = sqlEditorRef.current;
+    if (!editor) {
+      setCustomSql((prev) => `${prev.trim()}\n${snippet}`.trim());
+      return;
+    }
+
+    const start = editor.selectionStart ?? editor.value.length;
+    const end = editor.selectionEnd ?? editor.value.length;
+    const nextValue = `${editor.value.slice(0, start)}${snippet}${editor.value.slice(end)}`;
+    setCustomSql(nextValue);
+    requestAnimationFrame(() => {
+      editor.focus();
+      const caret = start + snippet.length;
+      editor.setSelectionRange(caret, caret);
+    });
   };
 
   const handleConfirm = async () => {
@@ -882,12 +1067,24 @@ export function AddDerivedModal({
         id: result.derived_source_id,
         sourceName: result.derived_source_name,
         sqlText: result.sql_text,
+        semanticBundleId: result.semantic_bundle_id ?? null,
+        semanticViewName: result.semantic_view_name ?? null,
+        semanticLevel: result.semantic_level ?? null,
+        upstreamHash: result.upstream_hash ?? null,
+        lineageDepth: result.lineage_depth ?? 0,
         drivingTableId: drivingTable ?? undefined,
         tableIds: selectedTableIds,
         derivedSourceIds: selectedTableIds.filter((tableId) => derivedSourceMap.has(tableId)),
         joins: normalizedJoins,
         filters: filterGroups,
-        columns: selectedColumnEntries.map(({ column }) => column),
+        columns:
+          selectedColumnEntries.length > 0
+            ? selectedColumnEntries.map(({ column }) => column)
+            : previewColumnsState.map((column) => ({
+                name: column.name,
+                tableId: result.derived_source_id,
+                tableName: result.derived_source_name,
+              })),
         previewColumns: (result.preview_columns ?? []).map(
           (column: { name: string; data_type: string; is_primary_key?: boolean }) => ({
             name: column.name,
@@ -918,7 +1115,7 @@ export function AddDerivedModal({
     { label: "Name", active: sourceName.trim().length > 0 },
     { label: `Tables (${selectedTableIds.length})`, active: selectedTableIds.length > 0 },
     { label: `Joins (${joins.length})`, active: joins.length > 0 },
-    { label: "Columns", active: selectedColumnEntries.length > 0 },
+    { label: "Columns", active: selectedColumnEntries.length > 0 || computedColumns.length > 0 },
   ];
 
   return (
@@ -1147,105 +1344,7 @@ export function AddDerivedModal({
 
         <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
           <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          <Box sx={{ p: 3, borderBottom: "1px solid #e5e7eb" }}>
-            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
-              <Box>
-                <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
-                  Table Relationships
-                </Typography>
-                <Typography sx={{ fontSize: 12, color: "#64748b", mt: 0.5 }}>
-                  Add tables from the left, connect matching columns, and choose the columns that should appear in the derived source.
-                </Typography>
-              </Box>
-              <FocusButton
-                variant="outlined"
-                size="small"
-                rounded="full"
-                onClick={() => {
-                  setEditingJoin(null);
-                  setIsJoinModalOpen(true);
-                }}
-                disabled={selectedTables.length < 2}
-              >
-                + Add Join
-              </FocusButton>
-            </Box>
-
-            <Box sx={{ height: 320, border: "1px solid #e5e7eb", borderRadius: 3, overflow: "hidden", bgcolor: "#ffffff" }}>
-              {selectedTables.length === 0 ? (
-                <Box
-                  sx={{
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#94a3b8",
-                    fontSize: 14,
-                    px: 4,
-                    textAlign: "center",
-                  }}
-                >
-                  Select one or more source tables from the left. They will appear here for join design and column selection.
-                </Box>
-              ) : (
-                <ReactFlow
-                  nodes={nodes}
-                  edges={edges}
-                  onNodesChange={onNodesChange}
-                  onEdgesChange={onEdgesChange}
-                  onConnect={onConnect}
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  proOptions={{ hideAttribution: true }}
-                  defaultEdgeOptions={{ type: "tableEdge", animated: true }}
-                  style={{ width: "100%", height: "100%" }}
-                >
-                  <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#e2e8f0" />
-                  <Controls position="bottom-right" style={{ marginBottom: 16, marginRight: 16 }} />
-                </ReactFlow>
-              )}
-            </Box>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mt: 1.5 }}>
-              <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#111827", letterSpacing: "0.08em" }}>
-                LEGEND:
-              </Typography>
-              {[
-                ["INNER JOIN", "#111827"],
-                ["LEFT JOIN", "#1d4ed8"],
-                ["RIGHT JOIN", "#0f766e"],
-                ["FULL JOIN", "#7c3aed"],
-              ].map(([label, backgroundColor]) => (
-                <Box
-                  key={label}
-                  sx={{
-                    px: 1.25,
-                    py: 0.4,
-                    borderRadius: 1,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: "#ffffff",
-                    backgroundColor,
-                  }}
-                >
-                  {label}
-                </Box>
-              ))}
-            </Box>
-          </Box>
-
-          <Box sx={{ borderBottom: "1px solid #e5e7eb" }}>
-            <FilterConditions
-              tables={selectedTables}
-              initialGroups={editingSource?.filters}
-              showPreview={false}
-              onChange={(groups, sql) => {
-                setFilterGroups(groups);
-                setFilterSql(sql);
-              }}
-            />
-          </Box>
-
-          <Box sx={{ minHeight: 520, display: "flex", flexDirection: "column", bgcolor: "#f8fafc" }}>
+          <Box sx={{ minHeight: 520, display: "flex", flexDirection: "column", bgcolor: "#f8fafc", borderBottom: "1px solid #e5e7eb" }}>
             <Box sx={{ display: "flex", borderBottom: "1px solid #e5e7eb", px: 3, pt: 2, gap: 3, bgcolor: "#ffffff" }}>
               <Box
                 onClick={() => setActiveTab("SQL")}
@@ -1291,8 +1390,89 @@ export function AddDerivedModal({
                       {validationState.message}
                     </Box>
                   ) : null}
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".sql,.txt"
+                    onChange={handleUploadSql}
+                    style={{ display: "none" }}
+                  />
+                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap" }}>
+                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                      <FocusButton
+                        variant="contained"
+                        size="small"
+                        rounded="full"
+                        onClick={handleApplySqlToBuilder}
+                      >
+                        Apply To Builder
+                      </FocusButton>
+                    </Box>
+                    <Box sx={{ display: "flex", gap: 0.75, alignItems: "center" }}>
+                      <IconButton
+                        onClick={() => fileInputRef.current?.click()}
+                        title="Upload SQL file"
+                        sx={{
+                          width: 34,
+                          height: 34,
+                          border: "1px solid rgba(191,219,254,0.28)",
+                          borderRadius: 2,
+                          color: "#bfdbfe",
+                          backgroundColor: "rgba(30,41,59,0.7)",
+                          "&:hover": { backgroundColor: "rgba(51,65,85,0.78)" },
+                        }}
+                      >
+                        <UploadFileRoundedIcon sx={{ fontSize: 18 }} />
+                      </IconButton>
+                      <IconButton
+                        onClick={handleCopySql}
+                        title="Copy SQL"
+                        sx={{
+                          width: 34,
+                          height: 34,
+                          border: "1px solid rgba(191,219,254,0.28)",
+                          borderRadius: 2,
+                          color: "#bfdbfe",
+                          backgroundColor: "rgba(30,41,59,0.7)",
+                          "&:hover": { backgroundColor: "rgba(51,65,85,0.78)" },
+                        }}
+                      >
+                        <ContentCopyRoundedIcon sx={{ fontSize: 18 }} />
+                      </IconButton>
+                    </Box>
+                  </Box>
+                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                    {[
+                      { label: "COUNT", snippet: "COUNT(*) AS total_count" },
+                      { label: "SUM", snippet: "SUM(amount) AS total_amount" },
+                      { label: "AVG", snippet: "AVG(amount) AS avg_amount" },
+                      { label: "CONCAT", snippet: "CONCAT(first_name, ' ', last_name) AS full_name" },
+                      { label: "CASE", snippet: "CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END AS is_active" },
+                      { label: "ROW_NUMBER", snippet: "ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_datetime DESC) AS row_num" },
+                      { label: "LAG", snippet: "LAG(amount) OVER (PARTITION BY customer_id ORDER BY created_datetime) AS previous_amount" },
+                    ].map((shortcut) => (
+                      <button
+                        key={shortcut.label}
+                        type="button"
+                        onClick={() => insertSqlSnippet(shortcut.snippet)}
+                        style={{
+                          border: "1px solid rgba(191,219,254,0.24)",
+                          background: "rgba(15,23,42,0.72)",
+                          color: "#bfdbfe",
+                          borderRadius: 999,
+                          padding: "4px 10px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          cursor: "pointer",
+                        }}
+                      >
+                        {shortcut.label}
+                      </button>
+                    ))}
+                  </Box>
                   <Box
                     component="textarea"
+                    ref={sqlEditorRef}
                     value={effectiveSqlExpression}
                     onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => setCustomSql(event.target.value)}
                     sx={{
@@ -1308,6 +1488,71 @@ export function AddDerivedModal({
                       resize: "none",
                     }}
                   />
+                  <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                    {detectedFunctions.length > 0 ? (
+                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                        <Typography sx={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>
+                          FUNCTIONS
+                        </Typography>
+                        {detectedFunctions.map((fn) => (
+                          <Box
+                            key={`${fn.category}-${fn.name}`}
+                            sx={{
+                              px: 1,
+                              py: 0.3,
+                              borderRadius: "999px",
+                              backgroundColor: "rgba(59,130,246,0.18)",
+                              color: "#bfdbfe",
+                              fontSize: 10,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {fn.name}
+                          </Box>
+                        ))}
+                      </Box>
+                    ) : null}
+                    {(queryClauses.groupBy.length > 0 || queryClauses.orderBy.length > 0 || queryClauses.having) ? (
+                      <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                        {queryClauses.groupBy.length > 0 ? (
+                          <Typography sx={{ fontSize: 11, color: "#cbd5e1" }}>
+                            <strong>GROUP BY:</strong> {queryClauses.groupBy.join(", ")}
+                          </Typography>
+                        ) : null}
+                        {queryClauses.having ? (
+                          <Typography sx={{ fontSize: 11, color: "#cbd5e1" }}>
+                            <strong>HAVING:</strong> {queryClauses.having}
+                          </Typography>
+                        ) : null}
+                        {queryClauses.orderBy.length > 0 ? (
+                          <Typography sx={{ fontSize: 11, color: "#cbd5e1" }}>
+                            <strong>ORDER BY:</strong> {queryClauses.orderBy.join(", ")}
+                          </Typography>
+                        ) : null}
+                      </Box>
+                    ) : null}
+                    {computedColumns.length > 0 ? (
+                      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                        {computedColumns.map((column) => (
+                          <Box
+                            key={column.alias}
+                            sx={{
+                              px: 1,
+                              py: 0.4,
+                              borderRadius: 1,
+                              backgroundColor: "rgba(148,163,184,0.16)",
+                              color: "#e2e8f0",
+                              fontSize: 10,
+                              fontWeight: 600,
+                            }}
+                            title={column.expression}
+                          >
+                            {column.alias}
+                          </Box>
+                        ))}
+                      </Box>
+                    ) : null}
+                  </Box>
                 </Box>
               ) : (
                 <Box
@@ -1411,6 +1656,120 @@ export function AddDerivedModal({
               )}
             </Box>
           </Box>
+
+          <Box sx={{ p: 3, borderBottom: "1px solid #e5e7eb" }}>
+            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
+              <Box>
+                <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
+                  Table Relationships
+                </Typography>
+                <Typography sx={{ fontSize: 12, color: "#64748b", mt: 0.5 }}>
+                  Add tables from the left, connect matching columns, and choose the columns that should appear in the derived source.
+                </Typography>
+              </Box>
+              <FocusButton
+                variant="outlined"
+                size="small"
+                rounded="full"
+                onClick={() => {
+                  setEditingJoin(null);
+                  setIsJoinModalOpen(true);
+                }}
+                disabled={selectedTables.length < 2}
+              >
+                + Add Join
+              </FocusButton>
+            </Box>
+
+            <Box sx={{ height: 320, border: "1px solid #e5e7eb", borderRadius: 3, overflow: "hidden", bgcolor: "#ffffff" }}>
+              {selectedTables.length === 0 ? (
+                <Box
+                  sx={{
+                    height: "100%",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "#94a3b8",
+                    fontSize: 14,
+                    px: 4,
+                    textAlign: "center",
+                  }}
+                >
+                  Select one or more source tables from the left. They will appear here for join design and column selection.
+                </Box>
+              ) : (
+                <ReactFlow
+                  nodes={nodes}
+                  edges={edges}
+                  onNodesChange={onNodesChange}
+                  onEdgesChange={onEdgesChange}
+                  onConnect={onConnect}
+                  nodeTypes={nodeTypes}
+                  edgeTypes={edgeTypes}
+                  proOptions={{ hideAttribution: true }}
+                  defaultEdgeOptions={{ type: "tableEdge", animated: true }}
+                  style={{ width: "100%", height: "100%" }}
+                >
+                  <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#e2e8f0" />
+                  <Controls position="bottom-right" style={{ marginBottom: 16, marginRight: 16 }} />
+                </ReactFlow>
+              )}
+            </Box>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mt: 1.5 }}>
+              <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#111827", letterSpacing: "0.08em" }}>
+                LEGEND:
+              </Typography>
+              {[
+                ["INNER JOIN", "#111827"],
+                ["LEFT JOIN", "#1d4ed8"],
+                ["RIGHT JOIN", "#0f766e"],
+                ["FULL JOIN", "#7c3aed"],
+              ].map(([label, backgroundColor]) => (
+                <Box
+                  key={label}
+                  sx={{
+                    px: 1.25,
+                    py: 0.4,
+                    borderRadius: 1,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: "#ffffff",
+                    backgroundColor,
+                  }}
+                >
+                  {label}
+                </Box>
+              ))}
+            </Box>
+          </Box>
+
+          <Box sx={{ borderBottom: "1px solid #e5e7eb" }}>
+            <FilterConditions
+              tables={selectedTables}
+              initialGroups={filterGroups}
+              initialGroupBy={queryClauses.groupBy}
+              initialOrderBy={queryClauses.orderBy}
+              previewSql={effectiveSqlExpression}
+              previewLabel="DERIVED SOURCE SQL PREVIEW"
+              showPreview={false}
+              onQueryChange={({ groups, whereSql, groupBy, orderBy, groupBySql, orderBySql }) => {
+                setFilterGroups(groups);
+                setFilterSql(whereSql);
+                setQueryClauses({
+                  groupBy: groupBy.map((item) => item.field).filter(Boolean),
+                  having: queryClauses.having,
+                  orderBy: orderBy
+                    .filter((item) => item.field)
+                    .map((item) => `${item.field} ${item.direction}`),
+                });
+                if (!whereSql && !groupBySql && !orderBySql) {
+                  setValidationState((prev) =>
+                    prev?.type === "success" ? { type: "success", message: "Query builder updated." } : prev
+                  );
+                }
+              }}
+            />
+          </Box>
           </Box>
         </Box>
       </Box>
@@ -1449,7 +1808,9 @@ export function AddDerivedModal({
             disabled={
               !sourceName.trim() ||
               selectedTableIds.length === 0 ||
-              selectedColumnEntries.length === 0 ||
+              (selectedColumnEntries.length === 0 &&
+                computedColumns.length === 0 &&
+                previewColumnsState.length === 0) ||
               isSaving
             }
           >

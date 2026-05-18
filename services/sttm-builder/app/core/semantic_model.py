@@ -16,6 +16,7 @@ from app.core.snowflake import (
 )
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.schema.common import TableRef
+from app.schema.semantic_context import SemanticLevel
 from app.schema.semantic_model import GenerateRequest, JobStatus
 
 logger = logging.getLogger(__name__)
@@ -40,8 +41,9 @@ class SemanticModelService:
     def submit(self, req: GenerateRequest) -> tuple[str, int]:
         """Register a pending job, return (job_id, total_tasks)."""
         unique_schemas = _unique_schemas(req.tables)
-        # SCHEMA per unique schema + TABLE + ATTRIBUTE per table
-        total = len(unique_schemas) + len(req.tables) * 2
+        # SCHEMA per unique schema + TABLE per table. TABLE responses also contain
+        # attribute-level semantics and are persisted together.
+        total = len(unique_schemas) + len(req.tables)
 
         job_id = str(uuid.uuid4())
         _jobs[job_id] = JobStatus(
@@ -96,6 +98,7 @@ class SemanticModelService:
         agent_client: SnowflakeAgentClient,
         tables: list[TableRef],
         force: bool = False,
+        semantic_level: SemanticLevel = SemanticLevel.L1_CONTEXT,
     ) -> dict[str, int]:
         generated = 0
         skipped = 0
@@ -111,6 +114,7 @@ class SemanticModelService:
                 schema,
                 "",
                 force,
+                semantic_level,
             )
             generated += 1 if outcome == "generated" else 0
             skipped += 1 if outcome == "skipped" else 0
@@ -119,20 +123,20 @@ class SemanticModelService:
             table_db = table.database.upper()
             table_schema = table.schema.upper()
             table_name = table.table.upper()
-            for scope in ("TABLE", "ATTRIBUTE"):
-                outcome = _execute_task(
-                    session,
-                    agent_client,
-                    self._table,
-                    self._agent_name,
-                    scope,
-                    table_db,
-                    table_schema,
-                    table_name,
-                    force,
-                )
-                generated += 1 if outcome == "generated" else 0
-                skipped += 1 if outcome == "skipped" else 0
+            outcome = _execute_task(
+                session,
+                agent_client,
+                self._table,
+                self._agent_name,
+                "TABLE",
+                table_db,
+                table_schema,
+                table_name,
+                force,
+                semantic_level,
+            )
+            generated += 1 if outcome == "generated" else 0
+            skipped += 1 if outcome == "skipped" else 0
 
         return {"generated": generated, "skipped": skipped}
 
@@ -153,6 +157,44 @@ class SemanticModelService:
             if record:
                 records.append(record)
         return records
+
+    def compute_ddl_hash(
+        self,
+        session: Session,
+        *,
+        scope: str,
+        db_name: str,
+        schema_name: str,
+        table_name: str = "",
+    ) -> str:
+        return _compute_ddl_hash(session, scope, db_name.upper(), schema_name.upper(), table_name.upper())
+
+    def upsert_table_record(
+        self,
+        session: Session,
+        *,
+        table: TableRef,
+        semantic_model: dict[str, Any],
+        ddl_hash: str | None = None,
+    ) -> None:
+        resolved_hash = ddl_hash or self.compute_ddl_hash(
+            session,
+            scope="TABLE",
+            db_name=table.database,
+            schema_name=table.schema,
+            table_name=table.table,
+        )
+        _merge_row(
+            session,
+            self._table,
+            "TABLE",
+            table.database.upper(),
+            table.schema.upper(),
+            table.table.upper(),
+            "",
+            semantic_model,
+            resolved_hash,
+        )
 
     # ------------------------------------------------------------------
     # Background task
@@ -184,22 +226,23 @@ class SemanticModelService:
                     schema,
                     "",
                     req.force,
+                    SemanticLevel.L1_CONTEXT,
                 )
 
             for tbl in req.tables:
-                for scope in ("TABLE", "ATTRIBUTE"):
-                    _run_task(
-                        job,
-                        session,
-                        agent_client,
-                        self._table,
-                        self._agent_name,
-                        scope,
-                        tbl.database.upper(),
-                        tbl.schema.upper(),
-                        tbl.table.upper(),
-                        req.force,
-                    )
+                _run_task(
+                    job,
+                    session,
+                    agent_client,
+                    self._table,
+                    self._agent_name,
+                    "TABLE",
+                    tbl.database.upper(),
+                    tbl.schema.upper(),
+                    tbl.table.upper(),
+                    req.force,
+                    SemanticLevel.L1_CONTEXT,
+                )
 
             job.status = "completed"
             job.completed_at = datetime.now(timezone.utc)
@@ -254,6 +297,7 @@ def _run_task(
     schema: str,
     tbl: str,
     force: bool,
+    semantic_level: SemanticLevel,
 ) -> None:
     label = f"{scope} {db}.{schema}{'.'+tbl if tbl else ''}"
     try:
@@ -267,6 +311,7 @@ def _run_task(
             schema,
             tbl,
             force,
+            semantic_level,
         )
         if outcome == "skipped":
             job.skipped += 1
@@ -292,12 +337,13 @@ def _execute_task(
     schema: str,
     tbl: str,
     force: bool,
+    semantic_level: SemanticLevel,
 ) -> str:
     current_hash = _compute_ddl_hash(session, scope, db, schema, tbl)
     if not force and _is_fresh(session, sm_table, scope, db, schema, tbl, current_hash):
         return "skipped"
 
-    prompt = _build_prompt(scope, db, schema, tbl)
+    prompt = _build_prompt(scope, db, schema, tbl, semantic_level)
     raw_text, _ = agent_client.run(
         [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
         agent=agent_name,
@@ -353,8 +399,19 @@ def _is_fresh(
     return bool(rows) and rows[0]["DDL_HASH"] == current_hash
 
 
-def _build_prompt(scope: str, db: str, schema: str, tbl: str) -> str:
-    payload: dict[str, Any] = {"scope": scope, "database": db, "schema": schema}
+def _build_prompt(
+    scope: str,
+    db: str,
+    schema: str,
+    tbl: str,
+    semantic_level: SemanticLevel,
+) -> str:
+    payload: dict[str, Any] = {
+        "scope": scope,
+        "database": db,
+        "schema": schema,
+        "semantic_level": semantic_level.value,
+    }
     if tbl:
         payload["table"] = tbl
     return json.dumps(payload)
@@ -383,15 +440,22 @@ def _upsert(
 ) -> None:
     semantic_model = envelope.get("semantic_model", {})
 
-    if scope == "ATTRIBUTE":
-        if not isinstance(semantic_model, list):
-            raise SnowflakeAgentError("ATTRIBUTE scope: expected semantic_model to be an array")
-        for item in semantic_model:
-            attr = (item.get("attribute") or "").upper()
+    if scope == "TABLE":
+        _merge_row(session, sm_table, scope, db, schema, tbl, "", semantic_model, ddl_hash)
+        attribute_models = envelope.get("attribute_semantic_model", [])
+        if attribute_models is None:
+            attribute_models = []
+        if not isinstance(attribute_models, list):
+            raise SnowflakeAgentError(
+                "TABLE scope: expected attribute_semantic_model to be an array when present"
+            )
+        for item in attribute_models:
+            attr = (item.get("name") or item.get("attribute") or "").upper()
             if attr:
                 _merge_row(session, sm_table, "ATTRIBUTE", db, schema, tbl, attr, item, ddl_hash)
-    else:
-        _merge_row(session, sm_table, scope, db, schema, tbl, "", semantic_model, ddl_hash)
+        return
+
+    _merge_row(session, sm_table, scope, db, schema, tbl, "", semantic_model, ddl_hash)
 
 
 def _merge_row(
@@ -405,7 +469,7 @@ def _merge_row(
     model: Any,
     ddl_hash: str,
 ) -> None:
-    model_json = json.dumps(model).replace("'", "''")
+    model_json = json.dumps(model, default=str).replace("$$", "$ $")
     session.sql(f"""
         MERGE INTO {sm_table} AS tgt
         USING (
@@ -415,7 +479,7 @@ def _merge_row(
                 '{schema}'                   AS SCHEMA_NAME,
                 '{tbl}'                      AS TABLE_NAME,
                 '{attr}'                     AS ATTRIBUTE_NAME,
-                PARSE_JSON('{model_json}')   AS SEMANTIC_MODEL,
+                PARSE_JSON($${model_json}$$) AS SEMANTIC_MODEL,
                 '{ddl_hash}'                 AS DDL_HASH,
                 CURRENT_TIMESTAMP()          AS NOW
         ) AS src

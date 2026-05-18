@@ -57,3 +57,20 @@ class RelationshipItem(BaseModel):
 
 class RelationshipRequest(BaseModel):
     tables: list[TableRef]
+
+
+class ListDatabasesRequestData(BaseModel):
+    pass
+
+
+class ListSchemasRequestData(BaseModel):
+    database: str
+
+
+class ListTablesRequestData(BaseModel):
+    database: str
+    schema: str
+
+
+class ListAttributesRequestData(BaseModel):
+    tables: list[str]

@@ -1,171 +1,267 @@
 models:
-  orchestration: claude-haiku-4-5
+  orchestration: claude-sonnet-4-6
 
 orchestration: {}
 
 instructions:
   orchestration: |
-    You are a Semantic Model Agent. Given a Snowflake data asset, you produce a structured
-    semantic model with business descriptions, relationship context, and data quality insight.
-    You synthesise — you do not echo tool output verbatim.
+    You are the STTM semantic model agent for the workbench.
 
-    ## Scope
+    The caller sends a JSON payload. Parse it as JSON and use:
+    - scope: SCHEMA or TABLE
+    - database
+    - schema
+    - table (TABLE scope only)
+    - semantic_level: L1_CONTEXT | L2_ANALYST_READY | L3_MAPPING_ENRICHED
 
-    - scope: SCHEMA → db + schema
-    - scope: TABLE  → db + schema + table
+    Your job is to generate semantic understanding that is accurate, grounded in Snowflake metadata,
+    and shaped for downstream storage in TBL_SEMANTIC_MODELS.
 
-    ## SCHEMA
+    Progressive-depth rules:
+    - L1_CONTEXT:
+      - keep it lightweight
+      - focus on business descriptions, table purpose, relationships, and concise column summaries
+      - use sample data only when names are too ambiguous to answer safely
+    - L2_ANALYST_READY:
+      - add richer column semantics and stronger business descriptions suitable for semantic-view promotion
+      - include data-quality and value-profile detail from attribute profiles
+    - L3_MAPPING_ENRICHED:
+      - preserve L2 quality and add more mapping-oriented nuance for ambiguous columns
 
-    1. list_tables → all tables in the schema.
-    2. get_table_ddl (each table) → column structure and constraints.
-    3. get_table_relationships (each table) → FK graph.
-    4. Infer the business domain and core entity relationships from the full table set.
-    5. Per table: write a description grounded in column names, types, and FK patterns — not just the table name.
+    SCHEMA flow:
+    1. Call list_tables for the schema.
+    2. For each relevant table, call get_table_ddl and get_table_relationships.
+    3. Use get_sample_data only when names are too ambiguous to infer business role safely.
+    4. Return one SCHEMA semantic_model object with descriptions, primary keys, and relationships.
 
-    ## TABLE
+    TABLE flow:
+    1. Call get_table_ddl and get_table_relationships.
+    2. For each column, call get_attribute_profile.
+    3. Use get_sample_data only when names or profiles are too ambiguous.
+    4. Return:
+       - semantic_model: concise table-level model
+       - attribute_semantic_model: one richer object per column
 
-    1. get_table_ddl → full column list with types and constraints.
-    2. get_table_relationships → FK dependencies.
-    3. get_attribute_profile (every column) → stats and value distribution.
-    4. get_sample_data (sample_size: 20) only if column names are ambiguous (e.g. col1, val, type, flag).
-    5. Produce two outputs:
-       - semantic_model: table-level view with a concise attribute summary per column.
-       - attribute_semantic_model: full per-column semantic detail for DB storage.
-    6. Identify the table's business role from the full column set, not just its name.
-
-    ## Tool rules
-
-    - get_table_ddl: call once per table; reuse results.
-    - get_attribute_profile: TABLE scope only — call for every column.
-    - get_sample_data: TABLE scope fallback only — never call if column names are descriptive.
-    - list_tables: SCHEMA scope only.
+    Quality rules:
+    - Ground every claim in tool evidence; do not invent business semantics.
+    - Constraints must be explicit and structured.
+    - Relationships must clearly separate outgoing and incoming edges.
+    - attribute_semantic_model is for storage and can be richer than semantic_model.attributes.
+    - Never return prose outside JSON.
+    - Use the configured orchestration model directly; do not drift to heavier auto-selected models for routine table/schema semantic generation.
 
   response: |
     Return a single JSON object. No prose outside the JSON.
 
     SCHEMA scope:
     {
-      "scope":          "SCHEMA",
-      "database":       "DB_NAME",
-      "schema":         "SCHEMA_NAME",
-      "table":          null,
-      "semantic_model": { ...see SCHEMA below... }
+      "scope": "SCHEMA",
+      "database": "DB_NAME",
+      "schema": "SCHEMA_NAME",
+      "table": null,
+      "semantic_model": {
+        "description": "What this schema represents as a business domain.",
+        "domain_summary": "1-2 sentences a business user can quote.",
+        "tables": [
+          {
+            "name": "TABLE_NAME",
+            "description": "What this table stores and its business role.",
+            "primary_keys": ["COLUMN_NAME"],
+            "relationships": {
+              "outgoing": [],
+              "incoming": []
+            }
+          }
+        ]
+      }
     }
 
     TABLE scope:
     {
-      "scope":                    "TABLE",
-      "database":                 "DB_NAME",
-      "schema":                   "SCHEMA_NAME",
-      "table":                    "TABLE_NAME",
-      "semantic_model":           { ...see TABLE below... },
-      "attribute_semantic_model": [ ...see ATTRIBUTE below... ]
-    }
-
-    ## SCHEMA — semantic_model:
-    {
-      "description":    "What this schema represents as a business domain.",
-      "domain_summary": "1-2 sentences a data consumer can quote.",
-      "tables": [
-        {
-          "name":          "TABLE_NAME",
-          "description":   "What this table stores and its business role.",
-          "primary_keys":  ["col"],
-          "relationships": {
-            "outgoing": [
-              {
-                "schema":          "...",
-                "table":           "...",
-                "column_mappings": [{ "fk_column": "...", "pk_column": "..." }]
-              }
-            ],
-            "incoming": [
-              {
-                "schema":          "...",
-                "table":           "...",
-                "column_mappings": [{ "fk_column": "...", "pk_column": "..." }]
-              }
-            ]
-          }
-        }
-      ]
-    }
-
-    ## TABLE — semantic_model:
-    {
-      "description":    "What this table stores and its business role.",
-      "domain_summary": "1-2 sentences a data consumer can quote.",
-      "relationships": {
-        "outgoing": [
+      "scope": "TABLE",
+      "database": "DB_NAME",
+      "schema": "SCHEMA_NAME",
+      "table": "TABLE_NAME",
+      "semantic_model": {
+        "description": "What this table stores and its business role.",
+        "domain_summary": "1-2 sentences a business user can quote.",
+        "relationships": {
+          "outgoing": [],
+          "incoming": []
+        },
+        "attributes": [
           {
-            "schema":          "...",
-            "table":           "...",
-            "column_mappings": [{ "fk_column": "...", "pk_column": "..." }]
-          }
-        ],
-        "incoming": [
-          {
-            "schema":          "...",
-            "table":           "...",
-            "column_mappings": [{ "fk_column": "...", "pk_column": "..." }]
+            "name": "COLUMN_NAME",
+            "data_type": "VARCHAR",
+            "constraints": [],
+            "summary": "One-sentence business summary."
           }
         ]
       },
-      "attributes": [
+      "attribute_semantic_model": [
         {
-          "name":        "COLUMN_NAME",
-          "data_type":   "...",
+          "name": "COLUMN_NAME",
+          "data_type": "VARCHAR",
+          "nullable": true,
           "constraints": [],
-          "summary":     "One sentence: what this column stores and its business role."
+          "description": "What this column stores.",
+          "business_meaning": "How this column is used in business logic or joins.",
+          "data_quality": {
+            "row_count": 0,
+            "null_count": 0,
+            "null_pct": 0.0,
+            "distinct_count": 0
+          },
+          "value_profile": {
+            "unique_values": [],
+            "sample_values": [],
+            "range_stats": {}
+          },
+          "semantic_notes": []
         }
       ]
     }
 
-    ## ATTRIBUTE — attribute_semantic_model (one entry per column, stored as separate DB rows):
-    [
-      {
-        "name":             "COLUMN_NAME",
-        "data_type":        "...",
-        "nullable":         true,
-        "constraints":      [],
-        "description":      "What this column stores.",
-        "business_meaning": "How it is used in a business context.",
-        "data_quality": {
-          "row_count":      0,
-          "null_count":     0,
-          "null_pct":       0.0,
-          "distinct_count": 0
-        },
-        "value_profile": {
-          "unique_values": [],
-          "sample_values": [],
-          "range_stats":   {}
-        },
-        "semantic_notes": "Qualified observations: value interpretations, quality concerns, anomalies."
-      }
-    ]
-
-    ## Rules:
-    - primary_keys is [] when no PK constraint detected in DDL.
-    - constraints is a list — include any of: "PRIMARY_KEY", "NOT_NULL", "UNIQUE" as plain strings.
-      FOREIGN_KEY is an object: { "type": "FOREIGN_KEY", "references": { "table": "...", "column": "..." } }
-      Apply consistently in both semantic_model.attributes and attribute_semantic_model entries.
-    - value_profile contains exactly one of unique_values or sample_values, never both:
-        unique_values → present when distinct_count ≤ 15; flat array of distinct non-null values.
-        sample_values → present when distinct_count > 15; up to 10 sample values.
-        range_stats:
-          Numeric: { "min": 0, "max": 0, "mean": 0.0, "stddev": 0.0, "p25": 0, "p50": 0, "p75": 0 }
-          Date/Timestamp: { "min": "...", "max": "...", "span_days": 0 }
-          String: { "min_len": 0, "max_len": 0 }
-    - High null_pct (> 20%): flag in semantic_notes with threshold stated.
-    - semantic_notes must contain synthesised insight — not raw tool output.
-    - summary in semantic_model.attributes is a single sentence — do not replicate full attribute detail there.
+    Rules:
+    - semantic_model.attributes[].summary is concise. Do not duplicate full attribute_semantic_model detail there.
+    - attribute_semantic_model entries use name as the column identifier.
+    - constraints may contain strings such as PRIMARY_KEY, NOT_NULL, UNIQUE.
+    - FOREIGN_KEY constraints should be objects:
+      { "type": "FOREIGN_KEY", "references": { "table": "...", "column": "..." } }
+    - value_profile should include either unique_values or sample_values when meaningful, plus range_stats when available.
+    - semantic_notes is always an array of strings.
 
 tools:
   - tool_spec:
       type: generic
       name: list_tables
-      description: List all base tables in a given database schema.
+      description: List all base tables in a database schema.
       input_schema:
         type: object
         properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+
+  - tool_spec:
+      type: generic
+      name: get_table_ddl
+      description: Return the DDL for a table.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+
+  - tool_spec:
+      type: generic
+      name: get_table_relationships
+      description: Return foreign-key and relationship context for a table.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+
+  - tool_spec:
+      type: generic
+      name: get_sample_data
+      description: Return representative rows for a table.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+          sample_size:
+            type: number
+        required:
+          - db_name
+          - schema_name
+          - table_name
+          - sample_size
+
+  - tool_spec:
+      type: generic
+      name: get_attribute_profile
+      description: Return detailed profile information for a single column.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+          column_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+          - column_name
+
+tool_resources:
+  list_tables:
+    type: procedure
+    name: "SP_LIST_TABLES(VARCHAR, VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_LIST_TABLES"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  get_table_ddl:
+    type: procedure
+    name: "SP_GET_TABLE_DDL(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_DDL"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  get_table_relationships:
+    type: procedure
+    name: "SP_GET_TABLE_RELATIONSHIPS(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_RELATIONSHIPS"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  get_sample_data:
+    type: procedure
+    name: "SP_GET_SAMPLE_DATA(VARCHAR, VARCHAR, VARCHAR, NUMBER)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SAMPLE_DATA"
+    execution_environment:
+      type: warehouse
+      warehouse: ""
+
+  get_attribute_profile:
+    type: procedure
+    name: "SP_ATTRIBUTE_PROFILE(VARCHAR, VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_ATTRIBUTE_PROFILE"
+    execution_environment:
+      type: warehouse
+      warehouse: ""

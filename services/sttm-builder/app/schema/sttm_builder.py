@@ -1,8 +1,11 @@
 from enum import Enum
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
 from app.schema.common import AttributeRef, TableRef
+from app.schema.contracts import CONTRACT_VERSION, ApiActor, ApiError, ApiWarning, OperationContext
+from app.schema.semantic_context import SemanticLevel, SemanticRefreshStatus, SemanticSurface
 
 
 class Interface(str, Enum):
@@ -14,6 +17,25 @@ class Interface(str, Enum):
 class SubAgent(str, Enum):
     SOURCE_MAPPING_AGENT = "SOURCE_MAPPING_AGENT"
     TRANSFORMATION_AGENT = "TRANSFORMATION_AGENT"
+
+
+class STTMOperation(str, Enum):
+    AUTO_MAP = "sttm.auto_map"
+    CHAT = "sttm.chat"
+    TRANSFORM = "sttm.transform"
+
+
+class STTMStatus(str, Enum):
+    COMPLETED = "completed"
+    NEEDS_INPUT = "needs_input"
+    FAILED = "failed"
+
+
+_INTERFACE_TO_OPERATION = {
+    Interface.AUTO_MAP: STTMOperation.AUTO_MAP,
+    Interface.CHAT: STTMOperation.CHAT,
+    Interface.TRANSFORM: STTMOperation.TRANSFORM,
+}
 
 
 class TargetAttributeItem(BaseModel):
@@ -64,6 +86,15 @@ class SemanticContextItem(BaseModel):
         description="Stored semantic model payload returned from Snowflake."
     )
     scope: str = Field(default="TABLE", description="Scope of the semantic model payload.")
+
+
+class STTMArtifactType(str, Enum):
+    NONE = "none"
+    SEMANTIC_CONTEXT = "semantic_context"
+    ANALYST_ANSWER = "analyst_answer"
+    DERIVED_SOURCE_DRAFT = "derived_source_draft"
+    SOURCE_MAPPING = "source_mapping"
+    TRANSFORMATION_RULES = "transformation_rules"
 
 
 class STTMBuilderRequest(BaseModel):
@@ -125,6 +156,13 @@ class STTMBuilderRequest(BaseModel):
         description="Optional selected column names grouped by fully-qualified table name.",
     )
 
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_empty_context_lists(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("source_tables") == []:
+            return {**data, "source_tables": None}
+        return data
+
     @model_validator(mode="after")
     def _validate_by_interface(self) -> "STTMBuilderRequest":
         if self.interface in (Interface.AUTO_MAP, Interface.TRANSFORM):
@@ -139,6 +177,156 @@ class STTMBuilderRequest(BaseModel):
             if not self.message:
                 raise ValueError("CHAT interface requires a non-empty `message`")
         return self
+
+
+class STTMBuilderContext(OperationContext):
+    source_tables: list[TableRef] | None = Field(default=None, min_length=1)
+    driving_table: TableRef | None = None
+    relationships: list[RelationshipContextItem] | None = None
+    semantic_context: list[SemanticContextItem] | None = None
+    selected_columns_by_table: dict[str, list[str]] | None = None
+    surface: SemanticSurface = SemanticSurface.SOURCE_SELECTION
+    semantic_level_requested: SemanticLevel = SemanticLevel.L1_CONTEXT
+    target_table: TableRef | None = None
+    selected_derived_sources: list[str] | None = None
+    semantic_bundle_id: str | None = None
+    semantic_bundle_label: str | None = None
+    semantic_view_name: str | None = None
+    derived_source_lineage: list[dict[str, Any]] | None = None
+    datahub_context: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_empty_source_tables(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("source_tables") == []:
+            return {**data, "source_tables": None}
+        return data
+
+
+class STTMBuilderRequestData(BaseModel):
+    intent: Interface
+    attributes: list[TargetAttributeItem] | None = Field(default=None, min_length=1)
+    message: str | None = None
+
+
+class STTMAgentContext(BaseModel):
+    source_tables: list[TableRef] | None = Field(default=None, min_length=1)
+    driving_table: TableRef | None = None
+    relationships: list[RelationshipContextItem] | None = None
+    semantic_context: list[SemanticContextItem] | None = None
+    selected_columns_by_table: dict[str, list[str]] | None = None
+    surface: SemanticSurface = SemanticSurface.SOURCE_SELECTION
+    semantic_level_requested: SemanticLevel = SemanticLevel.L1_CONTEXT
+    target_table: TableRef | None = None
+    selected_derived_sources: list[str] | None = None
+    semantic_bundle_id: str | None = None
+    semantic_bundle_label: str | None = None
+    semantic_view_name: str | None = None
+    derived_source_lineage: list[dict[str, Any]] | None = None
+    datahub_context: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_empty_source_tables(cls, data: Any) -> Any:
+        if isinstance(data, dict) and data.get("source_tables") == []:
+            return {**data, "source_tables": None}
+        return data
+
+
+class STTMAgentRequestEnvelope(BaseModel):
+    contract_version: Literal["1.0"] = CONTRACT_VERSION
+    request_id: str | None = None
+    operation: STTMOperation
+    context: STTMAgentContext = Field(default_factory=STTMAgentContext)
+    data: STTMBuilderRequestData
+
+    @classmethod
+    def from_builder_request(
+        cls,
+        req: "STTMBuilderEnvelopeRequest",
+    ) -> "STTMAgentRequestEnvelope":
+        return cls(
+            request_id=req.request_id,
+            operation=req.operation,
+            context=STTMAgentContext(
+                source_tables=req.context.source_tables,
+                driving_table=req.context.driving_table,
+                relationships=req.context.relationships,
+                semantic_context=req.context.semantic_context,
+                selected_columns_by_table=req.context.selected_columns_by_table,
+                surface=req.context.surface,
+                semantic_level_requested=req.context.semantic_level_requested,
+                target_table=req.context.target_table,
+                selected_derived_sources=req.context.selected_derived_sources,
+                semantic_bundle_id=req.context.semantic_bundle_id,
+                semantic_bundle_label=req.context.semantic_bundle_label,
+                semantic_view_name=req.context.semantic_view_name,
+                derived_source_lineage=req.context.derived_source_lineage,
+                datahub_context=req.context.datahub_context,
+            ),
+            data=req.data,
+        )
+
+
+class STTMBuilderEnvelopeRequest(BaseModel):
+    contract_version: Literal["1.0"] = CONTRACT_VERSION
+    request_id: str | None = None
+    operation: STTMOperation
+    actor: ApiActor | None = None
+    context: STTMBuilderContext = Field(default_factory=STTMBuilderContext)
+    data: STTMBuilderRequestData
+    warnings: list[ApiWarning] = Field(default_factory=list)
+    error: ApiError | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _validate_operation_matches_intent(self) -> "STTMBuilderEnvelopeRequest":
+        expected = _INTERFACE_TO_OPERATION[self.data.intent]
+        if self.operation != expected:
+            raise ValueError(
+                f"operation must be {expected.value!r} when data.intent is {self.data.intent.value!r}"
+            )
+        return self
+
+    def to_flat_request(self) -> STTMBuilderRequest:
+        return STTMBuilderRequest(
+            interface=self.data.intent,
+            thread_id=self.context.thread_id,
+            attributes=self.data.attributes,
+            source_tables=self.context.source_tables,
+            message=self.data.message,
+            driving_table=self.context.driving_table,
+            relationships=self.context.relationships,
+            semantic_context=self.context.semantic_context,
+            selected_columns_by_table=self.context.selected_columns_by_table,
+        )
+
+    @classmethod
+    def from_flat_request(
+        cls,
+        req: STTMBuilderRequest,
+        *,
+        request_id: str | None = None,
+        warnings: list[ApiWarning] | None = None,
+    ) -> "STTMBuilderEnvelopeRequest":
+        return cls(
+            request_id=request_id,
+            operation=_INTERFACE_TO_OPERATION[req.interface],
+            context=STTMBuilderContext(
+                thread_id=req.thread_id,
+                source_tables=req.source_tables,
+                driving_table=req.driving_table,
+                relationships=req.relationships,
+                semantic_context=req.semantic_context,
+                selected_columns_by_table=req.selected_columns_by_table,
+            ),
+            data=STTMBuilderRequestData(
+                intent=req.interface,
+                attributes=req.attributes,
+                message=req.message,
+            ),
+            warnings=warnings or [],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -181,12 +369,52 @@ class TransformationResult(BaseModel):
     )
 
 
+class STTMBuilderResponseData(BaseModel):
+    intent: Interface
+    status: STTMStatus
+    agent: SubAgent | None = None
+    result: SourceMappingResult | TransformationResult | None = None
+    message: str | None = None
+    artifact_type: STTMArtifactType = STTMArtifactType.NONE
+    artifact: dict[str, Any] | None = None
+    semantic_level_achieved: SemanticLevel | None = None
+    semantic_refresh_status: SemanticRefreshStatus | None = None
+
+
+class STTMAgentResponseEnvelope(BaseModel):
+    contract_version: Literal["1.0"] = CONTRACT_VERSION
+    request_id: str | None = None
+    operation: STTMOperation
+    context: STTMAgentContext = Field(default_factory=STTMAgentContext)
+    data: STTMBuilderResponseData
+    warnings: list[ApiWarning] = Field(default_factory=list)
+    error: ApiError | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+
 # ---------------------------------------------------------------------------
 # Unified response
 # ---------------------------------------------------------------------------
 
 
 class STTMBuilderResponse(BaseModel):
+    contract_version: Literal["1.0"] = CONTRACT_VERSION
+    request_id: str | None = None
+    operation: STTMOperation | None = Field(
+        default=None,
+        description="Canonical operation name for the standardized payload envelope.",
+    )
+    actor: ApiActor | None = None
+    context: STTMBuilderContext = Field(default_factory=STTMBuilderContext)
+    data: STTMBuilderResponseData | None = Field(
+        default=None,
+        description="Canonical response data for standardized clients.",
+    )
+    warnings: list[ApiWarning] = Field(default_factory=list)
+    error: ApiError | None = None
+    meta: dict[str, Any] = Field(default_factory=dict)
+
+    # Legacy fields kept for existing frontend callers during the migration.
     thread_id: str = Field(
         description="Cortex Agent thread ID — pass back on follow-up calls."
     )
@@ -201,4 +429,90 @@ class STTMBuilderResponse(BaseModel):
     message: str | None = Field(
         default=None,
         description="Agent summary or clarifying question. Always present for CHAT interface.",
+    )
+
+    @classmethod
+    def from_invocation(
+        cls,
+        request: STTMBuilderEnvelopeRequest,
+        *,
+        thread_id: str,
+        agent: SubAgent | None,
+        result: SourceMappingResult | TransformationResult | None,
+        message: str | None,
+        status: STTMStatus,
+        artifact_type: STTMArtifactType = STTMArtifactType.NONE,
+        artifact: dict[str, Any] | None = None,
+        semantic_level_achieved: SemanticLevel | None = None,
+        semantic_refresh_status: SemanticRefreshStatus | None = None,
+        warnings: list[ApiWarning] | None = None,
+        error: ApiError | None = None,
+        meta: dict[str, Any] | None = None,
+    ) -> "STTMBuilderResponse":
+        context = request.context.model_copy(update={"thread_id": thread_id})
+        response_warnings = [*request.warnings, *(warnings or [])]
+        data = STTMBuilderResponseData(
+            intent=request.data.intent,
+            status=status,
+            agent=agent,
+            result=result,
+            message=message,
+            artifact_type=artifact_type,
+            artifact=artifact,
+            semantic_level_achieved=semantic_level_achieved,
+            semantic_refresh_status=semantic_refresh_status,
+        )
+        return cls(
+            request_id=request.request_id,
+            operation=request.operation,
+            actor=request.actor,
+            context=context,
+            data=data,
+            warnings=response_warnings,
+            error=error,
+            meta={**request.meta, **(meta or {})},
+            thread_id=thread_id,
+            agent=agent,
+            result=result,
+            message=message,
+        )
+
+
+def normalize_sttm_builder_invoke_body(
+    body: dict[str, Any] | STTMBuilderEnvelopeRequest | STTMBuilderRequest,
+) -> STTMBuilderEnvelopeRequest:
+    if isinstance(body, STTMBuilderEnvelopeRequest):
+        return body
+
+    if isinstance(body, STTMBuilderRequest):
+        return STTMBuilderEnvelopeRequest.from_flat_request(
+            body,
+            warnings=[
+                ApiWarning(
+                    code="LEGACY_PAYLOAD",
+                    message=(
+                        "Accepted legacy flat STTM payload; send the standardized "
+                        "contract_version/operation/context/data envelope for new integrations."
+                    ),
+                )
+            ],
+        )
+
+    if "contract_version" in body or "schema_version" in body or "operation" in body or "data" in body:
+        if "schema_version" in body and "contract_version" not in body:
+            body = {**body, "contract_version": body["schema_version"]}
+        return STTMBuilderEnvelopeRequest.model_validate(body)
+
+    legacy = STTMBuilderRequest.model_validate(body)
+    return STTMBuilderEnvelopeRequest.from_flat_request(
+        legacy,
+        warnings=[
+            ApiWarning(
+                code="LEGACY_PAYLOAD",
+                message=(
+                    "Accepted legacy flat STTM payload; send the standardized "
+                    "contract_version/operation/context/data envelope for new integrations."
+                ),
+            )
+        ],
     )

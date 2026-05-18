@@ -1,30 +1,42 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import StreamingResponse
 
 from app.core.config import Settings, get_settings
 from app.api.deps import get_sttm_builder_service
 from app.core.sttm_builder import STTMBuilderService
+from app.schema.contracts import ApiResponseEnvelope, build_response_envelope, resolve_request_id
 from app.schema.workbench import WorkbenchInfoResponse
-from app.schema.sttm_builder import STTMBuilderRequest, STTMBuilderResponse
+from app.schema.sttm_builder import (
+    STTMBuilderEnvelopeRequest,
+    STTMBuilderRequest,
+    STTMBuilderResponse,
+    normalize_sttm_builder_invoke_body,
+)
 
 router = APIRouter(prefix="/workbench", tags=["STTM Builder"])
 
 
 @router.get(
     "/info",
-    response_model=WorkbenchInfoResponse,
+    response_model=ApiResponseEnvelope[WorkbenchInfoResponse],
     summary="Get basic workbench metadata",
 )
 def info(
+    request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
-) -> WorkbenchInfoResponse:
-    return WorkbenchInfoResponse(
+) -> ApiResponseEnvelope[WorkbenchInfoResponse]:
+    return build_response_envelope(
+        operation="workbench.info",
+        request=request,
+        data=WorkbenchInfoResponse(
         name=settings.app_name,
         environment=settings.app_env,
         version=settings.app_version,
         api_base_path="/api/v1",
         health_path="/healthz",
+        ),
     )
 
 
@@ -47,7 +59,36 @@ def info(
     ),
 )
 def invoke(
-    body: STTMBuilderRequest,
+    request: Request,
+    body: STTMBuilderEnvelopeRequest | STTMBuilderRequest,
     service: Annotated[STTMBuilderService, Depends(get_sttm_builder_service)],
 ) -> STTMBuilderResponse:
-    return service.invoke(body)
+    normalized = normalize_sttm_builder_invoke_body(body)
+    if not normalized.request_id:
+        normalized = normalized.model_copy(
+            update={"request_id": resolve_request_id(request)}
+    )
+    return service.invoke(normalized)
+
+
+@router.post(
+    "/invoke/stream",
+    summary="Invoke the STTM Builder orchestration agent as an SSE stream",
+)
+def invoke_stream(
+    request: Request,
+    body: STTMBuilderEnvelopeRequest | STTMBuilderRequest,
+    service: Annotated[STTMBuilderService, Depends(get_sttm_builder_service)],
+) -> StreamingResponse:
+    normalized = normalize_sttm_builder_invoke_body(body)
+    if not normalized.request_id:
+        normalized = normalized.model_copy(update={"request_id": resolve_request_id(request)})
+    return StreamingResponse(
+        service.invoke_stream(normalized),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

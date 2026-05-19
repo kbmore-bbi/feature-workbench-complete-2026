@@ -17,6 +17,7 @@ import {
   clearTargets as clearTargetsAction,
   setDrivingTable as setDrivingTableAction,
   setRelationships as setRelationshipsAction,
+  setSourceFilterConditions as setSourceFilterConditionsAction,
   addDerivedSource as addDerivedSourceAction,
   updateDerivedSource as updateDerivedSourceAction,
   removeDerivedSource as removeDerivedSourceAction,
@@ -24,6 +25,7 @@ import {
 } from "@/features/sttm/store/sttm-builder-slice";
 import type {
   DerivedSource,
+  RuleGroup,
   SelectionSide,
   SttmBuilderContextValue as ContextValue,
 } from "@/features/sttm/types/sttm.types";
@@ -151,6 +153,11 @@ export function SttmBuilderProvider({
         dispatch(removeDerivedSourceAction({ id })),
       toggleDerivedSource: (id: string) =>
         dispatch(toggleDerivedSourceAction({ id })),
+
+      sourceFilterSql: state.sourceFilterSql,
+      sourceFilterGroups: state.sourceFilterGroups,
+      setSourceFilterConditions: (payload: { sql: string; groups: RuleGroup[] }) =>
+        dispatch(setSourceFilterConditionsAction(payload)),
     };
   }, [state, dispatch]);
 

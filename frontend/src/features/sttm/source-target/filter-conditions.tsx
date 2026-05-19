@@ -3,29 +3,18 @@
 import React, { useMemo, useState } from "react";
 import { Box, Typography } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
-import type { TableMeta } from "@/features/sttm/types/sttm.types";
+import type {
+  TableMeta,
+  RuleLogic,
+  RuleCondition,
+  RuleGroup,
+  RuleNode,
+} from "@/features/sttm/types/sttm.types";
 import { FocusButton } from "@/components/ui/focus-button";
 import { FocusSelect } from "@/components/ui/focus-select";
 import { FocusInput } from "@/components/ui/focus-input";
 
-export type RuleLogic = "AND" | "OR" | "NOT";
-
-export type RuleCondition = {
-  id: string;
-  type: "condition";
-  field: string;
-  operator: string;
-  value: string;
-};
-
-export type RuleGroup = {
-  id: string;
-  type: "group";
-  logic: RuleLogic;
-  children: (RuleGroup | RuleCondition)[];
-};
-
-export type RuleNode = RuleGroup | RuleCondition;
+export type { RuleLogic, RuleCondition, RuleGroup, RuleNode } from "@/features/sttm/types/sttm.types";
 
 export type FilterControlSizes = {
   /** Max width (px) for the field/column select on condition rows */
@@ -88,12 +77,21 @@ export function FilterConditions({
     });
   }, [tables]);
 
-  const [rootGroups, _setRootGroups] = useState<RuleGroup[]>(initialGroups || []);
+  const cloneGroups = (groups: RuleGroup[] | undefined) =>
+    groups?.length ? structuredClone(groups) : [];
+
+  const serializedInitialRef = React.useRef<string | null>(null);
+
+  const [rootGroups, _setRootGroups] = useState<RuleGroup[]>(() =>
+    cloneGroups(initialGroups)
+  );
 
   React.useEffect(() => {
-    if (initialGroups) {
-      _setRootGroups(initialGroups);
-    }
+    if (initialGroups === undefined) return;
+    const serialized = JSON.stringify(initialGroups);
+    if (serialized === serializedInitialRef.current) return;
+    serializedInitialRef.current = serialized;
+    _setRootGroups(cloneGroups(initialGroups));
   }, [initialGroups]);
 
   const generateSQL = React.useCallback((node: RuleNode, level: number = 0): string => {

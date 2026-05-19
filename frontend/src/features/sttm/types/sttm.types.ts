@@ -51,6 +51,26 @@ export interface JoinConfig {
   }[];
 }
 
+/** Hierarchical filter / WHERE builder (`FilterConditions`). */
+export type RuleLogic = "AND" | "OR" | "NOT";
+
+export type RuleCondition = {
+  id: string;
+  type: "condition";
+  field: string;
+  operator: string;
+  value: string;
+};
+
+export type RuleGroup = {
+  id: string;
+  type: "group";
+  logic: RuleLogic;
+  children: (RuleGroup | RuleCondition)[];
+};
+
+export type RuleNode = RuleGroup | RuleCondition;
+
 export interface DerivedSource {
   id: string;
   sourceName: string;
@@ -223,4 +243,10 @@ export type SttmBuilderContextValue = {
   updateDerivedSource: (source: DerivedSource) => void;
   removeDerivedSource: (id: string) => void;
   toggleDerivedSource: (id: string) => void;
+
+  /** SQL fragment from Step 1 filter conditions (`FilterConditions`). */
+  sourceFilterSql: string;
+  /** Parsed filter tree (keeps UI + preview when navigating away and back). */
+  sourceFilterGroups: RuleGroup[];
+  setSourceFilterConditions: (payload: { sql: string; groups: RuleGroup[] }) => void;
 };

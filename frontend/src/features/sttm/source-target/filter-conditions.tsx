@@ -14,7 +14,29 @@ import { FocusButton } from "@/components/ui/focus-button";
 import { FocusSelect } from "@/components/ui/focus-select";
 import { FocusInput } from "@/components/ui/focus-input";
 
-export type { RuleLogic, RuleCondition, RuleGroup, RuleNode } from "@/features/sttm/types/sttm.types";
+export type { RuleLogic, RuleCondition, RuleGroup, RuleNode };
+
+export type GroupByItem = {
+  id: string;
+  field: string;
+};
+
+export type SortDirection = "ASC" | "DESC";
+
+export type OrderByItem = {
+  id: string;
+  field: string;
+  direction: SortDirection;
+};
+
+export type QueryBuilderClauses = {
+  groups: RuleGroup[];
+  whereSql: string;
+  groupBy: GroupByItem[];
+  orderBy: OrderByItem[];
+  groupBySql: string;
+  orderBySql: string;
+};
 
 export type FilterControlSizes = {
   /** Max width (px) for the field/column select on condition rows */
@@ -29,7 +51,12 @@ interface FilterConditionsProps {
   /** Optional pixel widths; defaults are compact to match UX (narrower than full flex). */
   controlSizes?: FilterControlSizes;
   onChange?: (groups: RuleGroup[], sql: string) => void;
+  onQueryChange?: (payload: QueryBuilderClauses) => void;
   initialGroups?: RuleGroup[];
+  initialGroupBy?: string[];
+  initialOrderBy?: string[];
+  previewSql?: string;
+  previewLabel?: string;
   showPreview?: boolean;
 }
 
@@ -40,11 +67,38 @@ const DEFAULT_CONTROL_SIZES: Required<FilterControlSizes> = {
   groupLogicWidthPx: 88,
 };
 
+function serializeRuleNode(node: RuleNode): string {
+  if (node.type === "condition") {
+    return JSON.stringify({
+      type: "condition",
+      field: node.field,
+      operator: node.operator,
+      value: node.value,
+      valueMode: node.valueMode ?? "literal",
+      valueField: node.valueField ?? "",
+      secondaryValue: node.secondaryValue ?? "",
+      secondaryValueMode: node.secondaryValueMode ?? "literal",
+      secondaryValueField: node.secondaryValueField ?? "",
+    });
+  }
+
+  return JSON.stringify({
+    type: "group",
+    logic: node.logic,
+    children: node.children.map((child) => serializeRuleNode(child)),
+  });
+}
+
 export function FilterConditions({
   tables,
   controlSizes,
   onChange,
+  onQueryChange,
   initialGroups,
+  initialGroupBy,
+  initialOrderBy,
+  previewSql,
+  previewLabel = "QUERY PREVIEW",
   showPreview = true,
 }: FilterConditionsProps) {
   const cw = { ...DEFAULT_CONTROL_SIZES, ...controlSizes };
@@ -77,30 +131,177 @@ export function FilterConditions({
     });
   }, [tables]);
 
-  const cloneGroups = (groups: RuleGroup[] | undefined) =>
-    groups?.length ? structuredClone(groups) : [];
+  const normalizeFieldValue = React.useCallback(
+    (raw: string) => {
+      const trimmed = raw.trim();
+      if (!trimmed) return "";
 
-  const serializedInitialRef = React.useRef<string | null>(null);
+      const direct = allFields.find((field) => field.value === trimmed);
+      if (direct) return direct.value;
 
-  const [rootGroups, _setRootGroups] = useState<RuleGroup[]>(() =>
-    cloneGroups(initialGroups)
+      const unquoted = trimmed.replace(/^"+|"+$/g, "");
+      const parts = unquoted.split(".");
+      const candidateColumn = (parts[parts.length - 1] || "").replace(/^"+|"+$/g, "");
+      if (!candidateColumn) return trimmed;
+
+      const matches = allFields.filter((field) =>
+        field.value.toLowerCase().endsWith(`.${candidateColumn.toLowerCase()}`)
+      );
+      if (matches.length === 1) return matches[0].value;
+
+      return trimmed;
+    },
+    [allFields]
+  );
+
+  const normalizeRuleNode = React.useCallback(
+    (node: RuleGroup | RuleCondition): RuleGroup | RuleCondition => {
+      if (node.type === "condition") {
+        return {
+          ...node,
+          field: normalizeFieldValue(node.field),
+          valueField: node.valueField ? normalizeFieldValue(node.valueField) : node.valueField,
+          secondaryValueField: node.secondaryValueField
+            ? normalizeFieldValue(node.secondaryValueField)
+            : node.secondaryValueField,
+        };
+      }
+
+      return {
+        ...node,
+        children: node.children.map((child) => normalizeRuleNode(child)) as Array<
+          RuleGroup | RuleCondition
+        >,
+      };
+    },
+    [normalizeFieldValue]
+  );
+
+  const [rootGroups, _setRootGroups] = useState<RuleGroup[]>(initialGroups || []);
+  const [activeTab, setActiveTab] = useState<"filters" | "grouping" | "sorting">("filters");
+  const [groupByItems, setGroupByItems] = useState<GroupByItem[]>(
+    (initialGroupBy ?? []).map((field) => ({
+      id: Math.random().toString(36).slice(2, 9),
+      field,
+    }))
+  );
+  const [orderByItems, setOrderByItems] = useState<OrderByItem[]>(
+    (initialOrderBy ?? []).map((value) => {
+      const match = value.trim().match(/^(.*?)(?:\s+(ASC|DESC))?$/i);
+      return {
+        id: Math.random().toString(36).slice(2, 9),
+        field: match?.[1]?.trim() ?? value,
+        direction: (match?.[2]?.toUpperCase() as SortDirection | undefined) ?? "ASC",
+      };
+    })
   );
 
   React.useEffect(() => {
-    if (initialGroups === undefined) return;
-    const serialized = JSON.stringify(initialGroups);
-    if (serialized === serializedInitialRef.current) return;
-    serializedInitialRef.current = serialized;
-    _setRootGroups(cloneGroups(initialGroups));
-  }, [initialGroups]);
+    if (initialGroups) {
+      const normalized = initialGroups.map((group) => normalizeRuleNode(group) as RuleGroup);
+      _setRootGroups((prev) => {
+        const prevSignature = prev.map((group) => serializeRuleNode(group)).join("|");
+        const nextSignature = normalized.map((group) => serializeRuleNode(group)).join("|");
+        return prevSignature === nextSignature ? prev : normalized;
+      });
+    }
+  }, [initialGroups, normalizeRuleNode]);
+
+  React.useEffect(() => {
+    const next = initialGroupBy ?? [];
+    setGroupByItems((prev) => {
+      const currentFields = prev.map((item) => item.field);
+      if (
+        currentFields.length === next.length &&
+        currentFields.every((field, index) => field === next[index])
+      ) {
+        return prev;
+      }
+      return next.map((field) => ({
+        id: Math.random().toString(36).slice(2, 9),
+        field: normalizeFieldValue(field),
+      }));
+    });
+  }, [initialGroupBy, normalizeFieldValue]);
+
+  React.useEffect(() => {
+    const next = (initialOrderBy ?? []).map((value) => {
+      const match = value.trim().match(/^(.*?)(?:\s+(ASC|DESC))?$/i);
+      return {
+        field: match?.[1]?.trim() ?? value,
+        direction: (match?.[2]?.toUpperCase() as SortDirection | undefined) ?? "ASC",
+      };
+    });
+    setOrderByItems((prev) => {
+      const same =
+        prev.length === next.length &&
+        prev.every(
+          (item, index) =>
+            item.field === next[index]?.field && item.direction === next[index]?.direction
+        );
+      if (same) return prev;
+      return next.map((item) => ({
+        id: Math.random().toString(36).slice(2, 9),
+        field: normalizeFieldValue(item.field),
+        direction: item.direction,
+      }));
+    });
+  }, [initialOrderBy, normalizeFieldValue]);
 
   const generateSQL = React.useCallback((node: RuleNode, level: number = 0): string => {
     const indent = "  ".repeat(level);
     if (node.type === "condition") {
-      const valStr = ["IS NULL", "IS NOT NULL"].includes(node.operator)
-        ? ""
-        : ` '${node.value}'`;
-      return `${indent}${node.field} ${node.operator}${valStr}`;
+      const formatLiteral = (raw: string) => {
+        const trimmed = raw.trim();
+        if (!trimmed) return "''";
+        if (
+          /^'.*'$/.test(trimmed) ||
+          /^-?\d+(\.\d+)?$/.test(trimmed) ||
+          /^(true|false|null)$/i.test(trimmed)
+        ) {
+          return trimmed;
+        }
+        return `'${trimmed.replace(/'/g, "''")}'`;
+      };
+
+      const resolveValue = (
+        mode: "literal" | "field" | undefined,
+        literal: string | undefined,
+        field: string | undefined,
+      ) => {
+        if (mode === "field" && field) return field;
+        return formatLiteral(literal ?? "");
+      };
+
+      const operator = node.operator.toUpperCase();
+      if (["IS NULL", "IS NOT NULL"].includes(operator)) {
+        return `${indent}${node.field} ${operator}`;
+      }
+      if (["BETWEEN", "NOT BETWEEN"].includes(operator)) {
+        return `${indent}${node.field} ${operator} ${resolveValue(
+          node.valueMode,
+          node.value,
+          node.valueField,
+        )} AND ${resolveValue(
+          node.secondaryValueMode,
+          node.secondaryValue,
+          node.secondaryValueField,
+        )}`;
+      }
+      if (["IN", "NOT IN"].includes(operator)) {
+        const values = node.value
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean)
+          .map((item) => formatLiteral(item))
+          .join(", ");
+        return `${indent}${node.field} ${operator} (${values || "''"})`;
+      }
+      return `${indent}${node.field} ${operator} ${resolveValue(
+        node.valueMode,
+        node.value,
+        node.valueField,
+      )}`;
     }
 
     if (node.children.length === 0) return `${indent}-- (Empty Group)`;
@@ -123,10 +324,41 @@ export function FilterConditions({
     onChangeRef.current = onChange;
   }, [onChange]);
 
+  const onQueryChangeRef = React.useRef(onQueryChange);
+  React.useEffect(() => {
+    onQueryChangeRef.current = onQueryChange;
+  }, [onQueryChange]);
+
   React.useEffect(() => {
     const sql = rootGroups.map((g) => generateSQL(g, 0)).join("\n\nAND\n\n");
     onChangeRef.current?.(rootGroups, sql);
   }, [rootGroups, generateSQL]);
+
+  const groupBySql = useMemo(
+    () => groupByItems.map((item) => item.field).filter(Boolean).join(", "),
+    [groupByItems]
+  );
+
+  const orderBySql = useMemo(
+    () =>
+      orderByItems
+        .filter((item) => item.field)
+        .map((item) => `${item.field} ${item.direction}`)
+        .join(", "),
+    [orderByItems]
+  );
+
+  React.useEffect(() => {
+    const whereSql = rootGroups.map((g) => generateSQL(g, 0)).join("\n\nAND\n\n");
+    onQueryChangeRef.current?.({
+      groups: rootGroups,
+      whereSql,
+      groupBy: groupByItems,
+      orderBy: orderByItems,
+      groupBySql,
+      orderBySql,
+    });
+  }, [generateSQL, groupByItems, groupBySql, orderByItems, orderBySql, rootGroups]);
 
   const setRootGroups = (valOrUpdater: React.SetStateAction<RuleGroup[]>) => {
     _setRootGroups(valOrUpdater);
@@ -219,6 +451,7 @@ export function FilterConditions({
           field: allFields[0]?.value || "",
           operator: "=",
           value: "",
+          valueMode: "literal",
         }) as RuleGroup[]
     );
   };
@@ -245,6 +478,47 @@ export function FilterConditions({
         children: [],
       },
     ]);
+  };
+
+  const handleAddGroupBy = () => {
+    setGroupByItems((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        field: allFields[0]?.value || "",
+      },
+    ]);
+  };
+
+  const handleUpdateGroupBy = (id: string, field: string) => {
+    setGroupByItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, field } : item))
+    );
+  };
+
+  const handleDeleteGroupBy = (id: string) => {
+    setGroupByItems((prev) => prev.filter((item) => item.id !== id));
+  };
+
+  const handleAddOrderBy = () => {
+    setOrderByItems((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        field: allFields[0]?.value || "",
+        direction: "ASC",
+      },
+    ]);
+  };
+
+  const handleUpdateOrderBy = (id: string, updates: Partial<OrderByItem>) => {
+    setOrderByItems((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...updates } : item))
+    );
+  };
+
+  const handleDeleteOrderBy = (id: string) => {
+    setOrderByItems((prev) => prev.filter((item) => item.id !== id));
   };
 
   const renderNode = (node: RuleNode, prefix: string) => {
@@ -401,6 +675,14 @@ export function FilterConditions({
               { label: "≠", value: "!=" },
               { label: ">", value: ">" },
               { label: "<", value: "<" },
+              { label: "≥", value: ">=" },
+              { label: "≤", value: "<=" },
+              { label: "LIKE", value: "LIKE" },
+              { label: "ILIKE", value: "ILIKE" },
+              { label: "IN", value: "IN" },
+              { label: "NOT IN", value: "NOT IN" },
+              { label: "BETWEEN", value: "BETWEEN" },
+              { label: "NOT BETWEEN", value: "NOT BETWEEN" },
               { label: "IS NULL", value: "IS NULL" },
               { label: "IS NOT NULL", value: "IS NOT NULL" },
             ]}
@@ -412,21 +694,109 @@ export function FilterConditions({
           />
         </Box>
 
-        <Box
-          sx={{
-            width: "100%",
-            maxWidth: cw.valueMaxPx,
-            flexShrink: 0,
-          }}
-        >
-          <FocusInput
-            value={node.value}
-            placeholder="value"
-            onChange={(val) => handleUpdateCondition(node.id, { value: val })}
-            fullWidth
-            sx={inputDensitySx}
-          />
-        </Box>
+        {!["IS NULL", "IS NOT NULL"].includes(node.operator.toUpperCase()) ? (
+          <>
+            <Box sx={{ width: 92, flexShrink: 0 }}>
+              <FocusSelect
+                options={[
+                  { label: "Value", value: "literal" },
+                  { label: "Column", value: "field" },
+                ]}
+                value={node.valueMode ?? "literal"}
+                onChange={(val) =>
+                  handleUpdateCondition(node.id, {
+                    valueMode: val as "literal" | "field",
+                    valueField:
+                      val === "field" ? node.valueField ?? allFields[0]?.value ?? "" : "",
+                  })
+                }
+                fullWidth
+                sx={{ width: "100%", ...selectDensitySx }}
+              />
+            </Box>
+
+            <Box
+              sx={{
+                width: "100%",
+                maxWidth: cw.valueMaxPx,
+                flexShrink: 0,
+              }}
+            >
+              {node.valueMode === "field" ? (
+                <FocusSelect
+                  options={allFields}
+                  value={node.valueField ?? ""}
+                  placeholder="Select column…"
+                  onChange={(val) => handleUpdateCondition(node.id, { valueField: String(val) })}
+                  fullWidth
+                  sx={{ maxWidth: "100%", ...selectDensitySx }}
+                />
+              ) : (
+                <FocusInput
+                  value={node.value}
+                  placeholder={["IN", "NOT IN"].includes(node.operator.toUpperCase()) ? "v1, v2, v3" : "value"}
+                  onChange={(val) => handleUpdateCondition(node.id, { value: val })}
+                  fullWidth
+                  sx={inputDensitySx}
+                />
+              )}
+            </Box>
+
+            {["BETWEEN", "NOT BETWEEN"].includes(node.operator.toUpperCase()) ? (
+              <>
+                <Typography sx={{ fontSize: 12, color: "#64748b", flexShrink: 0 }}>
+                  and
+                </Typography>
+                <Box sx={{ width: 92, flexShrink: 0 }}>
+                  <FocusSelect
+                    options={[
+                      { label: "Value", value: "literal" },
+                      { label: "Column", value: "field" },
+                    ]}
+                    value={node.secondaryValueMode ?? "literal"}
+                    onChange={(val) =>
+                      handleUpdateCondition(node.id, {
+                        secondaryValueMode: val as "literal" | "field",
+                        secondaryValueField:
+                          val === "field" ? node.secondaryValueField ?? allFields[0]?.value ?? "" : "",
+                      })
+                    }
+                    fullWidth
+                    sx={{ width: "100%", ...selectDensitySx }}
+                  />
+                </Box>
+                <Box
+                  sx={{
+                    width: "100%",
+                    maxWidth: cw.valueMaxPx,
+                    flexShrink: 0,
+                  }}
+                >
+                  {node.secondaryValueMode === "field" ? (
+                    <FocusSelect
+                      options={allFields}
+                      value={node.secondaryValueField ?? ""}
+                      placeholder="Select column…"
+                      onChange={(val) =>
+                        handleUpdateCondition(node.id, { secondaryValueField: String(val) })
+                      }
+                      fullWidth
+                      sx={{ maxWidth: "100%", ...selectDensitySx }}
+                    />
+                  ) : (
+                    <FocusInput
+                      value={node.secondaryValue ?? ""}
+                      placeholder="second value"
+                      onChange={(val) => handleUpdateCondition(node.id, { secondaryValue: val })}
+                      fullWidth
+                      sx={inputDensitySx}
+                    />
+                  )}
+                </Box>
+              </>
+            ) : null}
+          </>
+        ) : null}
 
         <Box
           className="filter-row-actions"
@@ -453,12 +823,35 @@ export function FilterConditions({
     );
   };
 
-
   const fullSql = rootGroups.map((g) => generateSQL(g, 0)).join("\n\nAND\n\n");
+  const resolvedPreviewSql =
+    previewSql?.trim() ||
+    [
+      fullSql ? `WHERE\n${fullSql}` : "",
+      groupBySql ? `GROUP BY\n  ${groupBySql}` : "",
+      orderBySql ? `ORDER BY\n  ${orderBySql}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
   const rootCount = rootGroups.length;
   const rootBadgeLabel =
     rootCount === 1 ? "1 root group" : `${rootCount} root groups`;
+  const groupingBadgeLabel =
+    groupByItems.length === 1 ? "1 grouping" : `${groupByItems.length} groupings`;
+  const sortingBadgeLabel =
+    orderByItems.length === 1 ? "1 sort" : `${orderByItems.length} sorts`;
+
+  const tabButtonSx = (active: boolean): React.CSSProperties => ({
+    border: "none",
+    background: active ? "#eff6ff" : "transparent",
+    color: active ? "#1d4ed8" : "#64748b",
+    borderRadius: 999,
+    padding: "6px 12px",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  });
 
   return (
     <Box className="filter-section" sx={{ backgroundColor: "#ffffff" }}>
@@ -489,21 +882,48 @@ export function FilterConditions({
             Filter Conditions
           </Typography>
           <Typography sx={{ fontSize: 12, color: "#64748b" }}>
-            Hierarchical WHERE clause builder
+            Query builder
           </Typography>
-          <span className="canvas-area__badge">{rootBadgeLabel}</span>
+          <span className="canvas-area__badge">
+            {activeTab === "filters"
+              ? rootBadgeLabel
+              : activeTab === "grouping"
+                ? groupingBadgeLabel
+                : sortingBadgeLabel}
+          </span>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <button type="button" style={tabButtonSx(activeTab === "filters")} onClick={() => setActiveTab("filters")}>
+              Filters
+            </button>
+            <button type="button" style={tabButtonSx(activeTab === "grouping")} onClick={() => setActiveTab("grouping")}>
+              Grouping
+            </button>
+            <button type="button" style={tabButtonSx(activeTab === "sorting")} onClick={() => setActiveTab("sorting")}>
+              Sorting
+            </button>
+          </Box>
         </Box>
         <button
           type="button"
           className="canvas-area__add-btn"
-          onClick={handleAddRootGroup}
+          onClick={
+            activeTab === "filters"
+              ? handleAddRootGroup
+              : activeTab === "grouping"
+                ? handleAddGroupBy
+                : handleAddOrderBy
+          }
           disabled={tables.length === 0}
           style={{
             opacity: tables.length === 0 ? 0.5 : 1,
             cursor: tables.length === 0 ? "not-allowed" : "pointer"
           }}
         >
-          + Add Group
+          {activeTab === "filters"
+            ? "+ Add Group"
+            : activeTab === "grouping"
+              ? "+ Add Grouping"
+              : "+ Add Sort"}
         </button>
       </Box>
 
@@ -516,6 +936,7 @@ export function FilterConditions({
             </div>
           </div>
         ) : (
+          activeTab === "filters" ? (
           <>
             <Box
               sx={{
@@ -537,14 +958,134 @@ export function FilterConditions({
               {rootGroups.map((group, idx) => renderNode(group, `${idx + 1}`))}
             </Box>
           </>
+          ) : activeTab === "grouping" ? (
+            <Box sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.25 }}>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "52px minmax(0, 320px) auto",
+                  gap: 1.25,
+                  alignItems: "center",
+                  py: 1.25,
+                  borderBottom: "1px solid #f1f5f9",
+                  color: "#94a3b8",
+                  fontSize: 10,
+                  fontWeight: 800,
+                  letterSpacing: "0.08em",
+                }}
+              >
+                <Box sx={{ textAlign: "center" }}>#</Box>
+                <Box>GROUP BY FIELD</Box>
+                <Box />
+              </Box>
+              {groupByItems.map((item, idx) => (
+                <Box
+                  key={item.id}
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: "52px minmax(0, 320px) auto",
+                    gap: 1.25,
+                    alignItems: "center",
+                    minHeight: 40,
+                  }}
+                >
+                  <Box sx={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
+                    {idx + 1}
+                  </Box>
+                  <FocusSelect
+                    options={allFields}
+                    value={item.field}
+                    placeholder="Select field…"
+                    onChange={(val) => handleUpdateGroupBy(item.id, String(val))}
+                    fullWidth
+                    sx={{ maxWidth: 320, ...selectDensitySx }}
+                  />
+                  <FocusButton
+                    variant="text"
+                    size="small"
+                    rounded="full"
+                    onClick={() => handleDeleteGroupBy(item.id)}
+                    customColor="#ef4444"
+                  >
+                    ✕
+                  </FocusButton>
+                </Box>
+              ))}
+            </Box>
+          ) : (
+            <Box sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.25 }}>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "52px minmax(0, 320px) 120px auto",
+                  gap: 1.25,
+                  alignItems: "center",
+                  py: 1.25,
+                  borderBottom: "1px solid #f1f5f9",
+                  color: "#94a3b8",
+                  fontSize: 10,
+                  fontWeight: 800,
+                  letterSpacing: "0.08em",
+                }}
+              >
+                <Box sx={{ textAlign: "center" }}>#</Box>
+                <Box>SORT FIELD</Box>
+                <Box>DIRECTION</Box>
+                <Box />
+              </Box>
+              {orderByItems.map((item, idx) => (
+                <Box
+                  key={item.id}
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: "52px minmax(0, 320px) 120px auto",
+                    gap: 1.25,
+                    alignItems: "center",
+                    minHeight: 40,
+                  }}
+                >
+                  <Box sx={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
+                    {idx + 1}
+                  </Box>
+                  <FocusSelect
+                    options={allFields}
+                    value={item.field}
+                    placeholder="Select field…"
+                    onChange={(val) => handleUpdateOrderBy(item.id, { field: String(val) })}
+                    fullWidth
+                    sx={{ maxWidth: 320, ...selectDensitySx }}
+                  />
+                  <FocusSelect
+                    options={[
+                      { label: "Ascending", value: "ASC" },
+                      { label: "Descending", value: "DESC" },
+                    ]}
+                    value={item.direction}
+                    onChange={(val) => handleUpdateOrderBy(item.id, { direction: val as SortDirection })}
+                    fullWidth
+                    sx={{ width: 120, ...selectDensitySx }}
+                  />
+                  <FocusButton
+                    variant="text"
+                    size="small"
+                    rounded="full"
+                    onClick={() => handleDeleteOrderBy(item.id)}
+                    customColor="#ef4444"
+                  >
+                    ✕
+                  </FocusButton>
+                </Box>
+              ))}
+            </Box>
+          )
         )}
       </Box>
 
       {showPreview && tables.length > 0 && (
         <Box className="filter-preview">
-          <div className="filter-preview__title">WHERE CLAUSE PREVIEW</div>
+          <div className="filter-preview__title">{previewLabel}</div>
           <pre className="filter-preview__code">
-            {fullSql || "-- No conditions defined"}
+            {resolvedPreviewSql || "-- No query clauses defined"}
           </pre>
         </Box>
       )}

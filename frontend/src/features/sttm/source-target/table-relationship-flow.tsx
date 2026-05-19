@@ -19,7 +19,7 @@ import LinkIcon from "@mui/icons-material/Link";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import type { Column, DerivedSource, JoinConfig, TableMeta } from "@/features/sttm/types/sttm.types";
 
-import { FilterConditions, type OrderByItem, type RuleGroup } from "./filter-conditions";
+import { FilterConditions } from "./filter-conditions";
 import { JoinModal } from "./join-modal";
 import { TableEdge } from "./table-edge";
 import { TableNode, type TableNodeData } from "./table-node";
@@ -88,21 +88,6 @@ function normalizeColumns(
   }));
 }
 
-function indentSqlBlock(sqlText: string) {
-  return sqlText
-    .split("\n")
-    .map((line) => `  ${line}`)
-    .join("\n");
-}
-
-function buildAlias(table: TableMeta, index: number) {
-  const base = (table.name ?? `t${index + 1}`)
-    .replace(/[^A-Za-z0-9]+/g, "_")
-    .replace(/^_+|_+$/g, "")
-    .toLowerCase();
-  return (base || `t${index + 1}`).slice(0, 18);
-}
-
 type TableRelationshipFlowProps = {
   tables?: TableMeta[];
   joins?: JoinConfig[];
@@ -136,16 +121,14 @@ export default function SttmTableRelationshipFlow({
     derivedSources,
     sourceAttributeGroups,
     updateDerivedSource,
+    setSourceFilterConditions,
+    sourceFilterGroups,
   } = useSttmBuilderContext();
 
   const [editingDerivedSource, setEditingDerivedSource] = useState<DerivedSource | null>(null);
   const [isDerivedModalOpen, setIsDerivedModalOpen] = useState(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
   const [editingJoin, setEditingJoin] = useState<JoinConfig | null>(null);
-  const [filterGroups, setFilterGroups] = useState<RuleGroup[]>([]);
-  const [filterSql, setFilterSql] = useState("");
-  const [groupByFields, setGroupByFields] = useState<string[]>([]);
-  const [orderByItems, setOrderByItems] = useState<OrderByItem[]>([]);
   const effectiveDrivingTableId = controlledDrivingTableId ?? drivingTableId;
 
   const contextTables: TableMeta[] = useMemo(() => {
@@ -421,95 +404,6 @@ export default function SttmTableRelationshipFlow({
 
   const joinCount = currentJoins.length;
   const joinBadgeLabel = joinCount === 1 ? "1 join" : `${joinCount} joins`;
-  const tableAliasById = useMemo(
-    () =>
-      Object.fromEntries(
-        activeTables.map((table, index) => [String(table.id), buildAlias(table, index)])
-      ) as Record<string, string>,
-    [activeTables]
-  );
-
-  const sqlPreview = useMemo(() => {
-    const drivingSource =
-      activeTables.find((table) => table.id === effectiveDrivingTableId) ?? activeTables[0] ?? null;
-    const derivedSourceMap = new Map((derivedSources || []).map((source) => [source.id, source]));
-    const renderSourceReference = (table: TableMeta, alias: string) => {
-      const derivedSource = derivedSourceMap.get(String(table.id));
-      if (!derivedSource) {
-        return `${table.database}.${table.schema}.${table.name} ${alias}`;
-      }
-      const sqlText = derivedSource.sqlText?.trim() || `SELECT * FROM ${table.name}`;
-      return `(\n${indentSqlBlock(sqlText)}\n) ${alias}`;
-    };
-
-    const lines = ["SELECT"];
-    if (activeTables.length > 0) {
-      lines.push(
-        activeTables
-          .map((table) => {
-            const alias = tableAliasById[String(table.id)] ?? "t";
-            return `  ${alias}.*`;
-          })
-          .join(",\n")
-      );
-    } else {
-      lines.push("  -- Select one or more source tables");
-    }
-
-    if (drivingSource) {
-      lines.push(
-        `FROM ${renderSourceReference(
-          drivingSource,
-          tableAliasById[String(drivingSource.id)] ?? "t"
-        )}`
-      );
-    }
-
-    for (const join of currentJoins) {
-      const leftTable = activeTables.find((table) => table.id === join.leftTableId);
-      const rightTable = activeTables.find((table) => table.id === join.rightTableId);
-      if (!leftTable || !rightTable || !join.conditions?.length) continue;
-      const rightAlias = tableAliasById[String(rightTable.id)] ?? "t";
-      const conditions = join.conditions
-        .filter((condition) => condition.leftColumn && condition.rightColumn)
-        .map((condition) => {
-          const leftAlias = tableAliasById[String(leftTable.id)] ?? "t";
-          return `${leftAlias}.${condition.leftColumn} ${condition.operator ?? "="} ${rightAlias}.${condition.rightColumn}`;
-        });
-      if (!conditions.length) continue;
-      lines.push(`${join.joinType ?? "INNER"} JOIN ${renderSourceReference(rightTable, rightAlias)}`);
-      lines.push(`  ON ${conditions.join("\n  AND ")}`);
-    }
-
-    if (filterSql.trim()) {
-      lines.push("WHERE");
-      lines.push(`  ${filterSql.split("\n").join("\n  ")}`);
-    }
-    if (groupByFields.length > 0) {
-      lines.push("GROUP BY");
-      lines.push(`  ${groupByFields.join(",\n  ")}`);
-    }
-    if (orderByItems.length > 0) {
-      lines.push("ORDER BY");
-      lines.push(
-        `  ${orderByItems
-          .filter((item) => item.field)
-          .map((item) => `${item.field} ${item.direction}`)
-          .join(",\n  ")}`
-      );
-    }
-
-    return lines.filter(Boolean).join("\n");
-  }, [
-    activeTables,
-    currentJoins,
-    derivedSources,
-    effectiveDrivingTableId,
-    filterSql,
-    groupByFields,
-    orderByItems,
-    tableAliasById,
-  ]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -594,17 +488,8 @@ export default function SttmTableRelationshipFlow({
       {showFilters ? (
         <FilterConditions
           tables={activeTables}
-          initialGroups={filterGroups}
-          initialGroupBy={groupByFields}
-          initialOrderBy={orderByItems.map((item) => `${item.field} ${item.direction}`)}
-          previewSql={sqlPreview}
-          previewLabel="LOWEST-LEVEL SQL PREVIEW"
-          onQueryChange={({ groups, whereSql, groupBy, orderBy }) => {
-            setFilterGroups(groups);
-            setFilterSql(whereSql);
-            setGroupByFields(groupBy.map((item) => item.field).filter(Boolean));
-            setOrderByItems(orderBy.filter((item) => item.field));
-          }}
+          initialGroups={sourceFilterGroups}
+          onChange={(groups, sql) => setSourceFilterConditions({ groups, sql })}
         />
       ) : null}
 

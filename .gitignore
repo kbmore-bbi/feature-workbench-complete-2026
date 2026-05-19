@@ -17,6 +17,8 @@ __pycache__/
 *.md
 !CLIENT_SPCS_DEPLOYMENT.md
 !SPCS_WORKBENCH_INTEGRATION_PROGRESS.md
+!docs/payload-standard.md
+!infra/snowflake/skills/**/*.md
 node_modules/
 frontend/node_modules/
 frontend/.next/

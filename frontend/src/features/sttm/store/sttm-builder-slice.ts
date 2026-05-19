@@ -12,6 +12,7 @@ import type {
   DerivedSource,
   JoinConfig,
   MappingSuggestion,
+  RuleGroup,
   SchemaNode,
   SourceTargetInfo,
   TableNode,
@@ -139,6 +140,9 @@ type SttmBuilderState = {
   drivingTableId: string | null;
   relationships: JoinConfig[];
   derivedSources: DerivedSource[];
+
+  sourceFilterSql: string;
+  sourceFilterGroups: RuleGroup[];
 };
 
 const initialLoadState: BuilderLoadState = {
@@ -188,6 +192,9 @@ const initialState: SttmBuilderState = {
   drivingTableId: null,
   relationships: [],
   derivedSources: [],
+
+  sourceFilterSql: "",
+  sourceFilterGroups: [],
 };
 
 // ─── async thunks ──────────────────────────────────────────────────
@@ -589,10 +596,20 @@ export const sttmBuilderSlice = createSlice({
       state.relationships = [];
       state.sourceAttributeGroups = [];
       state.mappingSuggestions = [];
+      state.sourceFilterSql = "";
+      state.sourceFilterGroups = [];
       state.derivedSources = state.derivedSources.map((source) => ({
         ...source,
         isSelected: false,
       }));
+    },
+
+    setSourceFilterConditions: (
+      state,
+      action: PayloadAction<{ sql: string; groups: RuleGroup[] }>
+    ) => {
+      state.sourceFilterSql = action.payload.sql;
+      state.sourceFilterGroups = action.payload.groups;
     },
 
     clearTargets: (state) => {
@@ -768,6 +785,8 @@ export const sttmBuilderSlice = createSlice({
           state.sourceAttributeGroups = [];
           state.relationships = [];
           state.mappingSuggestions = [];
+          state.sourceFilterSql = "";
+          state.sourceFilterGroups = [];
         } else {
           state.targets = flatTables;
           state.targetInfo = { dbName: databaseName, schemaName };
@@ -889,6 +908,7 @@ export const {
   clearTargets,
   setDrivingTable,
   setRelationships,
+  setSourceFilterConditions,
   addDerivedSource,
   updateDerivedSource,
   removeDerivedSource,

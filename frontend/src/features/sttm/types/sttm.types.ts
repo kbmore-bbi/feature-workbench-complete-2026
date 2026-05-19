@@ -51,12 +51,43 @@ export interface JoinConfig {
   }[];
 }
 
+/** Hierarchical filter / WHERE builder (`FilterConditions`). */
+export type RuleLogic = "AND" | "OR" | "NOT";
+
+export type RuleCondition = {
+  id: string;
+  type: "condition";
+  field: string;
+  operator: string;
+  value: string;
+  valueMode?: "literal" | "field";
+  valueField?: string;
+  secondaryValue?: string;
+  secondaryValueMode?: "literal" | "field";
+  secondaryValueField?: string;
+};
+
+export type RuleGroup = {
+  id: string;
+  type: "group";
+  logic: RuleLogic;
+  children: (RuleGroup | RuleCondition)[];
+};
+
+export type RuleNode = RuleGroup | RuleCondition;
+
 export interface DerivedSource {
   id: string;
   sourceName: string;
   isSelected?: boolean;
   derivedSourceIds?: string[];
   sqlText?: string;
+  semanticBundleId?: string | null;
+  semanticBundleLabel?: string | null;
+  semanticViewName?: string | null;
+  semanticLevel?: string | null;
+  upstreamHash?: string | null;
+  lineageDepth?: number;
   alias?: string;
   drivingTableId?: string;
   tableIds?: string[];
@@ -134,8 +165,25 @@ export type MappingSuggestion = {
 };
 
 export type ChatMessage = {
+  id?: string;
   role: "user" | "assistant";
   content: string;
+  status?: "completed" | "needs_input" | "failed";
+  options?: string[];
+  isStreaming?: boolean;
+  traceSteps?: string[];
+};
+
+export type PendingDerivedSourceDraft = {
+  sqlText: string;
+  sourceNameSuggestion?: string | null;
+  semanticViewName?: string | null;
+  semanticBundleLabel?: string | null;
+  previewRows?: Array<Record<string, unknown>>;
+  selectedColumnsByTable?: Record<string, string[]> | null;
+  selectedTableIds: string[];
+  drivingTableId?: string | null;
+  requestSummary?: string | null;
 };
 
 export type LoadStatus = "idle" | "loading" | "success" | "error";
@@ -186,6 +234,15 @@ export type SttmBuilderContextValue = {
   // Chat
   chatMessages: ChatMessage[];
   chatLoading: boolean;
+  semanticBundleId: string | null;
+  semanticBundleLabel: string | null;
+  semanticLevel: string | null;
+  semanticStatus: string | null;
+  semanticViewName: string | null;
+  semanticContextSummary: Record<string, unknown> | null;
+  datahubStatus: string | null;
+  pendingDerivedSourceDraft: PendingDerivedSourceDraft | null;
+  derivedSourceDraftRequested: boolean;
 
   // Session
   session: UserSession | null;
@@ -208,6 +265,9 @@ export type SttmBuilderContextValue = {
   // Actions — AI
   runAutoMap: () => void;
   sendChatMessage: (message: string) => void;
+  openPendingDerivedSourceDraft: () => void;
+  acknowledgePendingDerivedSourceDraft: () => void;
+  dismissPendingDerivedSourceDraft: () => void;
 
   // Computed
   selectedSourceCount: number;
@@ -223,4 +283,10 @@ export type SttmBuilderContextValue = {
   updateDerivedSource: (source: DerivedSource) => void;
   removeDerivedSource: (id: string) => void;
   toggleDerivedSource: (id: string) => void;
+
+  /** SQL fragment from Step 1 filter conditions (`FilterConditions`). */
+  sourceFilterSql: string;
+  /** Parsed filter tree (keeps UI + preview when navigating away and back). */
+  sourceFilterGroups: RuleGroup[];
+  setSourceFilterConditions: (payload: { sql: string; groups: RuleGroup[] }) => void;
 };

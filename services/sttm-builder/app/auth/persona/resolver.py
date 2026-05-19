@@ -39,7 +39,39 @@ def _local_dev_principal(
     )
 
 
+def _local_dev_persona_from_settings(settings: Settings) -> AppPersona:
+    active_role = (settings.snowflake_role or "").strip().upper()
+
+    if active_role == (settings.app_role_admin or "").strip().upper():
+        return AppPersona.ADMIN
+    if active_role == (settings.app_role_publisher or "").strip().upper():
+        return AppPersona.PUBLISHER
+    if active_role == (settings.app_role_viewer or "").strip().upper():
+        return AppPersona.VIEWER
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            "LOCAL_DEV_BYPASS_METADATA is enabled, but SNOWFLAKE_ROLE does not match "
+            "APP_ROLE_ADMIN / APP_ROLE_PUBLISHER / APP_ROLE_VIEWER."
+        ),
+    )
+
+
 def resolve_and_upsert(context: dict[str, Any], settings: Settings) -> CurrentPrincipal:
+    is_local_dev = settings.local_dev_auth_enabled and not context["snowflake_user_token"]
+
+    if is_local_dev and settings.local_dev_bypass_metadata:
+        snowflake_user = settings.snowflake_user or context["email"] or "local-user"
+        email = context["email"] or settings.local_dev_user_email or snowflake_user
+        persona = _local_dev_persona_from_settings(settings)
+
+        return _local_dev_principal(
+            snowflake_user=snowflake_user,
+            email=email,
+            persona=persona,
+        )
+
     with get_user_connection(context["snowflake_user_token"], settings) as connection:
         cursor = connection.cursor(DictCursor)
         cursor.execute(
@@ -67,14 +99,6 @@ def resolve_and_upsert(context: dict[str, Any], settings: Settings) -> CurrentPr
         email = context["email"] or snowflake_user
         display_name = snowflake_user
         cursor.close()
-
-    is_local_dev = settings.local_dev_auth_enabled and not context["snowflake_user_token"]
-    if is_local_dev and settings.local_dev_bypass_metadata:
-        return _local_dev_principal(
-            snowflake_user=snowflake_user,
-            email=email,
-            persona=persona,
-        )
 
     # App metadata is owned by the service. Caller-rights still determines the
     # persona above, but users should not need direct write grants on TBL_USERS.

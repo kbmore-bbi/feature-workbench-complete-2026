@@ -17,13 +17,18 @@ import {
   clearTargets as clearTargetsAction,
   setDrivingTable as setDrivingTableAction,
   setRelationships as setRelationshipsAction,
+  setSourceFilterConditions as setSourceFilterConditionsAction,
   addDerivedSource as addDerivedSourceAction,
   updateDerivedSource as updateDerivedSourceAction,
   removeDerivedSource as removeDerivedSourceAction,
   toggleDerivedSource as toggleDerivedSourceAction,
+  openPendingDerivedSourceDraft as openPendingDerivedSourceDraftAction,
+  acknowledgePendingDerivedSourceDraft as acknowledgePendingDerivedSourceDraftAction,
+  dismissPendingDerivedSourceDraft as dismissPendingDerivedSourceDraftAction,
 } from "@/features/sttm/store/sttm-builder-slice";
 import type {
   DerivedSource,
+  RuleGroup,
   SelectionSide,
   SttmBuilderContextValue as ContextValue,
 } from "@/features/sttm/types/sttm.types";
@@ -72,6 +77,15 @@ export function SttmBuilderProvider({
       // Chat
       chatMessages: state.chatMessages,
       chatLoading: state.chatLoading,
+      semanticBundleId: state.semanticBundleId,
+      semanticBundleLabel: state.semanticBundleLabel,
+      semanticLevel: state.semanticLevel,
+      semanticStatus: state.semanticStatus,
+      semanticViewName: state.semanticViewName,
+      semanticContextSummary: state.semanticContextSummary,
+      datahubStatus: state.datahubStatus,
+      pendingDerivedSourceDraft: state.pendingDerivedSourceDraft,
+      derivedSourceDraftRequested: state.derivedSourceDraftRequested,
 
       // Session
       session: state.session,
@@ -129,6 +143,15 @@ export function SttmBuilderProvider({
       sendChatMessage: (message: string) => {
         dispatch(sendChatMessageThunk(message));
       },
+      openPendingDerivedSourceDraft: () => {
+        dispatch(openPendingDerivedSourceDraftAction());
+      },
+      acknowledgePendingDerivedSourceDraft: () => {
+        dispatch(acknowledgePendingDerivedSourceDraftAction());
+      },
+      dismissPendingDerivedSourceDraft: () => {
+        dispatch(dismissPendingDerivedSourceDraftAction());
+      },
 
       // Computed
       selectedSourceCount: state.sources.filter((t) => t.isSelected).length,
@@ -151,6 +174,11 @@ export function SttmBuilderProvider({
         dispatch(removeDerivedSourceAction({ id })),
       toggleDerivedSource: (id: string) =>
         dispatch(toggleDerivedSourceAction({ id })),
+
+      sourceFilterSql: state.sourceFilterSql,
+      sourceFilterGroups: state.sourceFilterGroups,
+      setSourceFilterConditions: (payload: { sql: string; groups: RuleGroup[] }) =>
+        dispatch(setSourceFilterConditionsAction(payload)),
     };
   }, [state, dispatch]);
 

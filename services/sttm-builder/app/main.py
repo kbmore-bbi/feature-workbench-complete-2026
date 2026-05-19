@@ -29,6 +29,10 @@ if _settings.cors_allowed_origins:
         if _settings.cors_allowed_origins.strip() == "*"
         else [o.strip() for o in _settings.cors_allowed_origins.split(",") if o.strip()]
     )
+    if _settings.local_dev_auth_enabled:
+        for origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+            if origin not in _origins:
+                _origins.append(origin)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_origins,

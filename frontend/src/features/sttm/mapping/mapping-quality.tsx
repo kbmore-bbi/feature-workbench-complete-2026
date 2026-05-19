@@ -1,7 +1,95 @@
 "use client";
 
-import { useState } from "react";
-import { Box, Button, LinearProgress, Paper, Typography } from "@mui/material";
+import { useMemo, useState, type ReactNode } from "react";
+import {
+  Box,
+  Button,
+  LinearProgress,
+  Paper,
+  Typography,
+} from "@mui/material";
+import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
+
+const TOKEN_RE =
+  /('(?:\\.|[^'])*')|\b(INSERT|INTO|SELECT|FROM|AS|WHERE|AND|OR|NOT|NULL|INNER|LEFT|RIGHT|FULL|JOIN|ON)\b/gi;
+
+function indentBlock(text: string, prefix: string) {
+  return text
+    .split("\n")
+    .map((line) => (line.trim() ? `${prefix}${line}` : line))
+    .join("\n");
+}
+
+function highlightSqlLine(line: string): ReactNode {
+  if (/^\s*--/.test(line)) {
+    return (
+      <span style={{ color: "#64748b", fontStyle: "italic" }}>{line}</span>
+    );
+  }
+
+  const parts: ReactNode[] = [];
+  let pos = 0;
+  let match: RegExpExecArray | null;
+  const re = new RegExp(TOKEN_RE.source, "gi");
+  while ((match = re.exec(line)) !== null) {
+    if (match.index > pos) {
+      parts.push(
+        <span key={`t-${pos}`} style={{ color: "#e2e8f0" }}>
+          {line.slice(pos, match.index)}
+        </span>
+      );
+    }
+    const token = match[0];
+    if (token.startsWith("'")) {
+      parts.push(
+        <span key={`s-${match.index}`} style={{ color: "#fcd34d" }}>
+          {token}
+        </span>
+      );
+    } else {
+      parts.push(
+        <span key={`k-${match.index}`} style={{ color: "#fb7185", fontWeight: 600 }}>
+          {token}
+        </span>
+      );
+    }
+    pos = match.index + token.length;
+  }
+  if (pos < line.length) {
+    parts.push(
+      <span key="t-end" style={{ color: "#e2e8f0" }}>
+        {line.slice(pos)}
+      </span>
+    );
+  }
+  return parts.length ? parts : line;
+}
+
+function SqlHighlightedBlock({ sql }: { sql: string }) {
+  const lines = sql.split("\n");
+  return (
+    <Box
+      component="pre"
+      sx={{
+        m: 0,
+        p: 0,
+        fontFamily:
+          "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+        fontSize: "12px",
+        lineHeight: 1.55,
+        whiteSpace: "pre-wrap",
+        wordBreak: "break-word",
+      }}
+    >
+      {lines.map((line, idx) => (
+        <span key={idx}>
+          {highlightSqlLine(line)}
+          {idx < lines.length - 1 ? "\n" : null}
+        </span>
+      ))}
+    </Box>
+  );
+}
 
 type MappingQualityPanelProps = {
   mappedCount?: number;
@@ -17,6 +105,48 @@ export default function MappingQualityPanel({
   onRunValidation,
 }: MappingQualityPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
+
+  const { targets, targetAttributeGroup, sourceFilterSql } =
+    useSttmBuilderContext();
+
+  const selectedTargetQualifiedName = useMemo(() => {
+    return (
+      targets.find((t) => t.isSelected)?.qualifiedName ??
+      targetAttributeGroup?.qualifiedName ??
+      null
+    );
+  }, [targets, targetAttributeGroup]);
+
+  const insertColumnName = useMemo(() => {
+    const first = targetAttributeGroup?.columns?.find((c) => c.name)?.name;
+    return (typeof first === "string" && first.trim()) || "ORDER_ID";
+  }, [targetAttributeGroup]);
+
+  const generatedSql = useMemo(() => {
+    const targetQualified = selectedTargetQualifiedName?.trim() ?? "DWH.FACT_SALES_UNIFIED";
+    const today = new Date().toISOString().slice(0, 10);
+
+    const hardcodedSelect = `  so.orders_order_id                AS ${insertColumnName}`;
+
+    const fromBody = sourceFilterSql.trim()
+      ? indentBlock(sourceFilterSql.trim(), "  ")
+      : "  -- No filter conditions defined (use Filter Conditions on Step 1)";
+
+    return [
+      "-- STTM Builder - Auto-generated SQL",
+      `-- Target: ${targetQualified}`,
+      `-- Date: ${today}`,
+      "",
+      `INSERT INTO ${targetQualified} (`,
+      `  ${insertColumnName}`,
+      `)`,
+      `SELECT`,
+      hardcodedSelect,
+      `FROM`,
+      fromBody,
+      `;`,
+    ].join("\n");
+  }, [insertColumnName, selectedTargetQualifiedName, sourceFilterSql]);
 
   const progressValue = totalCount > 0 ? (mappedCount / totalCount) * 100 : 0;
 
@@ -82,8 +212,9 @@ export default function MappingQualityPanel({
       >
         {[
           { key: "validate", label: "Validate" },
-          { key: "preview", label: "Preview" },
           { key: "sql", label: "SQL" },
+          { key: "preview", label: "Preview" },
+
         ].map((tab) => {
           const selected = activeTab === tab.key;
 
@@ -97,7 +228,7 @@ export default function MappingQualityPanel({
                 borderRadius: "6px",
                 cursor: "pointer",
                 backgroundColor: selected
-                  ? "var(--color-header-bg)"
+                  ? "var(--color-header-text)"
                   : "transparent",
                 color: selected ? "#ffffff" : "var(--color-muted)",
                 border: selected
@@ -124,7 +255,7 @@ export default function MappingQualityPanel({
                 mb: 1.5,
               }}
             >
-              Run validation to check mapping completeness and rule status.
+              Validate the mapping SQL to check completeness and rule status.
             </Typography>
 
             <Button
@@ -148,8 +279,56 @@ export default function MappingQualityPanel({
                 },
               }}
             >
-              Run Validation
+              SQL
             </Button>
+          </Box>
+        )}
+        {activeTab === "sql" && (
+          <Box>
+            <Box
+              sx={{
+                mb: 1.5,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 1,
+              }}
+            >
+              <Typography sx={{ fontSize: "11px", color: "var(--color-muted)" }}>
+                Generated SQL
+              </Typography>
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={async () => {
+                  try {
+                    await navigator.clipboard.writeText(generatedSql);
+                  } catch {
+                  }
+                }}
+                sx={{
+                  textTransform: "none",
+                  fontSize: "11px",
+                  borderRadius: "6px",
+                }}
+              >
+                Copy
+              </Button>
+            </Box>
+
+            <Box
+              sx={{
+                borderRadius: "10px",
+                border: "1px solid rgba(255,255,255,0.08)",
+                backgroundColor: "#0b1220",
+                p: 1.5,
+                minHeight: 220,
+                maxHeight: 495,
+                overflow: "auto",
+              }}
+            >
+              <SqlHighlightedBlock sql={generatedSql} />
+            </Box>
           </Box>
         )}
 
@@ -166,18 +345,7 @@ export default function MappingQualityPanel({
           </Box>
         )}
 
-        {activeTab === "sql" && (
-          <Box>
-            <Typography
-              sx={{
-                fontSize: "11px",
-                color: "var(--color-muted)",
-              }}
-            >
-              SQL content will appear here.
-            </Typography>
-          </Box>
-        )}
+        
       </Box>
     </Paper>
   );

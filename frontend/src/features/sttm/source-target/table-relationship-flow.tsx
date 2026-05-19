@@ -121,6 +121,8 @@ export default function SttmTableRelationshipFlow({
     derivedSources,
     sourceAttributeGroups,
     updateDerivedSource,
+    setSourceFilterConditions,
+    sourceFilterGroups,
   } = useSttmBuilderContext();
 
   const [editingDerivedSource, setEditingDerivedSource] = useState<DerivedSource | null>(null);
@@ -483,7 +485,13 @@ export default function SttmTableRelationshipFlow({
         </div>
       </div>
 
-      {showFilters ? <FilterConditions tables={activeTables} /> : null}
+      {showFilters ? (
+        <FilterConditions
+          tables={activeTables}
+          initialGroups={sourceFilterGroups}
+          onChange={(groups, sql) => setSourceFilterConditions({ groups, sql })}
+        />
+      ) : null}
 
       <JoinModal
         isOpen={isJoinModalOpen}

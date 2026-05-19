@@ -57,6 +57,12 @@ export interface DerivedSource {
   isSelected?: boolean;
   derivedSourceIds?: string[];
   sqlText?: string;
+  semanticBundleId?: string | null;
+  semanticBundleLabel?: string | null;
+  semanticViewName?: string | null;
+  semanticLevel?: string | null;
+  upstreamHash?: string | null;
+  lineageDepth?: number;
   alias?: string;
   drivingTableId?: string;
   tableIds?: string[];
@@ -134,8 +140,25 @@ export type MappingSuggestion = {
 };
 
 export type ChatMessage = {
+  id?: string;
   role: "user" | "assistant";
   content: string;
+  status?: "completed" | "needs_input" | "failed";
+  options?: string[];
+  isStreaming?: boolean;
+  traceSteps?: string[];
+};
+
+export type PendingDerivedSourceDraft = {
+  sqlText: string;
+  sourceNameSuggestion?: string | null;
+  semanticViewName?: string | null;
+  semanticBundleLabel?: string | null;
+  previewRows?: Array<Record<string, unknown>>;
+  selectedColumnsByTable?: Record<string, string[]> | null;
+  selectedTableIds: string[];
+  drivingTableId?: string | null;
+  requestSummary?: string | null;
 };
 
 export type LoadStatus = "idle" | "loading" | "success" | "error";
@@ -186,6 +209,15 @@ export type SttmBuilderContextValue = {
   // Chat
   chatMessages: ChatMessage[];
   chatLoading: boolean;
+  semanticBundleId: string | null;
+  semanticBundleLabel: string | null;
+  semanticLevel: string | null;
+  semanticStatus: string | null;
+  semanticViewName: string | null;
+  semanticContextSummary: Record<string, unknown> | null;
+  datahubStatus: string | null;
+  pendingDerivedSourceDraft: PendingDerivedSourceDraft | null;
+  derivedSourceDraftRequested: boolean;
 
   // Session
   session: UserSession | null;
@@ -208,6 +240,9 @@ export type SttmBuilderContextValue = {
   // Actions — AI
   runAutoMap: () => void;
   sendChatMessage: (message: string) => void;
+  openPendingDerivedSourceDraft: () => void;
+  acknowledgePendingDerivedSourceDraft: () => void;
+  dismissPendingDerivedSourceDraft: () => void;
 
   // Computed
   selectedSourceCount: number;

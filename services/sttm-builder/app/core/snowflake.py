@@ -1,5 +1,7 @@
 import logging
+from contextlib import contextmanager
 from dataclasses import dataclass
+from threading import Lock
 from typing import Any, Optional
 
 import snowflake.connector
@@ -11,6 +13,10 @@ from app.core.exceptions import AuthenticationError, SnowflakeConnectionError
 logger = logging.getLogger(__name__)
 
 _SERVICE_TOKEN_PATH = "/snowflake/session/token"
+_LOCAL_CLIENT_CACHE: dict[str, "SnowflakeClient"] = {}
+_LOCAL_CLIENT_LOCK = Lock()
+_LOCAL_CONNECTOR_CACHE: dict[str, snowflake.connector.SnowflakeConnection] = {}
+_LOCAL_CONNECTOR_LOCK = Lock()
 
 
 @dataclass
@@ -107,13 +113,104 @@ def _normalize_host(host: str, account: str) -> str:
     return resolved_host
 
 
+def _local_cache_key(settings: Settings, role: Optional[str] = None) -> str:
+    effective_role = role or settings.snowflake_role or ""
+    return "|".join(
+        [
+            settings.snowflake_account or "",
+            settings.snowflake_user or "",
+            effective_role,
+            settings.snowflake_warehouse or "",
+            settings.snowflake_database or "",
+            settings.snowflake_schema or "",
+            "externalbrowser" if settings.local_dev_uses_externalbrowser else "password",
+        ]
+    )
+
+
+def get_local_cached_client(
+    settings: Settings,
+    role: Optional[str] = None,
+) -> "SnowflakeClient":
+    key = _local_cache_key(settings, role)
+    with _LOCAL_CLIENT_LOCK:
+        client = _LOCAL_CLIENT_CACHE.get(key)
+        if client is not None:
+            try:
+                client.session.sql("SELECT 1").collect()
+                return client
+            except Exception:
+                try:
+                    client.close()
+                except Exception:
+                    logger.debug("Failed to close stale cached Snowpark session", exc_info=True)
+                _LOCAL_CLIENT_CACHE.pop(key, None)
+
+        client = SnowflakeClient(
+            settings=settings,
+            user_token="",
+            role=role,
+        )
+        _LOCAL_CLIENT_CACHE[key] = client
+        return client
+
+
+def _local_connector_cache_key(settings: Settings, role: Optional[str] = None) -> str:
+    effective_role = role or settings.snowflake_role or ""
+    return "|".join(
+        [
+            settings.snowflake_account or "",
+            settings.snowflake_user or "",
+            effective_role,
+            settings.snowflake_warehouse or "",
+            settings.snowflake_database or "",
+            settings.snowflake_schema or "",
+            "externalbrowser" if settings.local_dev_uses_externalbrowser else "password",
+            "connector",
+        ]
+    )
+
+
+def get_local_cached_connector(
+    settings: Settings,
+    role: Optional[str] = None,
+) -> snowflake.connector.SnowflakeConnection:
+    key = _local_connector_cache_key(settings, role)
+    with _LOCAL_CONNECTOR_LOCK:
+        connection = _LOCAL_CONNECTOR_CACHE.get(key)
+        if connection is not None:
+            try:
+                cursor = connection.cursor()
+                cursor.execute("SELECT 1")
+                cursor.close()
+                return connection
+            except Exception:
+                try:
+                    connection.close()
+                except Exception:
+                    logger.debug("Failed to close stale cached connector session", exc_info=True)
+                _LOCAL_CONNECTOR_CACHE.pop(key, None)
+
+        connection = snowflake.connector.connect(**_direct_connection_kwargs(settings, role))
+        _LOCAL_CONNECTOR_CACHE[key] = connection
+        return connection
+
+
+@contextmanager
+def get_local_cached_connector_context(
+    settings: Settings,
+    role: Optional[str] = None,
+):
+    connection = get_local_cached_connector(settings, role)
+    yield connection
+
+
 def get_local_rest_session_context(
     settings: Settings,
     role: Optional[str] = None,
 ) -> RestSessionContext:
-    connection = None
     try:
-        connection = snowflake.connector.connect(**_direct_connection_kwargs(settings, role))
+        connection = get_local_cached_connector(settings, role)
         rest = getattr(connection, "_rest", None)
         token = getattr(rest, "_token", None) if rest else None
         if not token:
@@ -137,12 +234,6 @@ def get_local_rest_session_context(
         raise SnowflakeConnectionError(
             f"Failed to initialize local Snowflake REST session context: {exc}"
         ) from exc
-    finally:
-        if connection is not None:
-            try:
-                connection.close()
-            except Exception:
-                logger.debug("Failed to close local REST bootstrap connection", exc_info=True)
 
 
 class SnowflakeClient:
@@ -230,6 +321,8 @@ def get_user_connection(
     settings: Settings,
 ) -> snowflake.connector.SnowflakeConnection:
     if using_local_dev_auth(settings, ingress_user_token):
+        if settings.local_dev_uses_externalbrowser:
+            return get_local_cached_connector_context(settings)
         return snowflake.connector.connect(**_direct_connection_kwargs(settings))
     return snowflake.connector.connect(
         **_oauth_connection_kwargs(settings, build_caller_token(ingress_user_token or ""))
@@ -238,6 +331,8 @@ def get_user_connection(
 
 def get_service_connection(settings: Settings) -> snowflake.connector.SnowflakeConnection:
     if settings.local_dev_auth_enabled:
+        if settings.local_dev_uses_externalbrowser:
+            return get_local_cached_connector_context(settings)
         return snowflake.connector.connect(**_direct_connection_kwargs(settings))
     return snowflake.connector.connect(
         **_oauth_connection_kwargs(settings, get_service_token())

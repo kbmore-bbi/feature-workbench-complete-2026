@@ -1,4 +1,5 @@
 import json
+import hashlib
 import uuid
 from typing import Any
 
@@ -71,10 +72,17 @@ class DerivedSourceService:
             SQL_TEXT STRING,
             DRIVING_TABLE STRING,
             SOURCE_TABLES VARIANT,
+            PARENT_DERIVED_SOURCE_IDS VARIANT,
+            BASE_SOURCE_TABLES VARIANT,
             RELATIONSHIPS VARIANT,
             FILTERS VARIANT,
             SELECTED_COLUMNS_BY_TABLE VARIANT,
             PREVIEW_COLUMNS VARIANT,
+            LINEAGE_DEPTH NUMBER,
+            SEMANTIC_BUNDLE_ID STRING,
+            SEMANTIC_VIEW_NAME STRING,
+            SEMANTIC_LEVEL STRING,
+            UPSTREAM_HASH STRING,
             CREATED_BY STRING,
             CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
             UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -83,6 +91,16 @@ class DerivedSourceService:
         """
         try:
             self._session.sql(ddl).collect()
+            for column_ddl in (
+                "ADD COLUMN IF NOT EXISTS PARENT_DERIVED_SOURCE_IDS VARIANT",
+                "ADD COLUMN IF NOT EXISTS BASE_SOURCE_TABLES VARIANT",
+                "ADD COLUMN IF NOT EXISTS LINEAGE_DEPTH NUMBER",
+                "ADD COLUMN IF NOT EXISTS SEMANTIC_BUNDLE_ID STRING",
+                "ADD COLUMN IF NOT EXISTS SEMANTIC_VIEW_NAME STRING",
+                "ADD COLUMN IF NOT EXISTS SEMANTIC_LEVEL STRING",
+                "ADD COLUMN IF NOT EXISTS UPSTREAM_HASH STRING",
+            ):
+                self._session.sql(f"ALTER TABLE {self._table_name} {column_ddl}").collect()
         except Exception as exc:
             raise SnowflakeQueryError(
                 f"Failed to ensure derived sources table exists: {exc}"
@@ -154,11 +172,35 @@ class DerivedSourceService:
 
         return [self._row_to_record(row.as_dict()) for row in rows]
 
+    def get_sources_by_ids(self, source_ids: list[str]) -> list[DerivedSourceRecord]:
+        if not source_ids:
+            return []
+        ids_sql = ", ".join(self._quote_literal(source_id) for source_id in source_ids)
+        try:
+            rows = self._session.sql(
+                f"""
+                SELECT * FROM {self._table_name}
+                WHERE IS_ACTIVE = TRUE
+                  AND DERIVED_SOURCE_ID IN ({ids_sql})
+                """
+            ).collect()
+        except Exception as exc:
+            if self._storage_unavailable(exc):
+                return []
+            raise
+        records = {record.derived_source_id: record for record in (self._row_to_record(row.as_dict()) for row in rows)}
+        return [records[source_id] for source_id in source_ids if source_id in records]
+
     def save_source(self, body: DerivedSourceDefinition) -> DerivedSourceRecord:
+        self.ensure_table_exists()
         validation = self.validate_sql(body)
 
         source_id = body.derived_source_id or f"derived_{uuid.uuid4().hex[:12]}"
         current_user = self._current_user()
+        parent_records = self.get_sources_by_ids(body.parent_derived_source_ids)
+        base_source_tables = self._resolve_base_source_tables(body, parent_records)
+        lineage_depth = self._lineage_depth(parent_records)
+        upstream_hash = self._upstream_hash(body, parent_records)
 
         merge_sql = f"""
         MERGE INTO {self._table_name} AS target
@@ -169,10 +211,17 @@ class DerivedSourceService:
                 {self._quote_literal(body.sql_text)} AS SQL_TEXT,
                 {self._quote_literal(body.driving_table.qualified_name if body.driving_table else "")} AS DRIVING_TABLE,
                 PARSE_JSON({self._json_literal([table.model_dump() for table in body.source_tables])}) AS SOURCE_TABLES,
+                PARSE_JSON({self._json_literal(body.parent_derived_source_ids)}) AS PARENT_DERIVED_SOURCE_IDS,
+                PARSE_JSON({self._json_literal([table.model_dump(mode="json") for table in base_source_tables])}) AS BASE_SOURCE_TABLES,
                 PARSE_JSON({self._json_literal([item.model_dump() for item in body.relationships])}) AS RELATIONSHIPS,
                 PARSE_JSON({self._json_literal(body.filters)}) AS FILTERS,
                 PARSE_JSON({self._json_literal(body.selected_columns_by_table)}) AS SELECTED_COLUMNS_BY_TABLE,
                 PARSE_JSON({self._json_literal([column.model_dump() for column in validation.preview_columns])}) AS PREVIEW_COLUMNS,
+                {lineage_depth} AS LINEAGE_DEPTH,
+                NULL AS SEMANTIC_BUNDLE_ID,
+                NULL AS SEMANTIC_VIEW_NAME,
+                NULL AS SEMANTIC_LEVEL,
+                {self._quote_literal(upstream_hash)} AS UPSTREAM_HASH,
                 {self._quote_literal(current_user)} AS CREATED_BY
         ) AS source
         ON target.DERIVED_SOURCE_ID = source.DERIVED_SOURCE_ID
@@ -181,10 +230,17 @@ class DerivedSourceService:
             SQL_TEXT = source.SQL_TEXT,
             DRIVING_TABLE = source.DRIVING_TABLE,
             SOURCE_TABLES = source.SOURCE_TABLES,
+            PARENT_DERIVED_SOURCE_IDS = source.PARENT_DERIVED_SOURCE_IDS,
+            BASE_SOURCE_TABLES = source.BASE_SOURCE_TABLES,
             RELATIONSHIPS = source.RELATIONSHIPS,
             FILTERS = source.FILTERS,
             SELECTED_COLUMNS_BY_TABLE = source.SELECTED_COLUMNS_BY_TABLE,
             PREVIEW_COLUMNS = source.PREVIEW_COLUMNS,
+            LINEAGE_DEPTH = source.LINEAGE_DEPTH,
+            SEMANTIC_BUNDLE_ID = COALESCE(target.SEMANTIC_BUNDLE_ID, source.SEMANTIC_BUNDLE_ID),
+            SEMANTIC_VIEW_NAME = COALESCE(target.SEMANTIC_VIEW_NAME, source.SEMANTIC_VIEW_NAME),
+            SEMANTIC_LEVEL = COALESCE(target.SEMANTIC_LEVEL, source.SEMANTIC_LEVEL),
+            UPSTREAM_HASH = source.UPSTREAM_HASH,
             UPDATED_AT = CURRENT_TIMESTAMP(),
             IS_ACTIVE = TRUE
         WHEN NOT MATCHED THEN INSERT (
@@ -193,10 +249,17 @@ class DerivedSourceService:
             SQL_TEXT,
             DRIVING_TABLE,
             SOURCE_TABLES,
+            PARENT_DERIVED_SOURCE_IDS,
+            BASE_SOURCE_TABLES,
             RELATIONSHIPS,
             FILTERS,
             SELECTED_COLUMNS_BY_TABLE,
             PREVIEW_COLUMNS,
+            LINEAGE_DEPTH,
+            SEMANTIC_BUNDLE_ID,
+            SEMANTIC_VIEW_NAME,
+            SEMANTIC_LEVEL,
+            UPSTREAM_HASH,
             CREATED_BY,
             CREATED_AT,
             UPDATED_AT,
@@ -207,10 +270,17 @@ class DerivedSourceService:
             source.SQL_TEXT,
             source.DRIVING_TABLE,
             source.SOURCE_TABLES,
+            source.PARENT_DERIVED_SOURCE_IDS,
+            source.BASE_SOURCE_TABLES,
             source.RELATIONSHIPS,
             source.FILTERS,
             source.SELECTED_COLUMNS_BY_TABLE,
             source.PREVIEW_COLUMNS,
+            source.LINEAGE_DEPTH,
+            source.SEMANTIC_BUNDLE_ID,
+            source.SEMANTIC_VIEW_NAME,
+            source.SEMANTIC_LEVEL,
+            source.UPSTREAM_HASH,
             source.CREATED_BY,
             CURRENT_TIMESTAMP(),
             CURRENT_TIMESTAMP(),
@@ -232,6 +302,10 @@ class DerivedSourceService:
             derived_source_name=body.derived_source_name,
             sql_text=body.sql_text,
             source_tables=body.source_tables,
+            parent_derived_source_ids=body.parent_derived_source_ids,
+            base_source_tables=base_source_tables,
+            lineage_depth=lineage_depth,
+            upstream_hash=upstream_hash,
             driving_table=body.driving_table,
             relationships=body.relationships,
             filters=body.filters,
@@ -261,6 +335,38 @@ class DerivedSourceService:
                     pk_names.add(column.column_name.upper())
         return pk_names
 
+    def _resolve_base_source_tables(
+        self,
+        body: DerivedSourceDefinition,
+        parent_records: list[DerivedSourceRecord],
+    ) -> list[TableRef]:
+        seen: dict[str, TableRef] = {table.qualified_name.upper(): table for table in body.source_tables}
+        for record in parent_records:
+            for table in record.base_source_tables or record.source_tables:
+                seen[table.qualified_name.upper()] = table
+        return [seen[key] for key in sorted(seen)]
+
+    @staticmethod
+    def _lineage_depth(parent_records: list[DerivedSourceRecord]) -> int:
+        if not parent_records:
+            return 0
+        return max(record.lineage_depth for record in parent_records) + 1
+
+    def _upstream_hash(
+        self,
+        body: DerivedSourceDefinition,
+        parent_records: list[DerivedSourceRecord],
+    ) -> str:
+        payload = {
+            "source_tables": sorted(table.qualified_name for table in body.source_tables),
+            "parent_derived_source_ids": sorted(body.parent_derived_source_ids),
+            "parent_hashes": sorted(filter(None, (record.upstream_hash for record in parent_records))),
+            "sql_text": body.sql_text.strip(),
+        }
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+
     def _row_to_record(self, row: dict[str, Any]) -> DerivedSourceRecord:
         def _coerce_json(value: Any, fallback: Any) -> Any:
             if value is None:
@@ -283,6 +389,8 @@ class DerivedSourceService:
         filters = _coerce_json(_value("FILTERS"), [])
         selected_columns = _coerce_json(_value("SELECTED_COLUMNS_BY_TABLE"), {})
         preview_columns = _coerce_json(_value("PREVIEW_COLUMNS"), [])
+        parent_derived_source_ids = _coerce_json(_value("PARENT_DERIVED_SOURCE_IDS"), [])
+        base_source_tables = _coerce_json(_value("BASE_SOURCE_TABLES"), [])
         driving_table = _value("DRIVING_TABLE") or ""
 
         driving_ref = None
@@ -296,6 +404,13 @@ class DerivedSourceService:
             derived_source_name=str(_value("DERIVED_SOURCE_NAME")),
             sql_text=str(_value("SQL_TEXT")),
             source_tables=source_tables,
+            parent_derived_source_ids=parent_derived_source_ids,
+            base_source_tables=base_source_tables,
+            lineage_depth=int(_value("LINEAGE_DEPTH") or 0),
+            semantic_bundle_id=_value("SEMANTIC_BUNDLE_ID"),
+            semantic_view_name=_value("SEMANTIC_VIEW_NAME"),
+            semantic_level=_value("SEMANTIC_LEVEL"),
+            upstream_hash=_value("UPSTREAM_HASH"),
             driving_table=driving_ref,
             relationships=relationships,
             filters=filters,

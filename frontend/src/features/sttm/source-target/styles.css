@@ -747,7 +747,26 @@
 .filter-row__delete--cond { opacity: 0; margin-left: 8px; background: transparent; border: none; color: #ef4444; cursor: pointer; }
 .filter-row:hover .filter-row__delete--cond { opacity: 1; }
 .filter-children { margin-left: 48px; border-left: 1px solid #e2e8f0; padding-left: 24px; margin-top: 12px; display: flex; flex-direction: column; gap: 12px; }
-.filter-preview { background: #0f172a; color: #10b981; padding: 24px; position: relative; }
-.filter-preview__title { font-size: 10px; font-weight: 700; color: #475569; margin-bottom: 12px; }
-.filter-preview__code { font-family: monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; margin: 0; }
+.filter-preview {
+  background: #0f172a;
+  color: #e5e7eb;
+  padding: 24px;
+  position: relative;
+  border-top: 1px solid rgba(148, 163, 184, 0.12);
+}
+.filter-preview__title {
+  font-size: 11px;
+  font-weight: 800;
+  color: #94a3b8;
+  margin-bottom: 12px;
+  letter-spacing: 0.08em;
+}
+.filter-preview__code {
+  font-family: ui-monospace, SFMono-Regular, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  margin: 0;
+  color: #f8fafc;
+}
 .filter-preview__btn { position: absolute; top: 24px; right: 24px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); color: white; padding: 6px 12px; border-radius: 16px; font-size: 11px; font-weight: 600; cursor: pointer; }

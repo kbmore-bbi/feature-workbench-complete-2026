@@ -55,13 +55,28 @@ try {
 }
 
 Write-Host "Bootstrapping STTM metadata infra into $($cfg["SNOWFLAKE_DATABASE"]).$($cfg["SNOWFLAKE_SCHEMA"])"
-& $PythonExe $ScriptPath `
-    --account $cfg["SNOWFLAKE_ACCOUNT"] `
-    --user $cfg["SNOWFLAKE_USER"] `
-    --password $(if ($cfg.ContainsKey("SNOWFLAKE_PASSWORD")) { $cfg["SNOWFLAKE_PASSWORD"] } else { "" }) `
-    --authenticator $(if ($cfg.ContainsKey("SNOWFLAKE_AUTHENTICATOR")) { $cfg["SNOWFLAKE_AUTHENTICATOR"] } else { "" }) `
-    --host $(if ($cfg.ContainsKey("SNOWFLAKE_HOST")) { $cfg["SNOWFLAKE_HOST"] } else { "" }) `
-    --role $(if ($cfg.ContainsKey("SNOWFLAKE_ROLE")) { $cfg["SNOWFLAKE_ROLE"] } else { "" }) `
-    --warehouse $(if ($cfg.ContainsKey("SNOWFLAKE_WAREHOUSE")) { $cfg["SNOWFLAKE_WAREHOUSE"] } else { "" }) `
-    --database $cfg["SNOWFLAKE_DATABASE"] `
-    --schema $cfg["SNOWFLAKE_SCHEMA"]
+$args = @(
+    $ScriptPath,
+    "--account", $cfg["SNOWFLAKE_ACCOUNT"],
+    "--user", $cfg["SNOWFLAKE_USER"],
+    "--database", $cfg["SNOWFLAKE_DATABASE"],
+    "--schema", $cfg["SNOWFLAKE_SCHEMA"]
+)
+
+if ($cfg.ContainsKey("SNOWFLAKE_PASSWORD") -and $cfg["SNOWFLAKE_PASSWORD"]) {
+    $args += @("--password", $cfg["SNOWFLAKE_PASSWORD"])
+}
+if ($cfg.ContainsKey("SNOWFLAKE_AUTHENTICATOR") -and $cfg["SNOWFLAKE_AUTHENTICATOR"]) {
+    $args += @("--authenticator", $cfg["SNOWFLAKE_AUTHENTICATOR"])
+}
+if ($cfg.ContainsKey("SNOWFLAKE_HOST") -and $cfg["SNOWFLAKE_HOST"]) {
+    $args += @("--host", $cfg["SNOWFLAKE_HOST"])
+}
+if ($cfg.ContainsKey("SNOWFLAKE_ROLE") -and $cfg["SNOWFLAKE_ROLE"]) {
+    $args += @("--role", $cfg["SNOWFLAKE_ROLE"])
+}
+if ($cfg.ContainsKey("SNOWFLAKE_WAREHOUSE") -and $cfg["SNOWFLAKE_WAREHOUSE"]) {
+    $args += @("--warehouse", $cfg["SNOWFLAKE_WAREHOUSE"])
+}
+
+& $PythonExe @args

@@ -1,4 +1,4 @@
-CREATE OR REPLACE PROCEDURE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_SUBAGT_TRANSFORMATION_RULE("QUERY_CONTEXT" VARCHAR, "MODEL_NAME" VARCHAR DEFAULT 'claude-4-6-sonnet')
+CREATE OR REPLACE PROCEDURE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_SUBAGT_TRANSFORMATION_RULE("QUERY_CONTEXT" VARCHAR, "MODEL_NAME" VARCHAR DEFAULT 'claude-haiku-4-5')
 RETURNS VARCHAR
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.12'
@@ -9,7 +9,8 @@ AS '
 import json
 import _snowflake
 
-def run_agent(session, query_context: str, model_name: str = ''claude-3-5-sonnet'') -> str:
+def run_agent(session, query_context: str, model_name: str = ''claude-haiku-4-5'') -> str:
+    # query_context is the canonical model-facing agent payload JSON string.
 
     payload = {
         "models": {"orchestration": model_name},
@@ -29,7 +30,7 @@ def run_agent(session, query_context: str, model_name: str = ''claude-3-5-sonnet
         {},
         payload,
         None,
-        15000
+        60000
     )
 
     if response is None:

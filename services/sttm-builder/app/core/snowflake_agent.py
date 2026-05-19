@@ -1,6 +1,7 @@
 import json
 import os
 import uuid
+from collections.abc import Iterator
 from typing import Any
 from urllib.parse import quote
 
@@ -11,7 +12,7 @@ from app.core.exceptions import SnowflakeAgentError
 
 class SnowflakeAgentClient:
     """
-    Client for the Snowflake Cortex Agents REST API (synchronous / non-streaming).
+    Client for the Snowflake Cortex Agents REST API.
 
     The agent's system prompt, tools, and tool resources are defined inside
     Snowflake — this client only handles transport, auth, and thread management.
@@ -51,19 +52,24 @@ class SnowflakeAgentClient:
         agent: str | None = None,
         thread_id: str | None = None,
     ) -> tuple[str, str]:
-        """
-        Send *messages* to the Cortex Agent and return ``(response_text, thread_id)``.
+        text, resolved_thread_id, _ = self.run_detailed(
+            messages,
+            agent=agent,
+            thread_id=thread_id,
+        )
+        return text, resolved_thread_id
 
-        Args:
-            messages:  Conversation turns in OpenAI-compatible format.
-            agent:     Fully-qualified Snowflake Cortex Agent name
-                       (e.g. "DB.SCHEMA.AGENT_NAME").
-            thread_id: Pass an existing ID to continue a session; omit to
-                       start a new one.
-        """
+    def stream_events(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        agent: str | None = None,
+        thread_id: str | None = None,
+    ) -> Iterator[tuple[str, Any]]:
         payload: dict[str, Any] = {
             "models": {"orchestration": self.model},
             "messages": messages,
+            "stream": True,
         }
 
         if agent and self._auth_mode != "snowflake_token":
@@ -76,7 +82,59 @@ class SnowflakeAgentClient:
         endpoint = self._build_endpoint(agent)
 
         try:
-            with httpx.Client(timeout=120.0) as client:
+            with httpx.Client(timeout=240.0) as client:
+                with client.stream(
+                    "POST",
+                    f"{self._base_url}{endpoint}",
+                    headers=headers,
+                    json=payload,
+                ) as response:
+                    if response.status_code != 200:
+                        error_body = response.read().decode("utf-8", errors="replace").strip()
+                        raise SnowflakeAgentError(
+                            f"Cortex Agent returned HTTP {response.status_code}: {error_body}"
+                        )
+                    yield from self._iter_sse_events(response)
+        except httpx.HTTPError as exc:
+            raise SnowflakeAgentError(
+                f"HTTP error communicating with Cortex Agent: {exc}"
+            ) from exc
+
+    def run_detailed(
+        self,
+        messages: list[dict[str, Any]],
+        *,
+        agent: str | None = None,
+        thread_id: str | None = None,
+    ) -> tuple[str, str, dict[str, Any] | None]:
+        """
+        Send *messages* to the Cortex Agent and return
+        ``(response_text, thread_id, raw_payload)``.
+
+        Args:
+            messages:  Conversation turns in OpenAI-compatible format.
+            agent:     Fully-qualified Snowflake Cortex Agent name
+                       (e.g. "DB.SCHEMA.AGENT_NAME").
+            thread_id: Pass an existing ID to continue a session; omit to
+                       start a new one.
+        """
+        payload: dict[str, Any] = {
+            "models": {"orchestration": self.model},
+            "messages": messages,
+            "stream": False,
+        }
+
+        if agent and self._auth_mode != "snowflake_token":
+            payload["agent"] = agent
+
+        if thread_id:
+            payload["thread_id"] = thread_id
+
+        headers = self._build_headers()
+        endpoint = self._build_endpoint(agent)
+
+        try:
+            with httpx.Client(timeout=240.0) as client:
                 response = client.post(
                     f"{self._base_url}{endpoint}",
                     headers=headers,
@@ -97,12 +155,13 @@ class SnowflakeAgentClient:
         except json.JSONDecodeError as exc:
             raw_text = response.text.strip()
             if raw_text:
-                return raw_text, thread_id or str(uuid.uuid4())
+                return raw_text, thread_id or str(uuid.uuid4()), None
             raise SnowflakeAgentError(
                 f"Cortex Agent response is not valid JSON: {exc}"
             ) from exc
 
-        return self._extract_text_and_thread(data, thread_id)
+        text, resolved_thread_id = self._extract_text_and_thread(data, thread_id)
+        return text, resolved_thread_id, data
 
     def _build_headers(self) -> dict[str, str]:
         if self._auth_mode == "snowflake_token":
@@ -156,7 +215,9 @@ class SnowflakeAgentClient:
         )
 
         # Normalise: some responses wrap content under "message", others don't
-        message: dict[str, Any] = data.get("message") or data
+        message: dict[str, Any] | str = data.get("message") or data
+        if isinstance(message, str):
+            return message, thread_id
         content = message.get("content", [])
 
         if isinstance(content, str):
@@ -170,3 +231,43 @@ class SnowflakeAgentClient:
             texts.append(text_val if isinstance(text_val, str) else text_val.get("value", ""))
 
         return "".join(texts), thread_id
+
+    @staticmethod
+    def _iter_sse_events(response: httpx.Response) -> Iterator[tuple[str, Any]]:
+        event_name = "message"
+        data_parts: list[str] = []
+
+        def flush() -> tuple[str, Any] | None:
+            nonlocal event_name, data_parts
+            if not data_parts:
+                event_name = "message"
+                return None
+            raw_data = "\n".join(data_parts).strip()
+            data_parts = []
+            current_event = event_name
+            event_name = "message"
+            if raw_data == "[DONE]":
+                return current_event, raw_data
+            try:
+                return current_event, json.loads(raw_data)
+            except json.JSONDecodeError:
+                return current_event, raw_data
+
+        for raw_line in response.iter_lines():
+            line = raw_line if isinstance(raw_line, str) else raw_line.decode()
+            if line == "":
+                flushed = flush()
+                if flushed is not None:
+                    yield flushed
+                continue
+            if line.startswith(":"):
+                continue
+            if line.startswith("event:"):
+                event_name = line.partition(":")[2].strip() or "message"
+                continue
+            if line.startswith("data:"):
+                data_parts.append(line.partition(":")[2].lstrip())
+
+        flushed = flush()
+        if flushed is not None:
+            yield flushed

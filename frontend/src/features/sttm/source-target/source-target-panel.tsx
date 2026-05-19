@@ -52,8 +52,30 @@ const filtersControlSx = {
 } as const;
 
 export default function SourceTargetPanel({ type }: { type: "source" | "target" }) {
-  const { clearSources, clearTargets, fullData, drivingTableId, addDerivedSource } = useSttmBuilderContext();
+  const {
+    clearSources,
+    clearTargets,
+    fullData,
+    drivingTableId,
+    addDerivedSource,
+    pendingDerivedSourceDraft,
+    derivedSourceDraftRequested,
+    acknowledgePendingDerivedSourceDraft,
+    dismissPendingDerivedSourceDraft,
+  } = useSttmBuilderContext();
   const [isDerivedModalOpen, setIsDerivedModalOpen] = React.useState(false);
+
+  React.useEffect(() => {
+    if (type === "source" && derivedSourceDraftRequested && pendingDerivedSourceDraft) {
+      setIsDerivedModalOpen(true);
+      acknowledgePendingDerivedSourceDraft();
+    }
+  }, [
+    acknowledgePendingDerivedSourceDraft,
+    derivedSourceDraftRequested,
+    pendingDerivedSourceDraft,
+    type,
+  ]);
 
   const title = type === "source" ? "SOURCE TABLES" : "TARGET TABLES";
   const selectedCount = React.useMemo(() => {
@@ -239,8 +261,10 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
         <AddDerivedModal
           isOpen={isDerivedModalOpen}
           onClose={() => setIsDerivedModalOpen(false)}
+          draftSource={pendingDerivedSourceDraft}
           onConfirm={(source) => {
             addDerivedSource(source);
+            dismissPendingDerivedSourceDraft();
             setIsDerivedModalOpen(false);
           }}
         />

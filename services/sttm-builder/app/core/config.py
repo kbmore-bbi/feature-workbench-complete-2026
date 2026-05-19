@@ -29,6 +29,20 @@ class AgentConfig(BaseModel):
     default_model: str
 
 
+def _split_qualified_name(value: str) -> tuple[str, str, str] | None:
+    parts = [part.strip() for part in value.split(".")]
+    if len(parts) != 3 or not all(parts):
+        return None
+    return parts[0], parts[1], parts[2]
+
+
+def _looks_like_placeholder(value: str) -> bool:
+    normalized = value.strip().upper()
+    if not normalized:
+        return True
+    return normalized.startswith(("DB.SCHEMA.", "YOUR_DB.YOUR_SCHEMA."))
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env.local",
@@ -66,6 +80,7 @@ class Settings(BaseSettings):
 
     snowflake_account: str = Field(default="", alias="SNOWFLAKE_ACCOUNT")
     snowflake_host: str = Field(default="", alias="SNOWFLAKE_HOST")
+    snowflake_authenticator: str = Field(default="", alias="SNOWFLAKE_AUTHENTICATOR")
     snowflake_user: str = Field(default="", alias="SNOWFLAKE_USER")
     snowflake_password: str = Field(default="", alias="SNOWFLAKE_PASSWORD")
     snowflake_role: str = Field(default="", alias="SNOWFLAKE_ROLE")
@@ -81,18 +96,40 @@ class Settings(BaseSettings):
         default="",
         alias="SNOWFLAKE_SEMANTIC_MODEL_AGENT",
     )
+    snowflake_relationships_procedure: str = Field(
+        default="",
+        alias="SNOWFLAKE_RELATIONSHIPS_PROCEDURE",
+    )
     snowflake_semantic_model_table: str = Field(
         default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODELS",
         alias="SNOWFLAKE_SEMANTIC_MODEL_TABLE",
+    )
+    snowflake_semantic_bundles_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_BUNDLES",
+        alias="SNOWFLAKE_SEMANTIC_BUNDLES_TABLE",
+    )
+    snowflake_semantic_overrides_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_OVERRIDES",
+        alias="SNOWFLAKE_SEMANTIC_OVERRIDES_TABLE",
     )
     snowflake_derived_sources_table: str = Field(
         default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_DERIVED_SOURCES",
         alias="SNOWFLAKE_DERIVED_SOURCES_TABLE",
     )
+    snowflake_derived_view_prefix: str = Field(
+        default="VW_DERIVED_SOURCE_",
+        alias="SNOWFLAKE_DERIVED_VIEW_PREFIX",
+    )
     snowflake_agent_orchestration_model: str = Field(
         default="claude-sonnet-4",
         alias="SNOWFLAKE_AGENT_ORCHESTRATION_MODEL",
     )
+    datahub_enabled: bool = Field(default=False, alias="DATAHUB_ENABLED")
+    datahub_graphql_url: str = Field(default="", alias="DATAHUB_GRAPHQL_URL")
+    datahub_ui_url: str = Field(default="", alias="DATAHUB_UI_URL")
+    datahub_token: str = Field(default="", alias="DATAHUB_TOKEN")
+    datahub_dataset_env: str = Field(default="PROD", alias="DATAHUB_DATASET_ENV")
+    datahub_timeout_seconds: float = Field(default=10.0, alias="DATAHUB_TIMEOUT_SECONDS")
     cors_allowed_origins: str = Field(default="", alias="CORS_ALLOWED_ORIGINS")
 
     @computed_field
@@ -107,7 +144,7 @@ class Settings(BaseSettings):
                     "or TRANSFORMATION_AGENT based on the interface (AUTO_MAP, CHAT, TRANSFORM). "
                     "Handles attribute mapping suggestions, refinements, and transformation rule generation."
                 ),
-                snowflake_name=self.snowflake_sttm_builder_agent,
+                snowflake_name=self.resolved_sttm_builder_agent,
                 default_model=self.snowflake_agent_orchestration_model,
             ),
         ]
@@ -115,7 +152,79 @@ class Settings(BaseSettings):
     def qualify_table_name(self, table_name: str) -> str:
         if "." in table_name:
             return table_name
-        return f"{self.snowflake_database}.{self.snowflake_schema}.{table_name}"
+        return (
+            f"{self.resolved_metadata_database}."
+            f"{self.resolved_metadata_schema}."
+            f"{table_name}"
+        )
+
+    @property
+    def normalized_snowflake_authenticator(self) -> str:
+        return (self.snowflake_authenticator or "").strip().lower()
+
+    @property
+    def local_dev_uses_externalbrowser(self) -> bool:
+        return self.normalized_snowflake_authenticator == "externalbrowser"
+
+    @property
+    def resolved_metadata_database(self) -> str:
+        if self.snowflake_database.strip():
+            return self.snowflake_database.strip()
+        for candidate in (
+            self.snowflake_semantic_model_table,
+            self.snowflake_semantic_bundles_table,
+            self.snowflake_semantic_overrides_table,
+            self.snowflake_derived_sources_table,
+        ):
+            parts = _split_qualified_name(candidate)
+            if parts:
+                return parts[0]
+        return ""
+
+    @property
+    def resolved_metadata_schema(self) -> str:
+        if self.snowflake_schema.strip():
+            return self.snowflake_schema.strip()
+        for candidate in (
+            self.snowflake_semantic_model_table,
+            self.snowflake_semantic_bundles_table,
+            self.snowflake_semantic_overrides_table,
+            self.snowflake_derived_sources_table,
+        ):
+            parts = _split_qualified_name(candidate)
+            if parts:
+                return parts[1]
+        return ""
+
+    @property
+    def resolved_sttm_builder_agent(self) -> str:
+        return self._resolve_agent_name(
+            self.snowflake_sttm_builder_agent,
+            legacy_object_name="STTM_BUILDER_AGENT",
+            default_object_name="AGT_STTM_BUILDER",
+        )
+
+    @property
+    def resolved_semantic_model_agent(self) -> str:
+        return self._resolve_agent_name(
+            self.snowflake_semantic_model_agent,
+            legacy_object_name="SEMANTIC_MODEL_AGENT",
+            default_object_name="AGT_SEMANTIC_MODEL",
+        )
+
+    @property
+    def resolved_relationships_procedure(self) -> str:
+        raw_value = self.snowflake_relationships_procedure.strip()
+        if raw_value and not _looks_like_placeholder(raw_value):
+            parts = _split_qualified_name(raw_value)
+            if parts:
+                return f"{parts[0]}.{parts[1]}.{parts[2]}"
+
+        database = self.resolved_metadata_database
+        schema = self.resolved_metadata_schema
+        if not database or not schema:
+            return ""
+        return f"{database}.{schema}.SP_GET_TABLE_RELATIONSHIPS"
 
     @property
     def qualified_users_table(self) -> str:
@@ -131,6 +240,28 @@ class Settings(BaseSettings):
         if host == "your_org-your_account.snowflakecomputing.com":
             return ""
         return host
+
+    def _resolve_agent_name(
+        self,
+        raw_value: str,
+        *,
+        legacy_object_name: str,
+        default_object_name: str,
+    ) -> str:
+        candidate = raw_value.strip()
+        if candidate and not _looks_like_placeholder(candidate):
+            parts = _split_qualified_name(candidate)
+            if parts:
+                database, schema, object_name = parts
+                if object_name.upper() == legacy_object_name:
+                    object_name = default_object_name
+                return f"{database}.{schema}.{object_name}"
+
+        database = self.resolved_metadata_database
+        schema = self.resolved_metadata_schema
+        if not database or not schema:
+            return ""
+        return f"{database}.{schema}.{default_object_name}"
 
 
 @lru_cache

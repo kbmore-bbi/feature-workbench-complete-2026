@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { getApiData } from "@/api/axiosInstance";
 
 type ApiStatus = {
   name: string;
@@ -23,15 +24,9 @@ export function ApiStatusCard() {
 
     async function load() {
       try {
-        const response = await fetch("/api/v1/workbench/info", {
+        const payload = await getApiData<ApiStatus>("/v1/workbench/info", {
           cache: "no-store",
         });
-
-        if (!response.ok) {
-          throw new Error(`Backend returned ${response.status}`);
-        }
-
-        const payload = (await response.json()) as ApiStatus;
         if (!cancelled) {
           setState({ status: "ready", payload });
         }
@@ -81,4 +76,3 @@ function StatusItem({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-

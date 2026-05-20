@@ -1,14 +1,16 @@
 import { buildApiEnvelope, getApiData, postEnvelopeData } from "@/api/axiosInstance";
 import {
+  buildMockSemanticContextRefresh,
+  buildMockValidateDerivedSource,
   getMockAttributes,
+  getMockRelationships,
+  listMockDerivedSources,
   mockDatabases,
-  mockDelay,
   mockSchemasByDatabase,
   mockTablesBySchema,
-} from "./dbMockData";
-
-const useMockDb = process.env.NEXT_PUBLIC_USE_MOCK_DB === "true";
-const forceMockError = process.env.NEXT_PUBLIC_MOCK_DB_ERROR === "true";
+  saveMockDerivedSource,
+} from "./mock/dbMockData";
+import { mockDelay, throwMockError, useMockDb } from "./mock/mockConfig";
 
 type TableRef = { database: string; schema: string; table: string };
 
@@ -145,12 +147,6 @@ type SemanticContextBundleResponse = {
   datahub_context?: Record<string, unknown> | null;
 };
 
-function throwMockError() {
-  if (forceMockError) {
-    throw new Error("Mock database API failed");
-  }
-}
-
 export const dbService = {
   getExplorerData: async (): Promise<DatabaseItem[]> => {
     if (useMockDb) {
@@ -205,7 +201,7 @@ export const dbService = {
   ): Promise<RelationshipItem[]> => {
     if (useMockDb) {
       throwMockError();
-      return mockDelay([]);
+      return mockDelay(getMockRelationships(tables));
     }
 
     return postEnvelopeData<RelationshipItem[]>(
@@ -215,10 +211,26 @@ export const dbService = {
   },
 
   listDerivedSources: async (): Promise<DerivedSourceRecord[]> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(listMockDerivedSources() as DerivedSourceRecord[]);
+    }
+
     return getApiData<DerivedSourceRecord[]>("/v1/derived-sources");
   },
 
+  validatePreProcessExpression: async (
+    payload: DerivedSourcePayload,
+  ): Promise<DerivedSourceValidateResult> => {
+    return dbService.validateDerivedSource(payload);
+  },
+
   validateDerivedSource: async (payload: DerivedSourcePayload): Promise<DerivedSourceValidateResult> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(buildMockValidateDerivedSource(payload));
+    }
+
     return postEnvelopeData<DerivedSourceValidateResult>(
       "/v1/derived-sources/validate",
       buildApiEnvelope("derived_source.validate", payload, {
@@ -231,6 +243,11 @@ export const dbService = {
   },
 
   saveDerivedSource: async (payload: DerivedSourcePayload): Promise<DerivedSourceRecord> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(saveMockDerivedSource(payload) as DerivedSourceRecord);
+    }
+
     return postEnvelopeData<DerivedSourceRecord>(
       "/v1/derived-sources",
       buildApiEnvelope("derived_source.save", payload, {
@@ -245,6 +262,11 @@ export const dbService = {
   refreshSemanticContext: async (
     payload: SemanticContextRefreshPayload
   ): Promise<SemanticContextBundleResponse> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(buildMockSemanticContextRefresh(payload) as SemanticContextBundleResponse);
+    }
+
     return postEnvelopeData<SemanticContextBundleResponse>(
       "/v1/semantic-context/refresh",
       buildApiEnvelope("semantic_context.refresh", payload),

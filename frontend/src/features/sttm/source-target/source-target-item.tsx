@@ -92,12 +92,9 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
             checkedColor={isSelected ? '#ffffff' : '#111827'}
           />
         ) : (
-          // <FocusRadio checked={item.isSelected} checkHandler={() => selectHandler(item.tableId)} />
-          <FocusCheckbox
+          <FocusRadio
             checked={isSelected}
             checkHandler={() => selectHandler(item.tableId)}
-            uncheckedColor={isSelected ? '#ffffff' : '#111827'}
-            checkedColor={isSelected ? '#ffffff' : '#111827'}
           />
         )}
 

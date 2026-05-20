@@ -12,6 +12,12 @@ import {
   type TargetAttributeItem,
 } from '@/types/api-contract';
 import { buildApiEnvelope, getApiData, resolveApiBaseUrl } from '@/api/axiosInstance';
+import {
+  buildMockWorkbenchInvokeResponse,
+  mockInvokeStream,
+  mockWorkbenchInfo,
+} from './mock/workbenchMockData';
+import { mockDelay, throwMockError, useMockDb } from './mock/mockConfig';
 
 export type { RelationshipContextItem, TableRef, TargetAttributeItem };
 
@@ -74,6 +80,11 @@ function toEnvelope(payload: WorkbenchRequest): STTMBuilderEnvelopeRequest {
 
 export const workbenchService = {
   invoke: async (payload: WorkbenchRequest) => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(buildMockWorkbenchInvokeResponse(payload));
+    }
+
     const response = await api.post<STTMBuilderEnvelopeResponse>('/v1/workbench/invoke', toEnvelope(payload), {
       timeout: 120000,
     });
@@ -81,6 +92,10 @@ export const workbenchService = {
   },
 
   getInfo: async () => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(mockWorkbenchInfo);
+    }
     return getApiData('/v1/workbench/info');
   },
 
@@ -91,6 +106,12 @@ export const workbenchService = {
     | { event: "final"; data: STTMBuilderEnvelopeResponse }
     | { event: "error"; data: { message?: string; code?: string } }
   > {
+    if (useMockDb) {
+      throwMockError();
+      yield* mockInvokeStream(payload);
+      return;
+    }
+
     const response = await fetch(`${resolveApiBaseUrl()}/v1/workbench/invoke/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

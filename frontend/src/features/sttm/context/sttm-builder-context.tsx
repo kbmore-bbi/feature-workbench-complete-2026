@@ -25,6 +25,14 @@ import {
   openPendingDerivedSourceDraft as openPendingDerivedSourceDraftAction,
   acknowledgePendingDerivedSourceDraft as acknowledgePendingDerivedSourceDraftAction,
   dismissPendingDerivedSourceDraft as dismissPendingDerivedSourceDraftAction,
+  initializeMappings as initializeMappingsAction,
+  updateMapping as updateMappingAction,
+  toggleMappingSelection as toggleMappingSelectionAction,
+  selectAllMappings as selectAllMappingsAction,
+  bulkMarkMapped as bulkMarkMappedAction,
+  bulkSetDirect as bulkSetDirectAction,
+  setPreProcessModalOpen as setPreProcessModalOpenAction,
+  setMappingSql as setMappingSqlAction,
 } from "@/features/sttm/store/sttm-builder-slice";
 import type {
   DerivedSource,
@@ -179,6 +187,23 @@ export function SttmBuilderProvider({
       sourceFilterGroups: state.sourceFilterGroups,
       setSourceFilterConditions: (payload: { sql: string; groups: RuleGroup[] }) =>
         dispatch(setSourceFilterConditionsAction(payload)),
+
+      // UI Mapping state
+      mappings: state.mappings,
+      selectedMappingIds: state.selectedMappingIds,
+      mappingSql: state.mappingSql,
+      isPreProcessModalOpen: state.isPreProcessModalOpen,
+      activeMappingId: state.activeMappingId,
+      
+      // UI Mapping actions
+      initializeMappings: (mappings) => dispatch(initializeMappingsAction(mappings)),
+      updateMapping: (id, updates) => dispatch(updateMappingAction({ id, updates })),
+      toggleMappingSelection: (id) => dispatch(toggleMappingSelectionAction({ id })),
+      selectAllMappings: (ids, select) => dispatch(selectAllMappingsAction({ ids, select })),
+      bulkMarkMapped: (ids) => dispatch(bulkMarkMappedAction({ ids })),
+      bulkSetDirect: (ids) => dispatch(bulkSetDirectAction({ ids })),
+      setPreProcessModalOpen: (open, mappingId) => dispatch(setPreProcessModalOpenAction({ open, mappingId })),
+      setMappingSql: (sql) => dispatch(setMappingSqlAction({ sql })),
     };
   }, [state, dispatch]);
 

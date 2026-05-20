@@ -31,24 +31,8 @@ import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-cont
 import { useAppDispatch } from '@/store/hooks';
 import { fetchAttributes } from '@/features/sttm/store/sttm-builder-slice';
 import type { DerivedSource } from '@/features/sttm/types/sttm.types';
-
-function typeChipSx(dataType?: string) {
-  const t = (dataType || '').toUpperCase();
-  const isNumeric =
-    t.includes('INT') ||
-    t.includes('NUM') ||
-    t.includes('DEC') ||
-    t.includes('FLOAT') ||
-    t.includes('DOUBLE') ||
-    t === 'NUMBER';
-  return {
-    height: 18,
-    fontSize: '0.65rem',
-    borderRadius: '4px',
-    bgcolor: isNumeric ? '#2c3e50' : '#f0f0f0',
-    color: isNumeric ? '#fff' : '#666',
-  } as const;
-}
+import { getDerivedDisplayColumns, typeChipSx } from '@/features/sttm/mapping/mapping-utils';
+import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
 
 function derivedTypeChipSx() {
   return {
@@ -59,21 +43,6 @@ function derivedTypeChipSx() {
     color: '#166534',
     border: '1px solid #bbf7d0',
   } as const;
-}
-
-function getDerivedDisplayColumns(source: DerivedSource): Array<{ name: string; type: string }> {
-  if (source.previewColumns?.length) {
-    return source.previewColumns.map((c) => ({
-      name: c.name,
-      type: c.dataType || '—',
-    }));
-  }
-  return (source.columns ?? [])
-    .filter((c) => c.name)
-    .map((c) => ({
-      name: String(c.name),
-      type: c.type ?? '—',
-    }));
 }
 
 const SourceTargetAttributeList = () => {
@@ -92,6 +61,8 @@ const SourceTargetAttributeList = () => {
     errorState,
     derivedSources,
     toggleDerivedSource,
+    runAutoMap,
+    mappingLoading,
   } = useSttmBuilderContext();
 
   const selectedSources = sources.filter((t) => t.isSelected);
@@ -187,9 +158,31 @@ const SourceTargetAttributeList = () => {
             </Typography>
             <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: '#4B5563' }} />
           </Box>
-          <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem', color: '#333' }}>
-            Source columns
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem', color: '#333' }}>
+              Source columns
+            </Typography>
+            <Button
+              size="small"
+              variant="contained"
+              disabled={mappingLoading || !sourceAttributeGroups.length}
+              startIcon={<AutoAwesomeRoundedIcon sx={{ fontSize: 14 }} />}
+              onClick={() => runAutoMap()}
+              sx={{
+                minWidth: 0,
+                px: 1.25,
+                height: 28,
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                textTransform: 'none',
+                bgcolor: '#1d4ed8',
+                boxShadow: 'none',
+                '&:hover': { bgcolor: '#1e40af', boxShadow: 'none' },
+              }}
+            >
+              Auto
+            </Button>
+          </Box>
         </Box>
         <TextField
           fullWidth
@@ -347,12 +340,16 @@ const SourceTargetAttributeList = () => {
                   >
                     <Box
                       sx={{ display: 'flex', alignItems: 'center', gap: 0.75, width: '100%', minWidth: 0 }}
-                      onClick={(e) => e.stopPropagation()}
                     >
                       <IconButton
+                        component="span"
                         size="small"
                         aria-label={source.isSelected ? 'Deselect derived source' : 'Select derived source'}
-                        onClick={() => toggleDerivedSource(source.id)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleDerivedSource(source.id);
+                        }}
                         sx={{ p: 0.25 }}
                       >
                         {source.isSelected ? (

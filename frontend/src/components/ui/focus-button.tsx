@@ -9,6 +9,8 @@ interface FocusButtonProps {
 
     onClick?: () => void;
     disabled?: boolean;
+    fullWidth?: boolean;
+    sx?: import('@mui/material/styles').SxProps<import('@mui/material/styles').Theme>;
 
     startIcon?: React.ReactNode;
     endIcon?: React.ReactNode;
@@ -47,7 +49,9 @@ const FocusButton = ({
     customColor,
     customBackgroundColor,
     customHoverBackgroundColor,
-    customBorderColor
+    customBorderColor,
+    fullWidth = false,
+    sx,
 }: FocusButtonProps) => {
 
     const isIconOnly = !children;
@@ -62,23 +66,28 @@ const FocusButton = ({
             disabled={disabled}
             startIcon={startIcon}
             endIcon={endIcon}
-            sx={{
-                textTransform: 'none',
-                borderRadius: radiusMap[rounded],
-                minWidth: isIconOnly ? 36 : undefined,
-                padding: isIconOnly ? '8px' : undefined,
-                color: customColor ? customColor : undefined,
-                borderColor: customBorderColor ? customBorderColor : undefined,
-                backgroundColor: customBackgroundColor ? customBackgroundColor : undefined,
-                "&:hover": {
-                    color: customColor ?? undefined,
-                    borderColor: customBorderColor ?? undefined,
-                    backgroundColor:
-                        customHoverBackgroundColor ??
-                        customBackgroundColor ??
-                        undefined,
+            fullWidth={fullWidth}
+            sx={[
+                {
+                    textTransform: 'none',
+                    borderRadius: radiusMap[rounded],
+                    minWidth: isIconOnly ? 36 : undefined,
+                    padding: isIconOnly ? '8px' : undefined,
+                    whiteSpace: 'nowrap',
+                    color: customColor ? customColor : undefined,
+                    borderColor: customBorderColor ? customBorderColor : undefined,
+                    backgroundColor: customBackgroundColor ? customBackgroundColor : undefined,
+                    "&:hover": {
+                        color: customColor ?? undefined,
+                        borderColor: customBorderColor ?? undefined,
+                        backgroundColor:
+                            customHoverBackgroundColor ??
+                            customBackgroundColor ??
+                            undefined,
+                    },
                 },
-            }}>
+                ...(sx ? (Array.isArray(sx) ? sx : [sx]) : []),
+            ]}>
             {children}
         </Button>
     );

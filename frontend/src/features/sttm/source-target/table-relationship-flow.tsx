@@ -29,6 +29,14 @@ const nodeTypes = { tableNode: TableNode };
 const edgeTypes = { tableEdge: TableEdge };
 const EMPTY_SELECTED_COLUMNS: Record<string, string[]> = {};
 
+function renderSqlTableReference(table: TableMeta) {
+  return `${table.database ?? ""}.${table.schema ?? ""}.${table.name ?? ""}`.replace(/\.+/g, ".");
+}
+
+function renderSqlColumnReference(table: TableMeta, columnName: string) {
+  return `${renderSqlTableReference(table)}.${columnName}`.replace(/\.+/g, ".");
+}
+
 function buildHandleId(
   table: { database?: string; schema?: string; name?: string },
   columnName: string,
@@ -404,6 +412,62 @@ export default function SttmTableRelationshipFlow({
 
   const joinCount = currentJoins.length;
   const joinBadgeLabel = joinCount === 1 ? "1 join" : `${joinCount} joins`;
+  const queryPreviewSql = useMemo(() => {
+    if (!activeTables.length) return "";
+
+    const tableById = new Map(activeTables.map((table) => [table.id as string, table]));
+    const seedTable =
+      (effectiveDrivingTableId ? tableById.get(effectiveDrivingTableId) : undefined) ??
+      (currentJoins[0]?.leftTableId ? tableById.get(currentJoins[0].leftTableId) : undefined) ??
+      activeTables[0];
+
+    if (!seedTable) return "";
+
+    const lines = ["SELECT", "  *", `FROM ${renderSqlTableReference(seedTable)}`];
+    const visited = new Set<string>([seedTable.id as string]);
+    const remaining = [...currentJoins];
+
+    while (remaining.length > 0) {
+      const nextIndex = remaining.findIndex((join) => {
+        const leftVisited = !!join.leftTableId && visited.has(join.leftTableId);
+        const rightVisited = !!join.rightTableId && visited.has(join.rightTableId);
+        return leftVisited !== rightVisited;
+      });
+
+      if (nextIndex === -1) break;
+
+      const [join] = remaining.splice(nextIndex, 1);
+      const leftTable = join.leftTableId ? tableById.get(join.leftTableId) : undefined;
+      const rightTable = join.rightTableId ? tableById.get(join.rightTableId) : undefined;
+      if (!leftTable || !rightTable || !join.conditions?.length) {
+        continue;
+      }
+
+      const leftJoinTableId = join.leftTableId as string;
+      const rightJoinTableId = join.rightTableId as string;
+      const attachRight = visited.has(leftJoinTableId) && !visited.has(rightJoinTableId);
+      const attachingTable = attachRight ? rightTable : leftTable;
+      const validConditions = join.conditions.filter(
+        (condition) => condition.leftColumn && condition.rightColumn,
+      );
+      if (!validConditions.length) {
+        continue;
+      }
+
+      lines.push(`${join.joinType ?? "INNER"} JOIN ${renderSqlTableReference(attachingTable)}`);
+      lines.push(
+        `  ON ${validConditions
+          .map(
+            (condition) =>
+              `${renderSqlColumnReference(leftTable, condition.leftColumn as string)} ${condition.operator ?? "="} ${renderSqlColumnReference(rightTable, condition.rightColumn as string)}`,
+          )
+          .join("\n  AND ")}`,
+      );
+      visited.add(attachingTable.id as string);
+    }
+
+    return lines.join("\n");
+  }, [activeTables, currentJoins, effectiveDrivingTableId]);
 
   return (
     <div className="flex flex-col gap-3">
@@ -489,6 +553,7 @@ export default function SttmTableRelationshipFlow({
         <FilterConditions
           tables={activeTables}
           initialGroups={sourceFilterGroups}
+          previewSql={queryPreviewSql}
           onChange={(groups, sql) => setSourceFilterConditions({ groups, sql })}
         />
       ) : null}

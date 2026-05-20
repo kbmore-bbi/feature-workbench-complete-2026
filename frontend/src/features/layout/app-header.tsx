@@ -57,7 +57,7 @@ export default function AppHeader({
     .toUpperCase();
 
   return (
-    <Box className="flex h-[60px] w-full shrink-0 items-center justify-between bg-[var(--color-header-bg)] px-5 text-[var(--color-header-text)]">
+    <header className="flex h-[60px] w-full shrink-0 items-center justify-between bg-[var(--color-header-bg)] px-5 text-[var(--color-header-text)]">
       <Box className="flex items-center gap-3">
          <Box className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white">
         <Link href="/home">
@@ -67,6 +67,7 @@ export default function AppHeader({
             width={44}
             height={44}
             className="object-contain"
+            style={{ width: "auto", height: "auto" }}
           />
         </Link>
 
@@ -124,6 +125,6 @@ export default function AppHeader({
 
       <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#ffffff" }} />
     </Box>
-    </Box >
+    </header>
   );
 }

@@ -3,6 +3,7 @@ import { getApiErrorMessage } from "@/api/axiosInstance";
 import { dbService } from "@/services/dbService";
 import { workbenchService, type TableRef } from "@/services/workbenchService";
 import { authService } from "@/services/authService";
+import type { STTMBuilderEnvelopeResponse } from "@/types/api-contract";
 import type {
   BuilderErrorState,
   BuilderLoadState,
@@ -14,10 +15,12 @@ import type {
   JoinConfig,
   MappingSuggestion,
   PendingDerivedSourceDraft,
+  RuleCondition,
   RuleGroup,
   SchemaNode,
   SourceTargetInfo,
   TableNode,
+  MappingState,
 } from "@/features/sttm/types/sttm.types";
 
 // ─── helpers ───────────────────────────────────────────────────────
@@ -217,7 +220,49 @@ type SttmBuilderState = {
 
   sourceFilterSql: string;
   sourceFilterGroups: RuleGroup[];
+
+  mappings: MappingState[];
+  selectedMappingIds: string[];
+  mappingSql: string;
+  isPreProcessModalOpen: boolean;
+  activeMappingId: string | null;
 };
+
+function cloneRuleNode(node: RuleGroup | RuleCondition): RuleGroup | RuleCondition {
+  if (node.type === "condition") {
+    return { ...node };
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => cloneRuleNode(child)) as Array<RuleGroup | RuleCondition>,
+  };
+}
+
+function cloneRuleGroups(groups: RuleGroup[]) {
+  return groups.map((group) => cloneRuleNode(group) as RuleGroup);
+}
+
+function extractAssistantDisplayText(response: STTMBuilderEnvelopeResponse): string {
+  const artifact =
+    response.data?.artifact && typeof response.data.artifact === "object"
+      ? (response.data.artifact as Record<string, unknown>)
+      : null;
+
+  const dataMessage =
+    typeof response.data?.message === "string" ? response.data.message.trim() : "";
+  const artifactAnswerText =
+    artifact && typeof artifact.answer_text === "string" ? artifact.answer_text.trim() : "";
+  const rootMessage = typeof response.message === "string" ? response.message.trim() : "";
+
+  const candidates = [dataMessage, artifactAnswerText, rootMessage].filter(Boolean);
+  if (!candidates.length) return "Done.";
+
+  const firstJsonLike = candidates.find(
+    (candidate) => !/^\s*[{[]/.test(candidate) && !candidate.includes('"contract_version"'),
+  );
+
+  return firstJsonLike ?? candidates[0];
+}
 
 const initialLoadState: BuilderLoadState = {
   initial: "idle",
@@ -278,11 +323,15 @@ const initialState: SttmBuilderState = {
 
   sourceFilterSql: "",
   sourceFilterGroups: [],
+
+  mappings: [],
+  selectedMappingIds: [],
+  mappingSql: "",
+  isPreProcessModalOpen: false,
+  activeMappingId: null,
 };
 
 // ─── async thunks ──────────────────────────────────────────────────
-
-const useMockDb = process.env.NEXT_PUBLIC_USE_MOCK_DB === "true";
 
 /** Fetch database list (+ session). Cached: won't refetch if already loaded. */
 export const fetchDatabases = createAsyncThunk(
@@ -291,7 +340,7 @@ export const fetchDatabases = createAsyncThunk(
     try {
       const [databases, userSession] = await Promise.all([
         dbService.getExplorerData(),
-        useMockDb ? Promise.resolve(null) : authService.getSession().catch(() => null),
+        authService.getSession().catch(() => null),
       ]);
       return { databases, session: userSession };
     } catch (err) {
@@ -935,7 +984,7 @@ export const sttmBuilderSlice = createSlice({
       action: PayloadAction<{ sql: string; groups: RuleGroup[] }>
     ) => {
       state.sourceFilterSql = action.payload.sql;
-      state.sourceFilterGroups = action.payload.groups;
+      state.sourceFilterGroups = cloneRuleGroups(action.payload.groups);
     },
 
     clearTargets: (state) => {
@@ -1007,6 +1056,67 @@ export const sttmBuilderSlice = createSlice({
     dismissPendingDerivedSourceDraft: (state) => {
       state.pendingDerivedSourceDraft = null;
       state.derivedSourceDraftRequested = false;
+    },
+
+    // UI Mapping Reducers
+    initializeMappings: (state, action: PayloadAction<MappingState[]>) => {
+      state.mappings = action.payload;
+      state.selectedMappingIds = [];
+    },
+    updateMapping: (state, action: PayloadAction<{ id: string; updates: Partial<MappingState> }>) => {
+      const mapping = state.mappings.find((m) => m.id === action.payload.id);
+      if (mapping) {
+        Object.assign(mapping, action.payload.updates);
+      }
+    },
+    toggleMappingSelection: (state, action: PayloadAction<{ id: string }>) => {
+      const idx = state.selectedMappingIds.indexOf(action.payload.id);
+      if (idx >= 0) {
+        state.selectedMappingIds.splice(idx, 1);
+      } else {
+        state.selectedMappingIds.push(action.payload.id);
+      }
+    },
+    selectAllMappings: (state, action: PayloadAction<{ ids: string[]; select: boolean }>) => {
+      if (action.payload.select) {
+        state.selectedMappingIds = Array.from(new Set([...state.selectedMappingIds, ...action.payload.ids]));
+      } else {
+        state.selectedMappingIds = state.selectedMappingIds.filter((id) => !action.payload.ids.includes(id));
+      }
+    },
+    bulkMarkMapped: (state, action: PayloadAction<{ ids: string[] }>) => {
+      state.mappings.forEach((mapping) => {
+        if (action.payload.ids.includes(mapping.id) && mapping.sourceColumn) {
+          mapping.status = "MAPPED";
+        }
+      });
+      state.selectedMappingIds = [];
+    },
+    bulkSetDirect: (state, action: PayloadAction<{ ids: string[] }>) => {
+      state.mappings.forEach((mapping) => {
+        if (action.payload.ids.includes(mapping.id)) {
+          mapping.rule = "Direct";
+          mapping.expression = null;
+          if (mapping.sourceColumn) {
+            mapping.status = "MAPPED";
+          }
+        }
+      });
+      state.selectedMappingIds = [];
+    },
+    setPreProcessModalOpen: (
+      state,
+      action: PayloadAction<{ open: boolean; mappingId?: string | null }>
+    ) => {
+      state.isPreProcessModalOpen = action.payload.open;
+      if (action.payload.open && action.payload.mappingId) {
+        state.activeMappingId = action.payload.mappingId;
+      } else if (!action.payload.open) {
+        state.activeMappingId = null;
+      }
+    },
+    setMappingSql: (state, action: PayloadAction<{ sql: string }>) => {
+      state.mappingSql = action.payload.sql;
     },
   },
 
@@ -1237,6 +1347,21 @@ export const sttmBuilderSlice = createSlice({
           confidenceScore: val?.confidence_score ?? 0,
         }));
 
+        for (const mapping of state.mappings) {
+          const match = entries.find(
+            ([target]) => target.toUpperCase() === mapping.targetColumn.toUpperCase(),
+          );
+          if (!match) continue;
+          const [, val] = match;
+          const sourceAttribute = val?.source_attributes?.[0];
+          if (!sourceAttribute) continue;
+          mapping.sourceColumn = sourceAttribute;
+          mapping.status = "MAPPED";
+          if (mapping.rule === "Select...") {
+            mapping.rule = "Direct";
+          }
+        }
+
         if (response.message) {
           state.chatMessages.push({ role: "assistant", content: response.message });
         }
@@ -1330,18 +1455,10 @@ export const sttmBuilderSlice = createSlice({
           | "failed"
           | undefined;
         if (action.payload.messageId) {
-          const finalMessage =
-            action.payload.response.message ??
-            action.payload.response.data?.message ??
-            "Done.";
+          const finalMessage = extractAssistantDisplayText(action.payload.response);
           const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
           if (message) {
-            const hasOverlap =
-              finalMessage &&
-              message.content.includes(finalMessage.slice(0, Math.min(40, finalMessage.length)));
-            if (finalMessage && (!message.content.trim() || !hasOverlap)) {
-              message.content = finalMessage;
-            }
+            message.content = finalMessage;
             message.status = responseStatus ?? "completed";
             message.options = clarificationOptions;
             message.isStreaming = false;
@@ -1404,6 +1521,14 @@ export const {
   openPendingDerivedSourceDraft,
   acknowledgePendingDerivedSourceDraft,
   dismissPendingDerivedSourceDraft,
+  initializeMappings,
+  updateMapping,
+  toggleMappingSelection,
+  selectAllMappings,
+  bulkMarkMapped,
+  bulkSetDirect,
+  setPreProcessModalOpen,
+  setMappingSql,
 } = sttmBuilderSlice.actions;
 
 export default sttmBuilderSlice.reducer;

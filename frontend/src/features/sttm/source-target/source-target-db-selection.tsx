@@ -67,7 +67,7 @@ export default function DataSelectionPanel() {
     derived: true,
   });
 
-  if (loadState.initial === "loading" || !fullData) {
+  if (loadState.initial === "loading") {
     return (
       <SidebarStateShell>
         <Box sx={{ textAlign: "center" }}>
@@ -141,7 +141,7 @@ export default function DataSelectionPanel() {
   }
 
   const hasDatabases =
-    fullData.sources.length > 0 || fullData.targets.length > 0;
+    (fullData?.sources?.length ?? 0) > 0 || (fullData?.targets?.length ?? 0) > 0;
 
   if (!hasDatabases) {
     return (
@@ -751,8 +751,8 @@ export default function DataSelectionPanel() {
       </Box>
 
       <Box sx={{ flex: 1, overflowY: "auto", px: 1 }}>
-        {renderDatabaseSection("Source Selection", fullData.sources, "source")}
-        {renderDatabaseSection("Target Selection", fullData.targets, "target")}
+        {renderDatabaseSection("Source Selection", fullData?.sources || [], "source")}
+        {renderDatabaseSection("Target Selection", fullData?.targets || [], "target")}
         {renderDerivedSourcesSection()}
       </Box>
     </Box>

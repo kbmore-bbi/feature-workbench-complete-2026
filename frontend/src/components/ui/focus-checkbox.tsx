@@ -8,6 +8,7 @@ const FocusCheckbox = (props: any) => {
         <Checkbox
             size="small"
             checked={props.checked}
+            indeterminate={props.indeterminate}
             onChange={(e: any) => props.checkHandler(e.target.checked)}
             onClick={(e) => e.stopPropagation()}
             sx={{

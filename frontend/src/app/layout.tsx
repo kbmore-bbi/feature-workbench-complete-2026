@@ -16,11 +16,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta name="emotion-insertion-point" content="" />
       </head>
-      <body>
+      <body suppressHydrationWarning>
         <Providers>
           <AppHeader />
           {children}

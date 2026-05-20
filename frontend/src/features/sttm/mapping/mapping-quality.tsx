@@ -4,6 +4,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import {
   Box,
   Button,
+  Chip,
   LinearProgress,
   Paper,
   Typography,
@@ -106,7 +107,7 @@ export default function MappingQualityPanel({
 }: MappingQualityPanelProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("validate");
 
-  const { targets, targetAttributeGroup, sourceFilterSql } =
+  const { targets, targetAttributeGroup, sourceFilterSql, mappings } =
     useSttmBuilderContext();
 
   const selectedTargetQualifiedName = useMemo(() => {
@@ -123,14 +124,35 @@ export default function MappingQualityPanel({
   }, [targetAttributeGroup]);
 
   const generatedSql = useMemo(() => {
-    const targetQualified = selectedTargetQualifiedName?.trim() ?? "DWH.FACT_SALES_UNIFIED";
+    const targetQualified = selectedTargetQualifiedName?.trim() ?? "TARGET_TABLE";
     const today = new Date().toISOString().slice(0, 10);
 
-    const hardcodedSelect = `  so.orders_order_id                AS ${insertColumnName}`;
+    const insertColumns = mappings
+      .filter((m) => m.status === "MAPPED")
+      .map((m) => `  ${m.targetColumn}`)
+      .join(",\n");
+
+    const selectColumns = mappings
+      .filter((m) => m.status === "MAPPED")
+      .map((m) => {
+        let expr = m.expression || m.sourceColumn || "NULL";
+        return `  ${expr.padEnd(30)} AS ${m.targetColumn}`;
+      })
+      .join(",\n");
 
     const fromBody = sourceFilterSql.trim()
       ? indentBlock(sourceFilterSql.trim(), "  ")
       : "  -- No filter conditions defined (use Filter Conditions on Step 1)";
+
+    if (!insertColumns) {
+      return [
+        "-- STTM Builder - Auto-generated SQL",
+        `-- Target: ${targetQualified}`,
+        `-- Date: ${today}`,
+        "",
+        "-- No columns mapped yet. Map columns to generate SQL.",
+      ].join("\n");
+    }
 
     return [
       "-- STTM Builder - Auto-generated SQL",
@@ -138,15 +160,15 @@ export default function MappingQualityPanel({
       `-- Date: ${today}`,
       "",
       `INSERT INTO ${targetQualified} (`,
-      `  ${insertColumnName}`,
+      insertColumns,
       `)`,
       `SELECT`,
-      hardcodedSelect,
+      selectColumns,
       `FROM`,
       fromBody,
       `;`,
     ].join("\n");
-  }, [insertColumnName, selectedTargetQualifiedName, sourceFilterSql]);
+  }, [selectedTargetQualifiedName, sourceFilterSql, mappings]);
 
   const progressValue = totalCount > 0 ? (mappedCount / totalCount) * 100 : 0;
 
@@ -174,17 +196,30 @@ export default function MappingQualityPanel({
           Mapping Quality
         </Typography>
 
-        <Typography
-          sx={{
-            mt: 1,
-            mb: 0.75,
-            fontSize: "11px",
-            fontWeight: 600,
-            color: "var(--color-text)",
-          }}
-        >
-          {mappedCount}/{totalCount}
-        </Typography>
+        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 1, mb: 0.75 }}>
+          <Typography
+            sx={{
+              fontSize: "11px",
+              fontWeight: 600,
+              color: "var(--color-text)",
+            }}
+          >
+            {mappedCount}/{totalCount}{" "}
+            {totalCount > 0 ? `${Math.round((mappedCount / totalCount) * 100)}%` : "0%"}
+          </Typography>
+          <Chip
+            label="Clean"
+            size="small"
+            sx={{
+              height: 20,
+              fontSize: "0.65rem",
+              fontWeight: 700,
+              bgcolor: "#ecfdf5",
+              color: "#059669",
+              border: "1px solid #a7f3d0",
+            }}
+          />
+        </Box>
 
         <LinearProgress
           variant="determinate"
@@ -253,9 +288,10 @@ export default function MappingQualityPanel({
                 fontSize: "11px",
                 color: "var(--color-muted)",
                 mb: 1.5,
+                lineHeight: 1.5,
               }}
             >
-              Validate the mapping SQL to check completeness and rule status.
+              Click Run Validation to check type compatibility &amp; mapping coverage.
             </Typography>
 
             <Button
@@ -269,7 +305,7 @@ export default function MappingQualityPanel({
                 border: "1px solid var(--aia-mapping-button-color)",
                 color: "#ffffff",
                 fontSize: "12px",
-                fontWeight: 600,
+                fontWeight: 700,
                 textTransform: "none",
                 boxShadow: "none",
                 "&:hover": {
@@ -279,7 +315,7 @@ export default function MappingQualityPanel({
                 },
               }}
             >
-              SQL
+              Run Validation
             </Button>
           </Box>
         )}

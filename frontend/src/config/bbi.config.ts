@@ -34,6 +34,8 @@ export const BBI_CONFIG: ClientConfig = {
       secondary: "#012c3f",
 
       background: {
+        primary: "#003D59",
+        secondary: "#ffffff",
         default: "#003D59",
         paper: "#fff",
         subtle: "#ffffff",
@@ -59,7 +61,7 @@ export const BBI_CONFIG: ClientConfig = {
 
 
       border: "#003D59",
-      header:"#ffffff",
+      header: "#ffffff",
 
       states: {
         success: "#10B981",

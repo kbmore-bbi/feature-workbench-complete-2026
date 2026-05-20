@@ -38,7 +38,7 @@ class SemanticBundleLineage(BaseModel):
 
 class SemanticRefreshStatus(BaseModel):
     bundle_id: str
-    bundle_hash: str
+    bundle_hash: str | None = None
     bundle_label: str | None = None
     requested_level: SemanticLevel
     achieved_level: SemanticLevel
@@ -51,7 +51,7 @@ class SemanticRefreshStatus(BaseModel):
 
 class SemanticContextSummary(BaseModel):
     bundle_id: str
-    bundle_hash: str
+    bundle_hash: str | None = None
     bundle_label: str | None = None
     source_table_count: int
     derived_source_count: int
@@ -75,7 +75,7 @@ class SemanticContextRefreshRequest(BaseModel):
 
 class SemanticContextBundleResponse(BaseModel):
     bundle_id: str
-    bundle_hash: str
+    bundle_hash: str | None = None
     bundle_label: str | None = None
     requested_level: SemanticLevel
     achieved_level: SemanticLevel

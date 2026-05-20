@@ -76,6 +76,8 @@ export function getAppTheme(mode: AppThemeMode) {
             '--aia-secondary-color': config.branding.colors.secondary,
             '--aia-primary-text-color': config.branding.colors.text.primary,
             '--aia-secondary-text-color': config.branding.colors.text.secondary,
+            '--aia-avatar-bg':config.branding.colors.background.primary,
+            '--aia-avatar-textColor':config.branding.colors.background.secondary,
             '--aia-header-color': config.branding.colors.background.default,
             '--aia-border-color': config.branding.colors.border,
           },

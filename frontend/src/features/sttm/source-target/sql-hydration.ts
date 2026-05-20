@@ -513,7 +513,20 @@ function fieldTokenToUiValue(
   aliasToTableId: Map<string, string>,
   availableTables: TableMeta[],
 ) {
-  const cleaned = field.replace(/^"+|"+$/g, "");
+  const unwrapFieldExpression = (raw: string): string => {
+    const trimmed = raw.trim();
+    const directField = trimmed.match(/^("?[\w$]+"?)\."?([\w$]+)"?$/);
+    if (directField) return trimmed;
+
+    const wrapperMatch = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)\(([\s\S]+)\)$/);
+    if (!wrapperMatch || !isBalanced(trimmed)) return trimmed;
+
+    const innerArgs = splitTopLevel(wrapperMatch[2], ",");
+    if (!innerArgs.length) return trimmed;
+    return unwrapFieldExpression(innerArgs[0].trim());
+  };
+
+  const cleaned = unwrapFieldExpression(field).replace(/^"+|"+$/g, "");
   const aliasedMatch = cleaned.match(/^([A-Za-z0-9_$"]+)\.([A-Za-z0-9_$"]+)$/);
   if (aliasedMatch) {
     const alias = aliasedMatch[1].replace(/^"+|"+$/g, "").toLowerCase();

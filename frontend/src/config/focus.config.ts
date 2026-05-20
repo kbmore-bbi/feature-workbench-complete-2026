@@ -33,6 +33,8 @@ export const FOCUS_CONFIG: ClientConfig = {
       secondary: "#00C9A7",
 
       background: {
+        primary: "#ffffff",
+        secondary: "#2d2d2d",
         default: "#e5e5e5",
         paper: "#FFFFFF",
         inverse: "#000000",
@@ -61,7 +63,7 @@ export const FOCUS_CONFIG: ClientConfig = {
       },
 
       border: "#F1F1F1",
-      header:'#F1F1F1',
+      header: '#F1F1F1',
 
       states: {
         success: "#10B981",

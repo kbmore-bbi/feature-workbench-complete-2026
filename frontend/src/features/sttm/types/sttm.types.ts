@@ -289,4 +289,40 @@ export type SttmBuilderContextValue = {
   /** Parsed filter tree (keeps UI + preview when navigating away and back). */
   sourceFilterGroups: RuleGroup[];
   setSourceFilterConditions: (payload: { sql: string; groups: RuleGroup[] }) => void;
+
+  // UI Mapping state
+  mappings: MappingState[];
+  selectedMappingIds: string[];
+  mappingSql: string;
+  isPreProcessModalOpen: boolean;
+  activeMappingId: string | null;
+  
+  // Mapping actions
+  initializeMappings: (mappings: MappingState[]) => void;
+  updateMapping: (id: string, updates: Partial<MappingState>) => void;
+  toggleMappingSelection: (id: string) => void;
+  selectAllMappings: (ids: string[], select: boolean) => void;
+  bulkMarkMapped: (ids: string[]) => void;
+  bulkSetDirect: (ids: string[]) => void;
+  setPreProcessModalOpen: (open: boolean, mappingId?: string | null) => void;
+  setMappingSql: (sql: string) => void;
 };
+
+export type MappingStatus = "MAPPED" | "UNMAPPED";
+export type MappingRuleType = "Direct" | "Select..." | "Custom" | string;
+
+export interface MappingState {
+  id: string;
+  targetColumn: string;
+  targetType: string;
+  sourceColumn: string | null;
+  sourceType: string | null;
+  sourceColumns?: string[];
+  expression: string | null;
+  rule: MappingRuleType;
+  status: MappingStatus;
+  nlRule?: string | null;
+  loadOrder?: string | null;
+  description?: string | null;
+  descriptionEdited?: boolean;
+}

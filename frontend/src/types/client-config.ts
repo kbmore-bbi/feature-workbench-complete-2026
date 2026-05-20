@@ -30,6 +30,8 @@ export interface ClientConfig {
       secondary: string;
 
       background: {
+        primary: string,
+        secondary: string,
         default: string;
         paper: string;
         subtle: string;
@@ -54,7 +56,7 @@ export interface ClientConfig {
       }
 
       border: string;
-      header:string;
+      header: string;
 
       states: {
         success: string;

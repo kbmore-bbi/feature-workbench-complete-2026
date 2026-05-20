@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getApiData } from "@/api/axiosInstance";
+import { workbenchService } from "@/services/workbenchService";
 
 type ApiStatus = {
   name: string;
@@ -24,9 +24,7 @@ export function ApiStatusCard() {
 
     async function load() {
       try {
-        const payload = await getApiData<ApiStatus>("/v1/workbench/info", {
-          cache: "no-store",
-        });
+        const payload = await workbenchService.getInfo() as ApiStatus;
         if (!cancelled) {
           setState({ status: "ready", payload });
         }

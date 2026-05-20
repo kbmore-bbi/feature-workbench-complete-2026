@@ -105,8 +105,8 @@ export default function AppHeader({
           sx={{
             width: 28,
             height: 28,
-            bgcolor: "#ffffff",
-            color: "#2d2d2d",
+            bgcolor: "var(--aia-avatar-bg)",
+            color: "var(--aia-avatar-textColor)",
             fontSize: 12,
             fontWeight: 700,
           }}

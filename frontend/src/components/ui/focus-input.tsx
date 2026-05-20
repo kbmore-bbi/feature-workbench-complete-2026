@@ -17,6 +17,10 @@ interface FocusInputProps {
     size?: 'small' | 'medium';
     fullWidth?: boolean;
 
+    multiline?: boolean;
+    minRows?: number;
+    maxRows?: number;
+
     variant?: TextFieldVariants;
     /** Merged into the TextField for layout/density overrides from parents. */
     sx?: SxProps<Theme>;
@@ -31,10 +35,13 @@ const FocusInput = ({
     disabled = false,
     size = 'small',
     fullWidth = true,
+    multiline = false,
+    minRows,
+    maxRows,
     variant = 'outlined',
     sx,
 }: FocusInputProps) => {
-    const handleChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         onChange?.(event.target.value);
     };
     return (
@@ -49,6 +56,9 @@ const FocusInput = ({
                 variant={variant}
                 fullWidth={fullWidth}
                 disabled={disabled}
+                multiline={multiline}
+                minRows={multiline ? (minRows ?? 1) : undefined}
+                maxRows={multiline ? maxRows : undefined}
                 sx={[
                     {
                         '& .MuiInputBase-input': {

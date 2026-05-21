@@ -3,6 +3,7 @@ import { getApiErrorMessage } from "@/api/axiosInstance";
 import { dbService } from "@/services/dbService";
 import { workbenchService, type TableRef } from "@/services/workbenchService";
 import { authService } from "@/services/authService";
+import type { STTMBuilderEnvelopeResponse } from "@/types/api-contract";
 import type {
   BuilderErrorState,
   BuilderLoadState,
@@ -14,6 +15,7 @@ import type {
   JoinConfig,
   MappingSuggestion,
   PendingDerivedSourceDraft,
+  RuleCondition,
   RuleGroup,
   SchemaNode,
   SourceTargetInfo,
@@ -225,6 +227,42 @@ type SttmBuilderState = {
   isPreProcessModalOpen: boolean;
   activeMappingId: string | null;
 };
+
+function cloneRuleNode(node: RuleGroup | RuleCondition): RuleGroup | RuleCondition {
+  if (node.type === "condition") {
+    return { ...node };
+  }
+  return {
+    ...node,
+    children: node.children.map((child) => cloneRuleNode(child)) as Array<RuleGroup | RuleCondition>,
+  };
+}
+
+function cloneRuleGroups(groups: RuleGroup[]) {
+  return groups.map((group) => cloneRuleNode(group) as RuleGroup);
+}
+
+function extractAssistantDisplayText(response: STTMBuilderEnvelopeResponse): string {
+  const artifact =
+    response.data?.artifact && typeof response.data.artifact === "object"
+      ? (response.data.artifact as Record<string, unknown>)
+      : null;
+
+  const dataMessage =
+    typeof response.data?.message === "string" ? response.data.message.trim() : "";
+  const artifactAnswerText =
+    artifact && typeof artifact.answer_text === "string" ? artifact.answer_text.trim() : "";
+  const rootMessage = typeof response.message === "string" ? response.message.trim() : "";
+
+  const candidates = [dataMessage, artifactAnswerText, rootMessage].filter(Boolean);
+  if (!candidates.length) return "Done.";
+
+  const firstJsonLike = candidates.find(
+    (candidate) => !/^\s*[{[]/.test(candidate) && !candidate.includes('"contract_version"'),
+  );
+
+  return firstJsonLike ?? candidates[0];
+}
 
 const initialLoadState: BuilderLoadState = {
   initial: "idle",
@@ -946,7 +984,7 @@ export const sttmBuilderSlice = createSlice({
       action: PayloadAction<{ sql: string; groups: RuleGroup[] }>
     ) => {
       state.sourceFilterSql = action.payload.sql;
-      state.sourceFilterGroups = action.payload.groups;
+      state.sourceFilterGroups = cloneRuleGroups(action.payload.groups);
     },
 
     clearTargets: (state) => {
@@ -1417,18 +1455,10 @@ export const sttmBuilderSlice = createSlice({
           | "failed"
           | undefined;
         if (action.payload.messageId) {
-          const finalMessage =
-            action.payload.response.message ??
-            action.payload.response.data?.message ??
-            "Done.";
+          const finalMessage = extractAssistantDisplayText(action.payload.response);
           const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
           if (message) {
-            const hasOverlap =
-              finalMessage &&
-              message.content.includes(finalMessage.slice(0, Math.min(40, finalMessage.length)));
-            if (finalMessage && (!message.content.trim() || !hasOverlap)) {
-              message.content = finalMessage;
-            }
+            message.content = finalMessage;
             message.status = responseStatus ?? "completed";
             message.options = clarificationOptions;
             message.isStreaming = false;

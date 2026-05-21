@@ -340,12 +340,16 @@ const SourceTargetAttributeList = () => {
                   >
                     <Box
                       sx={{ display: 'flex', alignItems: 'center', gap: 0.75, width: '100%', minWidth: 0 }}
-                      onClick={(e) => e.stopPropagation()}
                     >
                       <IconButton
+                        component="span"
                         size="small"
                         aria-label={source.isSelected ? 'Deselect derived source' : 'Select derived source'}
-                        onClick={() => toggleDerivedSource(source.id)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          toggleDerivedSource(source.id);
+                        }}
                         sx={{ p: 0.25 }}
                       >
                         {source.isSelected ? (

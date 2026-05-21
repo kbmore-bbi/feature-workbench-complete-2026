@@ -11,13 +11,14 @@ import CloseIcon from '@mui/icons-material/Close';
 import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import { useRouter } from 'next/navigation';
 import Footer from '@/features/layout/app-footer';
+import { CLIENT_CONFIG as config } from '@/config/client.config';
 
 /* --- FEATURE CARD SUB-COMPONENT --- */
 const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
   <Paper
     elevation={0}
     sx={{
-      bgcolor: '#e5e5e5',
+      bgcolor: 'var(--aia-card-color)',
       borderRadius: '16px',
       width: '160px',
       height: '160px',
@@ -31,7 +32,7 @@ const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
     <Box sx={{ bgcolor: '#fff', p: 1, borderRadius: '50%', display: 'flex', border: '1px solid #ccc' }}>
       {React.cloneElement(icon, { sx: { fontSize: 24, color: '#000' } })}
     </Box>
-    <Typography sx={{ fontWeight: 600, fontSize: '0.8rem', color: '#000', textAlign: 'center' }}>
+    <Typography sx={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--aia-primary-text-color)', textAlign: 'center' }}>
       {title}
     </Typography>
   </Paper>
@@ -48,7 +49,7 @@ export default function HomePage() {
       {/* 1. TOP HEADER (Welcome Message) */}
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 4 }}>
         <Box sx={{
-          backgroundColor: '#e5e5e5', // Light gray background
+          backgroundColor: 'var(--aia-card-color)', // Light gray background
           px: 2,
           py: 0.5,
           borderRadius: '20px',
@@ -56,7 +57,7 @@ export default function HomePage() {
           display: 'flex',
           alignItems: 'center'
         }}>
-          <Typography variant="caption" sx={{ color: '#555' }}>
+          <Typography variant="caption" sx={{ color: 'var(--aia-primary-text-color)' }}>
             Welcome User!
           </Typography>
         </Box>
@@ -85,7 +86,7 @@ export default function HomePage() {
             }}
           >
             <Typography sx={{ fontWeight: 800, fontSize: '0.9rem', mb: 2 }}>
-              FOCUS FINANCIAL PARTNERS
+              {config.app.clientTitle}
             </Typography>
             <Typography variant="h1" sx={{ fontWeight: 900, fontSize: '4rem', lineHeight: 1, mb: 3 }}>
               AI-Assisted <br /> Migration Workbench
@@ -111,7 +112,7 @@ export default function HomePage() {
             </Stack>
 
             <Button variant="contained"
-              sx={{ bgcolor: '#007bb2', textTransform: 'none', px: 5, py: 1.5, borderRadius: '10px', fontWeight: 700 }}
+              sx={{ bgcolor: 'var(--aia-button-color)', textTransform: 'none', px: 5, py: 1.5, borderRadius: '10px', fontWeight: 700 }}
               onClick={() => router.push('/dashboard')} >
               Get Started
             </Button>

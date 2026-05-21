@@ -374,6 +374,7 @@ class STTMBuilderService:
             semantic_level_achieved,
             semantic_refresh_status,
         ) = self._parse_chat_response(raw_text, raw_payload)
+        warnings = self._normalize_response_warnings(warnings)
         artifact_type, artifact = self._coerce_chat_artifact(
             req,
             artifact_type=artifact_type,
@@ -420,6 +421,38 @@ class STTMBuilderService:
                 artifact=artifact,
             ),
         )
+
+    @staticmethod
+    def _normalize_response_warnings(warnings: list[Any] | None) -> list[ApiWarning]:
+        normalized: list[ApiWarning] = []
+        for index, warning in enumerate(warnings or []):
+            if isinstance(warning, ApiWarning):
+                normalized.append(warning)
+                continue
+            if isinstance(warning, dict):
+                code = str(warning.get("code") or "AGENT_WARNING").strip() or "AGENT_WARNING"
+                message = str(warning.get("message") or warning.get("detail") or warning).strip()
+                if not message:
+                    continue
+                field_value = warning.get("field")
+                normalized.append(
+                    ApiWarning(
+                        code=code,
+                        message=message,
+                        field=str(field_value) if field_value else None,
+                    )
+                )
+                continue
+            text = str(warning).strip()
+            if not text:
+                continue
+            normalized.append(
+                ApiWarning(
+                    code=f"AGENT_WARNING_{index + 1}",
+                    message=text,
+                )
+            )
+        return normalized
 
     @staticmethod
     def _artifact_type_for_response(

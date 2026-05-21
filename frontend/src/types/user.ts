@@ -5,7 +5,7 @@ export type PermissionSet = {
   can_manage_users: boolean;
   can_view_audit: boolean;
 };
-
+ 
 export type UserSession = {
   user_id: number;
   email: string;

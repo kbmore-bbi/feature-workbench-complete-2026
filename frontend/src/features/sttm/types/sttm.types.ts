@@ -60,6 +60,11 @@ export type RuleCondition = {
   field: string;
   operator: string;
   value: string;
+  valueMode?: "literal" | "field";
+  valueField?: string;
+  secondaryValue?: string;
+  secondaryValueMode?: "literal" | "field";
+  secondaryValueField?: string;
 };
 
 export type RuleGroup = {

@@ -12,6 +12,7 @@ import OpenInFullIcon from '@mui/icons-material/OpenInFull';
 import { useRouter } from 'next/navigation';
 import Footer from '@/features/layout/app-footer';
 import AppHeader from '@/features/layout/app-header';
+import { CLIENT_CONFIG as config } from '@/config/client.config';
 
 /* --- FEATURE CARD SUB-COMPONENT --- */
 const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
@@ -86,7 +87,7 @@ export default function LandingPage() {
             }}
           >
             <Typography sx={{ fontWeight: 800, fontSize: '0.9rem', mb: 2 }}>
-              FOCUS FINANCIAL PARTNERS
+              {config.app.clientTitle}
             </Typography>
             <Typography variant="h1" sx={{ fontWeight: 900, fontSize: '4rem', lineHeight: 1, mb: 3 }}>
               AI-Assisted <br /> Migration Workbench

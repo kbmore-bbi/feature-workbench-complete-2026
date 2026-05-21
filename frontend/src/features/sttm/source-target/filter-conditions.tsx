@@ -14,29 +14,7 @@ import { FocusButton } from "@/components/ui/focus-button";
 import { FocusSelect } from "@/components/ui/focus-select";
 import { FocusInput } from "@/components/ui/focus-input";
 
-export type RuleLogic = "AND" | "OR" | "NOT";
-
-export type RuleCondition = {
-  id: string;
-  type: "condition";
-  field: string;
-  operator: string;
-  value: string;
-  valueMode?: "literal" | "field";
-  valueField?: string;
-  secondaryValue?: string;
-  secondaryValueMode?: "literal" | "field";
-  secondaryValueField?: string;
-};
-
-export type RuleGroup = {
-  id: string;
-  type: "group";
-  logic: RuleLogic;
-  children: (RuleGroup | RuleCondition)[];
-};
-
-export type RuleNode = RuleGroup | RuleCondition;
+export type { RuleLogic, RuleCondition, RuleGroup, RuleNode };
 
 export type GroupByItem = {
   id: string;
@@ -109,6 +87,23 @@ function serializeRuleNode(node: RuleNode): string {
     logic: node.logic,
     children: node.children.map((child) => serializeRuleNode(child)),
   });
+}
+
+function cloneRuleNode(node: RuleNode): RuleNode {
+  if (node.type === "condition") {
+    return {
+      ...node,
+    };
+  }
+
+  return {
+    ...node,
+    children: node.children.map((child) => cloneRuleNode(child)) as Array<RuleGroup | RuleCondition>,
+  };
+}
+
+function cloneRuleGroups(groups: RuleGroup[] | undefined) {
+  return (groups ?? []).map((group) => cloneRuleNode(group) as RuleGroup);
 }
 
 export function FilterConditions({
@@ -199,7 +194,7 @@ export function FilterConditions({
     [normalizeFieldValue]
   );
 
-  const [rootGroups, _setRootGroups] = useState<RuleGroup[]>(initialGroups || []);
+  const [rootGroups, _setRootGroups] = useState<RuleGroup[]>(cloneRuleGroups(initialGroups));
   const [activeTab, setActiveTab] = useState<"filters" | "grouping" | "sorting">("filters");
   const [groupByItems, setGroupByItems] = useState<GroupByItem[]>(
     (initialGroupBy ?? []).map((field) => ({
@@ -220,7 +215,9 @@ export function FilterConditions({
 
   React.useEffect(() => {
     if (initialGroups) {
-      const normalized = initialGroups.map((group) => normalizeRuleNode(group) as RuleGroup);
+      const normalized = cloneRuleGroups(initialGroups).map(
+        (group) => normalizeRuleNode(group) as RuleGroup
+      );
       _setRootGroups((prev) => {
         const prevSignature = prev.map((group) => serializeRuleNode(group)).join("|");
         const nextSignature = normalized.map((group) => serializeRuleNode(group)).join("|");
@@ -846,15 +843,14 @@ export function FilterConditions({
   };
 
   const fullSql = rootGroups.map((g) => generateSQL(g, 0)).join("\n\nAND\n\n");
-  const resolvedPreviewSql =
-    previewSql?.trim() ||
-    [
-      fullSql ? `WHERE\n${fullSql}` : "",
-      groupBySql ? `GROUP BY\n  ${groupBySql}` : "",
-      orderBySql ? `ORDER BY\n  ${orderBySql}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n");
+  const resolvedPreviewSql = [
+    previewSql?.trim() ?? "",
+    fullSql ? `WHERE\n${fullSql}` : "",
+    groupBySql ? `GROUP BY\n  ${groupBySql}` : "",
+    orderBySql ? `ORDER BY\n  ${orderBySql}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   const rootCount = rootGroups.length;
   const rootBadgeLabel =

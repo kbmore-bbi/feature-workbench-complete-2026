@@ -32,11 +32,18 @@ export interface FocusAutocompleteProps {
 }
 
 function normalizeOutgoingValue(
-  newValue: FocusAutocompleteOption | FocusAutocompleteOption[] | string | null,
+  newValue:
+    | FocusAutocompleteOption
+    | FocusAutocompleteOption[]
+    | (FocusAutocompleteOption | string)[]
+    | string
+    | null,
   multiple: boolean,
 ): string | string[] {
   if (multiple) {
-    return Array.isArray(newValue) ? newValue.map((item) => item.value) : [];
+    return Array.isArray(newValue)
+      ? newValue.map((item) => (typeof item === 'string' ? item : item.value))
+      : [];
   }
   if (typeof newValue === 'string') {
     return newValue;
@@ -94,7 +101,12 @@ const FocusAutocomplete = ({
   const handleChange = useCallback(
     (
       _event: React.SyntheticEvent,
-      newValue: FocusAutocompleteOption | FocusAutocompleteOption[] | string | null,
+      newValue:
+        | FocusAutocompleteOption
+        | FocusAutocompleteOption[]
+        | (FocusAutocompleteOption | string)[]
+        | string
+        | null,
     ) => {
       const nextValue = normalizeOutgoingValue(newValue, multiple);
       if (multiple) {

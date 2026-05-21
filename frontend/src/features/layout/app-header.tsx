@@ -8,8 +8,11 @@ import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownR
 import { Avatar, Box, IconButton, Tooltip, Typography } from "@mui/material";
 import { useThemeMode } from "@/app/Providers";
 import Link from 'next/link';
+import { usePathname, useRouter } from "next/navigation";
 import { authService } from "@/services/authService";
 import type { UserSession } from "@/types/user";
+import { useAppSelector } from "@/store/hooks";
+import BuilderContentHeader from "@/features/sttm/layout/builder-content-header";
 import { CLIENT_CONFIG as config } from '@/config/client.config';
 
 
@@ -24,6 +27,9 @@ export default function AppHeader({
 }: AppHeaderProps) {
   const { mode, toggleMode } = useThemeMode();
   const [session, setSession] = useState<UserSession | null>(null);
+  const pathname = usePathname();
+  const router = useRouter();
+  const { sources, targets, mappings } = useAppSelector((state) => state.sttmBuilder);
 
   useEffect(() => {
     let cancelled = false;
@@ -58,6 +64,16 @@ export default function AppHeader({
     .slice(0, 2)
     .toUpperCase();
 
+  const isSttmBuilderHeader =
+    pathname === "/sttm/builder/new" || pathname === "/sttm/builder/new/mapping";
+  const currentStep: 1 | 2 = pathname.includes("/mapping") ? 2 : 1;
+  const tableCount =
+    sources.filter((table) => table.isSelected).length +
+    (targets.some((table) => table.isSelected) ? 1 : 0);
+  const mappedCount = mappings.filter((mapping) => mapping.status === "MAPPED").length;
+  const canProceedToMapping =
+    sources.some((table) => table.isSelected) && targets.some((table) => table.isSelected);
+
   return (
     <Box className="flex h-[60px] w-full shrink-0 items-center justify-between bg-[var(--aia-header-bgColor)] border-b-1 border-[var(--aia-border-color)] px-5 text-[var(--color-header-text)]">
       <Box className="flex items-center gap-3">
@@ -78,28 +94,56 @@ export default function AppHeader({
         </Typography>
       </Box>
 
-      <Box className="flex items-center gap-3">
-        <Tooltip title={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}>
-          <IconButton
-            onClick={toggleMode}
-            aria-label="Toggle light and dark theme"
-            sx={{
-              width: 32,
-              height: 32,
-              borderRadius: "4px",
-              border: "1px solid rgba(255,255,255,0.28)",
-              "&:hover": {
-                backgroundColor: "rgba(115, 109, 109, 0.08)",
-              },
-            }}
-          >
-            {mode === "light" ? (
-              <DarkModeRoundedIcon sx={{ fontSize: 18 }} />
-            ) : (
-              <LightModeRoundedIcon sx={{ fontSize: 18 }} />
-            )}
-          </IconButton>
-        </Tooltip>
+    {isSttmBuilderHeader ? (
+      <Box sx={{ mx: 4, flex: 1, minWidth: 0 }}>
+        <BuilderContentHeader
+          embedded
+          currentStep={currentStep}
+          tableCount={tableCount}
+          mappingCount={mappedCount}
+          onProceed={() => {
+            if (!canProceedToMapping) {
+              return;
+            }
+            router.push("/sttm/builder/new/mapping");
+          }}
+          onRunValidation={() => {
+            window.dispatchEvent(new CustomEvent("sttm:run-validation"));
+          }}
+          onPublish={() => console.log("publish mapping")}
+          onStepChange={(step) => {
+            if (step === 1) {
+              router.push("/sttm/builder/new");
+            } else if (canProceedToMapping) {
+              router.push("/sttm/builder/new/mapping");
+            }
+          }}
+        />
+      </Box>
+    ) : null}
+
+    <Box className="flex items-center gap-3 shrink-0">
+      <Tooltip title={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}>
+        <IconButton
+          onClick={toggleMode}
+          aria-label="Toggle light and dark theme"
+          sx={{
+            width: 32,
+            height: 32,
+            borderRadius: "4px",
+            border: "1px solid rgba(255,255,255,0.28)",
+            "&:hover": {
+              backgroundColor: "rgba(115, 109, 109, 0.08)",
+            },
+          }}
+        >
+          {mode === "light" ? (
+            <DarkModeRoundedIcon sx={{ fontSize: 18 }} />
+          ) : (
+            <LightModeRoundedIcon sx={{ fontSize: 18 }} />
+          )}
+        </IconButton>
+      </Tooltip>
 
         <Avatar
           sx={{

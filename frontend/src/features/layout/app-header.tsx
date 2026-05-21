@@ -59,7 +59,14 @@ export default function AppHeader({
     .toUpperCase();
 
   return (
-    <Box className="flex h-[60px] w-full shrink-0 items-center justify-between bg-[var(--aia-header-bgColor)] border-b-1 border-[var(--aia-border-color)] px-5 text-[var(--color-header-text)]">
+    <Box
+      className="flex h-[60px] w-full shrink-0 items-center justify-between px-5"
+      sx={{
+        backgroundColor: "var(--aia-header-bgColor)",
+        borderBottom: "1px solid var(--aia-border-color)",
+        color: "var(--color-header-text)",
+      }}
+    >
       <Box className="flex items-center gap-3">
         <Box className="flex h-15 w-15 items-center justify-center overflow-hidden rounded-sm ">
           <Link href="/home">
@@ -73,7 +80,10 @@ export default function AppHeader({
           </Link>
         </Box>
 
-        <Typography className="font-[var(--font-body)] text-[16px] font-semibold pt-2 ">
+        <Typography
+          className="text-[16px] font-semibold pt-2"
+          sx={{ fontFamily: "var(--font-body)" }}
+        >
           AIA Migration Workbench
         </Typography>
       </Box>
@@ -115,10 +125,16 @@ export default function AppHeader({
         </Avatar>
 
         <Box className="leading-tight">
-          <Typography className="font-[var(--font-body)] text-[12px] font-semibold ">
+          <Typography
+            className="text-[12px] font-semibold"
+            sx={{ fontFamily: "var(--font-body)" }}
+          >
             {resolvedUserName}
           </Typography>
-          <Typography className="font-[var(--font-body)] text-[11px]/70">
+          <Typography
+            className="text-[11px]/70"
+            sx={{ fontFamily: "var(--font-body)" }}
+          >
             {resolvedRole}
           </Typography>
         </Box>

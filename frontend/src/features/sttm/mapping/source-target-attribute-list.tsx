@@ -153,7 +153,7 @@ const SourceTargetAttributeList = () => {
           </Typography>
 
           <Box className="flex h-[38px] items-center justify-between rounded-full bg-[#F3F4F6] px-4">
-            <Typography className="text-[13px] font-medium text-[var(--color-text)]">
+            <Typography className="text-[13px] font-medium" sx={{ color: "var(--color-text)" }}>
               Cortex
             </Typography>
             <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: '#4B5563' }} />
@@ -420,7 +420,7 @@ const SourceTargetAttributeList = () => {
       <Divider />
 
       {/* 3. TARGET TABLE SECTION */}
-      <Box className="bg-[var(--color-header-bg)]" sx={{ p: 2, flexShrink: 0 }}>
+      <Box sx={{ p: 2, flexShrink: 0, backgroundColor: "var(--color-header-bg)" }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography
             variant="subtitle1"

@@ -413,7 +413,13 @@ export default function AIAgentPanel({
         backgroundColor: "#ffffff",
       }}
     >
-      <Box sx={{ p: 2.25, backgroundColor: 'var(--aia-assitant-header-color)', color: 'var(--aia-assitant-header-textColor' }}>
+      <Box
+        sx={{
+          p: 2.25,
+          backgroundColor: "var(--aia-assitant-header-color)",
+          color: "var(--aia-assitant-header-textColor)",
+        }}
+      >
         <Stack
           sx={{
             flexDirection: "row",

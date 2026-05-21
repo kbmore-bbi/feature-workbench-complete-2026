@@ -116,10 +116,10 @@ export default function AppHeader({
 
         <Box className="leading-tight">
           <Typography className="font-[var(--font-body)] text-[12px] font-semibold ">
-            {userName}
+            {resolvedUserName}
           </Typography>
           <Typography className="font-[var(--font-body)] text-[11px]/70">
-            {role}
+            {resolvedRole}
           </Typography>
         </Box>
 

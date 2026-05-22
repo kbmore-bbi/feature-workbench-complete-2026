@@ -33,7 +33,8 @@ import { fetchAttributes } from '@/features/sttm/store/sttm-builder-slice';
 import { dbService } from '@/services/dbService';
 import { buildMappingInsertSql, buildMappingSelectSql } from '@/features/sttm/mapping/mapping-utils';
 
-type MappingTab = 'mapping' | 'sql-preview' | 'data-preview' | 'data-lineage';
+type MappingTab = 'mapping' | 'sql-preview' | 'data-preview' 
+// | 'data-lineage';
 
 const SQL_KEYWORDS = new Set([
   'AS',
@@ -475,7 +476,7 @@ export default function MappingPage() {
     { key: 'mapping', label: 'Mapping', icon: <ChecklistRtlRoundedIcon sx={{ fontSize: 17 }} /> },
     { key: 'sql-preview', label: 'SQL Preview', icon: <CodeRoundedIcon sx={{ fontSize: 17 }} /> },
     { key: 'data-preview', label: 'Data Preview', icon: <TableRowsRoundedIcon sx={{ fontSize: 17 }} /> },
-    { key: 'data-lineage', label: 'Data Lineage', icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
+    // { key: 'data-lineage', label: 'Data Lineage', icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
   ];
 
   const handleCopySql = async () => {
@@ -489,7 +490,7 @@ export default function MappingPage() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-white">
       <Box
         sx={{
           display: 'flex',
@@ -554,7 +555,7 @@ export default function MappingPage() {
         </Box>
       </Box>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden">
         {activeTab === 'mapping' ? (
           <div className="min-w-0 flex-1 overflow-hidden">
             <SourceTargetAttributeMapping />
@@ -565,6 +566,8 @@ export default function MappingPage() {
           <Box
             sx={{
               flex: 1,
+              width: '100%',
+              minWidth: 0,
               minHeight: 0,
               overflow: 'hidden',
               backgroundColor: '#0b1220',
@@ -741,8 +744,11 @@ export default function MappingPage() {
         ) : null}
 
         {activeTab === 'data-preview' ? (
-          <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', p: 2, backgroundColor: '#fff' }}>
-            <Paper elevation={0} sx={{ border: '1px solid #e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
+          <Box sx={{ flex: 1, width: '100%', minWidth: 0, minHeight: 0, overflow: 'auto', p: 2, backgroundColor: '#fff' }}>
+            <Paper
+              elevation={0}
+              sx={{ border: '1px solid #e5e7eb', borderRadius: 3, overflow: 'hidden', width: '100%' }}
+            >
               <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Typography sx={{ fontSize: '0.85rem', fontWeight: 800, color: '#111827' }}>
                   Result preview
@@ -803,9 +809,9 @@ export default function MappingPage() {
             </Paper>
           </Box>
         ) : null}
-
+{/* 
         {activeTab === 'data-lineage' ? (
-          <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', p: 2 }}>
+          <Box sx={{ flex: 1, width: '100%', minWidth: 0, minHeight: 0, overflow: 'auto', p: 2 }}>
             <Paper
               elevation={0}
               sx={{
@@ -813,6 +819,7 @@ export default function MappingPage() {
                 borderRadius: 3,
                 p: 3,
                 minHeight: 260,
+                width: '100%',
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
@@ -823,7 +830,7 @@ export default function MappingPage() {
               </Typography>
             </Paper>
           </Box>
-        ) : null}
+        ) : null} */}
       </div>
       <PreProcessModal />
     </div>

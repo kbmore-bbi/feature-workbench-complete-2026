@@ -29,7 +29,13 @@ const navItems = [
 export default function DashboardSidebar() {
     const route = useRouter();
     return (
-        <Box className="flex w-[260px] shrink-0 flex-col border-r border-[var(--color-soft-border)] bg-[var(--color-surface)] px-5 py-6">
+        <Box
+            className="flex w-[260px] shrink-0 flex-col px-5 py-6"
+            sx={{
+                borderRight: "1px solid var(--color-soft-border)",
+                backgroundColor: "var(--color-surface)",
+            }}
+        >
             <Box className="flex items-center gap-3">
                 
 
@@ -40,7 +46,7 @@ export default function DashboardSidebar() {
                 
 
                 <Box className="flex h-[38px] items-center justify-between rounded-full bg-[#F3F4F6] px-4">
-                    <Typography className="text-[13px] font-medium text-[var(--color-text)]">
+                    <Typography className="text-[13px] font-medium" sx={{ color: "var(--color-text)" }}>
                         Cortex
                     </Typography>
                     <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#4B5563" }} />

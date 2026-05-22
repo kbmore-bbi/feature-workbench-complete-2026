@@ -708,8 +708,11 @@ export default function DataSelectionPanel() {
           STTM Builder
         </Typography>
 
-        <Box className="mb-3 flex h-[38px] items-center justify-between rounded-full bg-[var(--color-surface-muted)] px-4">
-          <Typography className="text-[13px] font-medium text-[var(--color-text)]">
+        <Box
+          className="mb-3 flex h-[38px] items-center justify-between rounded-full px-4"
+          sx={{ backgroundColor: "var(--color-surface-muted)" }}
+        >
+          <Typography className="text-[13px] font-medium" sx={{ color: "var(--color-text)" }}>
             Cortex
           </Typography>
           <KeyboardArrowDownRoundedIcon

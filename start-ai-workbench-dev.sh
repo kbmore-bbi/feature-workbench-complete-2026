@@ -45,4 +45,33 @@ echo "Starting frontend on http://127.0.0.1:${FRONTEND_PORT}"
 ) &
 FRONTEND_PID=$!
 
-wait
+EXIT_STATUS=0
+
+while true; do
+  if ! kill -0 "${BACKEND_PID}" 2>/dev/null; then
+    if wait "${BACKEND_PID}"; then
+      EXIT_STATUS=0
+    else
+      EXIT_STATUS=$?
+    fi
+    break
+  fi
+
+  if ! kill -0 "${FRONTEND_PID}" 2>/dev/null; then
+    if wait "${FRONTEND_PID}"; then
+      EXIT_STATUS=0
+    else
+      EXIT_STATUS=$?
+    fi
+    break
+  fi
+
+  sleep 1
+done
+
+cleanup
+
+wait "${BACKEND_PID}" 2>/dev/null || true
+wait "${FRONTEND_PID}" 2>/dev/null || true
+
+exit "${EXIT_STATUS}"

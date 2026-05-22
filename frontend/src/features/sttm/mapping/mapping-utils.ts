@@ -1,4 +1,4 @@
-import type { ColumnGroup, DerivedSource } from '@/features/sttm/types/sttm.types';
+import type { ColumnGroup, DerivedSource, MappingState } from '@/features/sttm/types/sttm.types';
 
 export type SourceColumnOption = {
   label: string;
@@ -62,12 +62,11 @@ export function buildSourceColumnOptions(
   const options: SourceColumnOption[] = [];
 
   for (const group of sourceAttributeGroups) {
-    const alias = tableAlias(group.table);
     for (const column of group.columns) {
       if (!column.name) continue;
       options.push({
-        label: `${alias}.${column.name}`,
-        value: `${alias}.${column.name}`,
+        label: `${group.table}.${column.name}`,
+        value: `${group.qualifiedName}.${column.name}`,
         dataType: column.type || 'VARCHAR',
         group: group.table,
       });
@@ -138,4 +137,122 @@ export function parseSourceColumns(value: string | null | undefined): string[] {
     .split(',')
     .map((part) => part.trim())
     .filter(Boolean);
+}
+
+function normalizeBaseQuerySql(baseSql: string) {
+  const trimmed = baseSql.trim().replace(/;+\s*$/, '');
+  if (!trimmed) return '';
+  return trimmed.replace(/^SELECT\s+\*\s+/i, '');
+}
+
+export function buildMappingExpression(mapping: MappingState) {
+  const sourceColumns =
+    mapping.sourceColumns && mapping.sourceColumns.length
+      ? mapping.sourceColumns
+      : parseSourceColumns(mapping.sourceColumn);
+
+  if (mapping.expression?.trim()) {
+    return mapping.expression.trim();
+  }
+  if (!sourceColumns.length) {
+    return 'NULL';
+  }
+
+  const rule = (mapping.rule || 'Direct').trim().toUpperCase();
+  if (rule === 'DIRECT' || rule === 'SELECT...') {
+    return sourceColumns[0];
+  }
+  if (rule === 'CONCATENATE') {
+    return `CONCAT(${sourceColumns.join(', ')})`;
+  }
+  if (sourceColumns.length === 1 && ['UPPER', 'LOWER', 'TRIM'].includes(rule)) {
+    return `${rule}(${sourceColumns[0]})`;
+  }
+  if (sourceColumns.length === 1 && rule === 'NULLIF') {
+    return `NULLIF(${sourceColumns[0]}, '')`;
+  }
+  return sourceColumns[0];
+}
+
+export function buildMappingSelectSql(params: {
+  mappings: MappingState[];
+  sourceQuerySql: string;
+  sourceFilterSql?: string;
+  sourceGroupBySql?: string;
+  sourceOrderBySql?: string;
+}) {
+  const { mappings, sourceQuerySql, sourceFilterSql, sourceGroupBySql, sourceOrderBySql } = params;
+  const activeMappings = mappings.filter((mapping) => mapping.status === 'MAPPED');
+  if (!activeMappings.length) {
+    return '-- No columns mapped yet. Map columns to generate SQL.';
+  }
+
+  const fromClause = normalizeBaseQuerySql(sourceQuerySql);
+  if (!fromClause) {
+    return '-- Select source tables and relationships in Step 1 to generate SQL.';
+  }
+
+  const lines = [
+    'SELECT',
+    activeMappings
+      .map((mapping) => `  ${buildMappingExpression(mapping)} AS ${mapping.targetColumn}`)
+      .join(',\n'),
+    fromClause,
+  ];
+
+  if (sourceFilterSql?.trim()) {
+    lines.push(`WHERE\n${sourceFilterSql.trim()}`);
+  }
+  if (sourceGroupBySql?.trim()) {
+    lines.push(`GROUP BY\n  ${sourceGroupBySql.trim()}`);
+  }
+  if (sourceOrderBySql?.trim()) {
+    lines.push(`ORDER BY\n  ${sourceOrderBySql.trim()}`);
+  }
+
+  return lines.join('\n');
+}
+
+export function buildMappingInsertSql(params: {
+  mappings: MappingState[];
+  targetQualifiedName: string | null;
+  sourceQuerySql: string;
+  sourceFilterSql?: string;
+  sourceGroupBySql?: string;
+  sourceOrderBySql?: string;
+}) {
+  const {
+    mappings,
+    targetQualifiedName,
+    sourceQuerySql,
+    sourceFilterSql,
+    sourceGroupBySql,
+    sourceOrderBySql,
+  } = params;
+  const selectSql = buildMappingSelectSql({
+    mappings,
+    sourceQuerySql,
+    sourceFilterSql,
+    sourceGroupBySql,
+    sourceOrderBySql,
+  });
+  if (selectSql.startsWith('--')) {
+    return selectSql;
+  }
+
+  const activeMappings = mappings.filter((mapping) => mapping.status === 'MAPPED');
+  const insertColumns = activeMappings.map((mapping) => `  ${mapping.targetColumn}`).join(',\n');
+  const today = new Date().toISOString().slice(0, 10);
+
+  return [
+    '-- STTM Builder - Auto-generated SQL',
+    `-- Target: ${targetQualifiedName ?? 'TARGET_TABLE'}`,
+    `-- Date: ${today}`,
+    '',
+    `INSERT INTO ${targetQualifiedName ?? 'TARGET_TABLE'} (`,
+    insertColumns,
+    ')',
+    selectSql,
+    ';',
+  ].join('\n');
 }

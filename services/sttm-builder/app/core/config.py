@@ -92,6 +92,10 @@ class Settings(BaseSettings):
         default="",
         alias="SNOWFLAKE_STTM_BUILDER_AGENT",
     )
+    snowflake_source_mapping_agent: str = Field(
+        default="",
+        alias="SNOWFLAKE_SOURCE_MAPPING_AGENT",
+    )
     snowflake_semantic_model_agent: str = Field(
         default="",
         alias="SNOWFLAKE_SEMANTIC_MODEL_AGENT",
@@ -210,6 +214,14 @@ class Settings(BaseSettings):
             self.snowflake_semantic_model_agent,
             legacy_object_name="SEMANTIC_MODEL_AGENT",
             default_object_name="AGT_SEMANTIC_MODEL",
+        )
+
+    @property
+    def resolved_source_mapping_agent(self) -> str:
+        return self._resolve_agent_name(
+            self.snowflake_source_mapping_agent,
+            legacy_object_name="SOURCE_MAPPING_AGENT",
+            default_object_name="AGT_SOURCE_MAPPING",
         )
 
     @property

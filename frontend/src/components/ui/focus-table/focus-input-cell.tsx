@@ -22,10 +22,15 @@ const DEFAULT_INPUT_SX: SxProps<Theme> = {
     borderRadius: '6px',
     bgcolor: '#fff',
     paddingY: 0,
+    alignItems: 'flex-start',
   },
-  '& .MuiInputBase-input': {
+  '& .MuiInputBase-input, & .MuiInputBase-inputMultiline': {
     paddingY: '8px !important',
     fontSize: '0.8rem',
+    lineHeight: 1.45,
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    overflow: 'hidden !important',
   },
   '& .MuiOutlinedInput-notchedOutline': {
     borderColor: '#e5e7eb',

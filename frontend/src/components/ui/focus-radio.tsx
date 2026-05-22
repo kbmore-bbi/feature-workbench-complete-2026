@@ -1,21 +1,26 @@
 'use client';
 import Radio from '@mui/material/Radio';
+import type { ChangeEvent, MouseEvent } from 'react';
 
-const FocusRadio = (props: any) => {
-    return (
-        <Radio
-            size="small"
-            checked={props.checked}
-             onChange={(e: any) => props.checkHandler(e.target.checked)}
-            onClick={(e) => e.stopPropagation()}
-             sx={{
-                color: 'black',
-                '&.Mui-checked': { color: 'black' },
-                p: 0.5 // Reducing internal padding of checkbox helps too
-            }}
-        />
-    )
+type FocusRadioProps = {
+  checked: boolean;
+  checkHandler: (checked: boolean) => void;
+};
 
-}
+const FocusRadio = ({ checked, checkHandler }: FocusRadioProps) => {
+  return (
+    <Radio
+      size="small"
+      checked={checked}
+      onChange={(event: ChangeEvent<HTMLInputElement>) => checkHandler(event.target.checked)}
+      onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
+      sx={{
+        color: '#cbd5e1',
+        '&.Mui-checked': { color: '#ffffff' },
+        p: 0.5,
+      }}
+    />
+  );
+};
 
 export { FocusRadio };

@@ -28,10 +28,9 @@ function SidebarStateShell({ children }: { children: React.ReactNode }) {
   return (
     <Box
       sx={{
-        width: 260,
+        width: "100%",
+        minWidth: 0,
         height: "100%",
-        flexShrink: 0,
-        borderRight: "1px solid var(--color-soft-border)",
         backgroundColor: "var(--color-surface)",
         display: "flex",
         alignItems: "center",
@@ -687,10 +686,9 @@ export default function DataSelectionPanel() {
   return (
     <Box
       sx={{
-        width: 260,
+        width: "100%",
+        minWidth: 0,
         height: "100%",
-        flexShrink: 0,
-        borderRight: "1px solid var(--color-soft-border)",
         backgroundColor: "var(--color-surface)",
         display: "flex",
         flexDirection: "column",

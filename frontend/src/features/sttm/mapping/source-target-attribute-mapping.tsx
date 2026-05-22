@@ -24,6 +24,7 @@ import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-cont
 import type { MappingRuleType } from '@/features/sttm/types/sttm.types';
 import MappingTableToolbar from './mapping-table-toolbar';
 import {
+  buildSourceColumnOptions,
   formatSqlType,
   generateMappingDescription,
   parseSourceColumns,
@@ -69,6 +70,19 @@ const headerCellSx = {
   py: 1.25,
 };
 
+const multilineCellInputSx = {
+  '& .MuiOutlinedInput-root': {
+    alignItems: 'flex-start',
+    minHeight: 44,
+  },
+  '& .MuiInputBase-input, & .MuiInputBase-inputMultiline': {
+    lineHeight: 1.45,
+    whiteSpace: 'pre-wrap',
+    overflowWrap: 'anywhere',
+    overflow: 'hidden !important',
+  },
+} as const;
+
 const SourceTargetAttributeMapping = () => {
   const {
     mappings,
@@ -81,9 +95,13 @@ const SourceTargetAttributeMapping = () => {
     setPreProcessModalOpen,
     relationships,
     mappingLoading,
+    autoMapStatusMessage,
+    sourceAttributeGroups,
+    derivedSources,
   } = useSttmBuilderContext();
 
   const sortedMappings = mappings;
+  const sourceColumnOptions = buildSourceColumnOptions(sourceAttributeGroups, derivedSources);
 
   const allSelected = mappings.length > 0 && selectedMappingIds.length === mappings.length;
   const someSelected = selectedMappingIds.length > 0 && selectedMappingIds.length < mappings.length;
@@ -240,12 +258,28 @@ const SourceTargetAttributeMapping = () => {
       <TableContainer
         component={Paper}
         elevation={0}
-        sx={{ flex: 1, border: 'none', borderRadius: 0, overflow: 'auto', overflowX: 'auto' }}
+        sx={{ flex: 1, border: 'none', borderRadius: 0, overflowY: 'auto', overflowX: 'hidden' }}
       >
-        <Table stickyHeader size="small" sx={{ minWidth: 1100 }}>
+        <Table
+          stickyHeader
+          size="small"
+          sx={{
+            width: '100%',
+            tableLayout: 'fixed',
+            '& .MuiTableBody-root .MuiTableCell-root': {
+              borderBottom: '1px solid #edf2f7',
+              verticalAlign: 'top',
+              py: 1.2,
+              backgroundColor: 'transparent',
+            },
+            '& .MuiTableBody-root .MuiTableRow-root:last-of-type .MuiTableCell-root': {
+              borderBottom: '1px solid #edf2f7',
+            },
+          }}
+        >
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox" sx={{ ...headerCellSx, width: 44 }}>
+              <TableCell padding="checkbox" sx={{ ...headerCellSx, width: '2.5%' }}>
                 <FocusCheckbox
                   checked={allSelected}
                   indeterminate={someSelected}
@@ -257,16 +291,16 @@ const SourceTargetAttributeMapping = () => {
                   }
                 />
               </TableCell>
-              <TableCell sx={{ ...headerCellSx, width: 44 }}>#</TableCell>
-              <TableCell sx={headerCellSx}>Target Column</TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 200 }}>Source Column</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: 140, whiteSpace: 'nowrap' }}>
+              <TableCell sx={{ ...headerCellSx, width: '2.5%' }}>#</TableCell>
+              <TableCell sx={{ ...headerCellSx, width: '13.5%' }}>Target Column</TableCell>
+              <TableCell sx={{ ...headerCellSx, width: '23%' }}>Source Column</TableCell>
+              <TableCell sx={{ ...headerCellSx, width: '5.5%', whiteSpace: 'nowrap' }}>
                 Type (Preview)
               </TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 300 }}>Pre-processing Rule</TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 240 }}>NL Rule</TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 140, width: 140 }}>Order</TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 240 }}>
+              <TableCell sx={{ ...headerCellSx, width: '14%' }}>Pre-processing Rule</TableCell>
+              <TableCell sx={{ ...headerCellSx, width: '15.5%' }}>NL Rule</TableCell>
+              <TableCell sx={{ ...headerCellSx, width: '5%' }}>Order</TableCell>
+              <TableCell sx={{ ...headerCellSx, width: '13.5%' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                   Description
                   <Chip
@@ -282,7 +316,7 @@ const SourceTargetAttributeMapping = () => {
                   />
                 </Box>
               </TableCell>
-              <TableCell sx={{ ...headerCellSx, width: 110 }} align="right">
+              <TableCell sx={{ ...headerCellSx, width: '5%' }} align="right">
                 Status
               </TableCell>
             </TableRow>
@@ -310,7 +344,6 @@ const SourceTargetAttributeMapping = () => {
                   key={row.id}
                   hover
                   sx={{
-                    '&:last-child td': { borderBottom: 0 },
                     bgcolor: isSelected ? 'rgba(59, 130, 246, 0.04)' : '#fff',
                   }}
                 >
@@ -324,20 +357,40 @@ const SourceTargetAttributeMapping = () => {
                   <MappingTargetColumnCell
                     name={row.targetColumn}
                     type={formatSqlType(row.targetType)}
+                    width="13.5%"
                   />
 
                   <MappingSourceColumnsCell
-                    values={sourceColumns}
-                    minWidth={220}
+                    value={row.sourceColumn}
+                    options={sourceColumnOptions}
+                    onChange={(nextValue) => {
+                      const nextColumns = parseSourceColumns(nextValue);
+                      updateMapping(row.id, {
+                        sourceColumn: nextValue.trim() || null,
+                        sourceColumns: nextColumns,
+                        status: nextColumns.length > 0 ? 'MAPPED' : 'UNMAPPED',
+                        sourceType:
+                          sourceColumnOptions.find(
+                            (option) => option.value.toLowerCase() === nextColumns[0]?.toLowerCase(),
+                          )?.dataType ?? row.sourceType ?? null,
+                      });
+                    }}
+                    width="23%"
+                    minWidth={0}
+                    confidenceScore={row.confidenceScore}
+                    confidenceReason={row.confidenceReason}
+                    candidateSourceColumns={row.candidateSourceColumns}
+                    unmatchedReason={row.unmatchedReason}
                   />
 
-                  <MappingTypePreviewCell dataType={previewType} />
+                  <MappingTypePreviewCell dataType={previewType} width="5.5%" minWidth={84} />
 
                   <MappingRuleCell
                     value={row.rule === 'Select...' ? 'Direct' : row.rule || 'Direct'}
                     options={RULE_OPTIONS}
                     configureValue={PREPROCESS_CONFIGURE_VALUE}
-                    minWidth={300}
+                    width="14%"
+                    minWidth={0}
                     highlighted={
                       !!row.rule &&
                       row.rule !== 'Select...' &&
@@ -351,18 +404,20 @@ const SourceTargetAttributeMapping = () => {
                     placeholder="Add NL rule..."
                     value={row.nlRule ?? ''}
                     onChange={(value) => updateMapping(row.id, { nlRule: value })}
-                    minWidth={240}
+                    width="15.5%"
+                    minWidth={0}
                     multiline
                     minRows={1}
-                    maxRows={4}
+                    maxRows={10}
+                    inputSx={multilineCellInputSx}
                   />
 
                   <FocusInputCell
                     placeholder="Order..."
                     value={row.loadOrder ?? ''}
                     onChange={(value) => updateMapping(row.id, { loadOrder: value })}
-                    minWidth={140}
-                    width={140}
+                    width="5%"
+                    minWidth={84}
                   />
 
                   <FocusInputCell
@@ -374,13 +429,15 @@ const SourceTargetAttributeMapping = () => {
                         descriptionEdited: value.trim().length > 0,
                       })
                     }
-                    minWidth={240}
+                    width="13.5%"
+                    minWidth={0}
                     multiline
                     minRows={1}
-                    maxRows={4}
+                    maxRows={10}
+                    inputSx={multilineCellInputSx}
                   />
 
-                  <MappingStatusCell status={row.status} />
+                  <MappingStatusCell status={row.status} width="5%" minWidth={92} />
                 </TableRow>
               );
             })}
@@ -401,7 +458,7 @@ const SourceTargetAttributeMapping = () => {
           }}
         >
           <Typography sx={{ fontSize: '0.85rem', color: '#4b5563', fontWeight: 600 }}>
-            Running auto-map...
+            {autoMapStatusMessage || 'Running auto-map...'}
           </Typography>
         </Box>
       )}

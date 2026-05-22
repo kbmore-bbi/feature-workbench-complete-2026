@@ -56,7 +56,7 @@ export const MappingRuleCell = ({
   configureValue,
   highlighted = false,
   width,
-  minWidth = 300,
+  minWidth = 0,
 }: MappingRuleCellProps) => {
   const selectOptions = configureValue
     ? [...options, { label: configureValue, value: configureValue }]
@@ -68,7 +68,15 @@ export const MappingRuleCell = ({
 
   return (
     <TableCell sx={focusTableCellSx({ width, minWidth }, { overflow: 'visible' })}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          gap: 1,
+          width: '100%',
+          flexWrap: 'wrap',
+        }}
+      >
         <Box sx={{ flex: 1, minWidth: 0 }}>
           <FocusSelect
             value={value}
@@ -94,6 +102,7 @@ export const MappingRuleCell = ({
             bgcolor: '#fffbeb',
             whiteSpace: 'nowrap',
             px: 1.25,
+            flexShrink: 0,
             '&:hover': {
               bgcolor: '#fef3c7',
               borderColor: '#f59e0b',

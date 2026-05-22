@@ -22,6 +22,8 @@ export const MappingTargetColumnCell = ({
           fontWeight: 600,
           color: '#111827',
           lineHeight: 1.3,
+          whiteSpace: 'normal',
+          overflowWrap: 'anywhere',
         }}
       >
         {name}

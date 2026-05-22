@@ -14,41 +14,76 @@ instructions:
     - table (TABLE scope only)
     - semantic_level: L1_CONTEXT | L2_ANALYST_READY | L3_MAPPING_ENRICHED
 
-    Your job is to generate semantic understanding that is accurate, grounded in Snowflake metadata,
-    and shaped for downstream storage in TBL_SEMANTIC_MODELS.
+    Your job is to generate semantic understanding that is accurate, grounded in
+    Snowflake metadata, and shaped for downstream storage in TBL_SEMANTIC_MODELS.
 
-    Progressive-depth rules:
+    After generating a new or refreshed semantic view, you MUST call
+    save_semantic_view to persist it. Generation without saving is incomplete.
+
+    ## Progressive depth
     - L1_CONTEXT:
-      - keep it lightweight
-      - focus on business descriptions, table purpose, relationships, and concise column summaries
-      - use sample data only when names are too ambiguous to answer safely
+      - lightweight
+      - focus on business descriptions, relationships, and concise column summaries
+      - use row samples only when names are too ambiguous to answer safely
     - L2_ANALYST_READY:
-      - add richer column semantics and stronger business descriptions suitable for semantic-view promotion
-      - include data-quality and value-profile detail from attribute profiles
+      - include richer column semantics suitable for semantic-view promotion
+      - include data-quality and value-profile evidence
     - L3_MAPPING_ENRICHED:
-      - preserve L2 quality and add more mapping-oriented nuance for ambiguous columns
+      - preserve L2 quality
+      - add mapping-oriented nuance for ambiguous or similarly named columns
+      - include notes that help source-to-target mapping decisions
 
-    SCHEMA flow:
+    ## TABLE flow
+    1. Call check_table_staleness first.
+       - If status=FRESH, call get_cached_semantic_view and return that JSON immediately.
+         Do not call any other tool and do not call save_semantic_view.
+       - If status=STALE or MISSING, continue.
+    2. Call list_columns once for the full column list.
+    3. Call get_table_ddl once and reuse it for all constraints.
+    4. Call get_table_relationships once and reuse it for relationships.
+    5. Call get_table_stats once and reuse it for data quality across all columns.
+    6. Call get_sample_rows once for representative patterns, PII clues, and formats.
+    7. For each column:
+       - call check_column_staleness first
+       - if FRESH, reuse cached column semantics
+       - if STALE or MISSING, call get_column_profile
+    8. Build one attribute_semantic_model entry per column.
+    9. Build a lightweight semantic_model.attributes[] summary list.
+    10. Serialize the final TABLE JSON to a JSON string and call save_semantic_view.
+    11. If save_semantic_view returns an error, include save_error in the response JSON.
+
+    ## SCHEMA flow
     1. Call list_tables for the schema.
-    2. For each relevant table, call get_table_ddl and get_table_relationships.
-    3. Use get_sample_data only when names are too ambiguous to infer business role safely.
-    4. Return one SCHEMA semantic_model object with descriptions, primary keys, and relationships.
+    2. For each table:
+       - call check_table_staleness first
+       - if FRESH, call get_cached_semantic_view and reuse its table-level summary
+       - if STALE or MISSING:
+         - call get_table_ddl
+         - call get_table_relationships
+         - call get_sample_rows with a small sample
+         - assemble a TABLE-scope semantic payload for that table
+         - serialize it and call save_semantic_view before moving on
+    3. Return one SCHEMA semantic_model object with descriptions, primary keys, and relationships.
 
-    TABLE flow:
-    1. Call get_table_ddl and get_table_relationships.
-    2. For each column, call get_attribute_profile.
-    3. Use get_sample_data only when names or profiles are too ambiguous.
-    4. Return:
-       - semantic_model: concise table-level model
-       - attribute_semantic_model: one richer object per column
-
-    Quality rules:
+    ## Output rules
     - Ground every claim in tool evidence; do not invent business semantics.
-    - Constraints must be explicit and structured.
     - Relationships must clearly separate outgoing and incoming edges.
-    - attribute_semantic_model is for storage and can be richer than semantic_model.attributes.
+    - primary_keys is [] when no PK constraint is found.
+    - constraints may contain:
+      - "PRIMARY_KEY"
+      - "NOT_NULL"
+      - "UNIQUE"
+      - or a FOREIGN_KEY object:
+        { "type": "FOREIGN_KEY", "references": { "table": "...", "column": "..." } }
+    - semantic_model.attributes[].summary is concise. Do not duplicate full attribute detail there.
+    - attribute_semantic_model entries must include business_meaning.
+    - semantic_notes must be an array of short synthesized observations, never a prose block.
+    - value_profile must include exactly one of:
+      - unique_values, when the distinct set is small
+      - sample_values, when the distinct set is large
+    - value_profile.range_stats must always be present.
+    - save_semantic_view accepts a VARCHAR, so pass serialized JSON text, not a VARIANT object.
     - Never return prose outside JSON.
-    - Use the configured orchestration model directly; do not drift to heavier auto-selected models for routine table/schema semantic generation.
 
   response: |
     Return a single JSON object. No prose outside the JSON.
@@ -105,7 +140,7 @@ instructions:
           "nullable": true,
           "constraints": [],
           "description": "What this column stores.",
-          "business_meaning": "How this column is used in business logic or joins.",
+          "business_meaning": "How this column is used in joins, aggregations, or governance rules.",
           "data_quality": {
             "row_count": 0,
             "null_count": 0,
@@ -113,7 +148,6 @@ instructions:
             "distinct_count": 0
           },
           "value_profile": {
-            "unique_values": [],
             "sample_values": [],
             "range_stats": {}
           },
@@ -123,19 +157,16 @@ instructions:
     }
 
     Rules:
-    - semantic_model.attributes[].summary is concise. Do not duplicate full attribute_semantic_model detail there.
+    - Use [] for missing relationships or keys, never omit required arrays.
     - attribute_semantic_model entries use name as the column identifier.
-    - constraints may contain strings such as PRIMARY_KEY, NOT_NULL, UNIQUE.
-    - FOREIGN_KEY constraints should be objects:
-      { "type": "FOREIGN_KEY", "references": { "table": "...", "column": "..." } }
-    - value_profile should include either unique_values or sample_values when meaningful, plus range_stats when available.
     - semantic_notes is always an array of strings.
+    - Add save_error only when save_semantic_view returns an error.
 
 tools:
   - tool_spec:
       type: generic
       name: list_tables
-      description: List all base tables in a database schema.
+      description: List base tables in a schema.
       input_schema:
         type: object
         properties:
@@ -149,8 +180,26 @@ tools:
 
   - tool_spec:
       type: generic
+      name: list_columns
+      description: List all columns for a table with types and nullability.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+
+  - tool_spec:
+      type: generic
       name: get_table_ddl
-      description: Return the DDL for a table.
+      description: Return DDL for a table.
       input_schema:
         type: object
         properties:
@@ -168,7 +217,7 @@ tools:
   - tool_spec:
       type: generic
       name: get_table_relationships
-      description: Return foreign-key and relationship context for a table.
+      description: Return formal and inferred relationship context for a table.
       input_schema:
         type: object
         properties:
@@ -185,7 +234,25 @@ tools:
 
   - tool_spec:
       type: generic
-      name: get_sample_data
+      name: get_table_stats
+      description: Return one-pass statistics for all columns in a table.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+
+  - tool_spec:
+      type: generic
+      name: get_sample_rows
       description: Return representative rows for a table.
       input_schema:
         type: object
@@ -206,7 +273,7 @@ tools:
 
   - tool_spec:
       type: generic
-      name: get_attribute_profile
+      name: get_column_profile
       description: Return detailed profile information for a single column.
       input_schema:
         type: object
@@ -225,43 +292,160 @@ tools:
           - table_name
           - column_name
 
+  - tool_spec:
+      type: generic
+      name: check_column_staleness
+      description: Check whether cached column semantics are still fresh.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+          column_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+          - column_name
+
+  - tool_spec:
+      type: generic
+      name: save_semantic_view
+      description: Persist a completed semantic view; input must be serialized JSON text.
+      input_schema:
+        type: object
+        properties:
+          semantic_view_json_str:
+            type: string
+        required:
+          - semantic_view_json_str
+
+  - tool_spec:
+      type: generic
+      name: check_table_staleness
+      description: Check whether a table semantic view is fresh before recomputing it.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+
+  - tool_spec:
+      type: generic
+      name: get_cached_semantic_view
+      description: Fetch the cached semantic JSON for a fresh table.
+      input_schema:
+        type: object
+        properties:
+          db_name:
+            type: string
+          schema_name:
+            type: string
+          table_name:
+            type: string
+        required:
+          - db_name
+          - schema_name
+          - table_name
+
 tool_resources:
   list_tables:
     type: procedure
-    name: "SP_LIST_TABLES(VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_LIST_TABLES"
+    name: "LIST_TABLES(VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.LIST_TABLES"
     execution_environment:
       type: warehouse
-      warehouse: ""
+      warehouse: "AIA_WH"
+
+  list_columns:
+    type: procedure
+    name: "LIST_COLUMNS(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.LIST_COLUMNS"
+    execution_environment:
+      type: warehouse
+      warehouse: "AIA_WH"
 
   get_table_ddl:
     type: procedure
-    name: "SP_GET_TABLE_DDL(VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_DDL"
+    name: "GET_TABLE_DDL(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.GET_TABLE_DDL"
     execution_environment:
       type: warehouse
-      warehouse: ""
+      warehouse: "AIA_WH"
 
   get_table_relationships:
     type: procedure
-    name: "SP_GET_TABLE_RELATIONSHIPS(VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_RELATIONSHIPS"
+    name: "GET_TABLE_RELATIONSHIPS(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.GET_TABLE_RELATIONSHIPS"
     execution_environment:
       type: warehouse
-      warehouse: ""
+      warehouse: "AIA_WH"
 
-  get_sample_data:
+  get_table_stats:
     type: procedure
-    name: "SP_GET_SAMPLE_DATA(VARCHAR, VARCHAR, VARCHAR, NUMBER)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SAMPLE_DATA"
+    name: "GET_TABLE_STATS(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.GET_TABLE_STATS"
     execution_environment:
       type: warehouse
-      warehouse: ""
+      warehouse: "AIA_WH"
 
-  get_attribute_profile:
+  get_sample_rows:
     type: procedure
-    name: "SP_ATTRIBUTE_PROFILE(VARCHAR, VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_ATTRIBUTE_PROFILE"
+    name: "GET_SAMPLE_ROWS(VARCHAR, VARCHAR, VARCHAR, NUMBER)"
+    identifier: "FOCUS_DB_2.STTM_MCP.GET_SAMPLE_ROWS"
+    execution_environment:
+      type: warehouse
+      warehouse: "AIA_WH"
+
+  get_column_profile:
+    type: procedure
+    name: "GET_COLUMN_PROFILE(VARCHAR, VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.GET_COLUMN_PROFILE"
+    execution_environment:
+      type: warehouse
+      warehouse: "AIA_WH"
+
+  check_column_staleness:
+    type: procedure
+    name: "CHECK_COLUMN_STALENESS(VARCHAR, VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.CHECK_COLUMN_STALENESS"
+    execution_environment:
+      type: warehouse
+      warehouse: "AIA_WH"
+
+  save_semantic_view:
+    type: procedure
+    name: "SAVE_SEMANTIC_VIEW(VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.SAVE_SEMANTIC_VIEW"
+    execution_environment:
+      type: warehouse
+      warehouse: "AIA_WH"
+
+  check_table_staleness:
+    type: procedure
+    name: "CHECK_TABLE_STALENESS(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.CHECK_TABLE_STALENESS"
+    execution_environment:
+      type: warehouse
+      warehouse: "AIA_WH"
+
+  get_cached_semantic_view:
+    type: procedure
+    name: "GET_CACHED_SEMANTIC_VIEW(VARCHAR, VARCHAR, VARCHAR)"
+    identifier: "FOCUS_DB_2.STTM_MCP.GET_CACHED_SEMANTIC_VIEW"
     execution_environment:
       type: warehouse
       warehouse: ""

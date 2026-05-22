@@ -201,6 +201,32 @@ function formatSqlType(type?: string) {
   return upper;
 }
 
+function looksLikeSqlExpression(value?: string | null) {
+  const trimmed = value?.trim();
+  if (!trimmed) return false;
+
+  const upper = trimmed.toUpperCase();
+  if (
+    [
+      'DIRECT',
+      'UPPER',
+      'LOWER',
+      'TRIM',
+      'CAST',
+      'COALESCE',
+      'DATE_FORMAT',
+      'SUBSTRING',
+      'REPLACE',
+      'NULLIF',
+      'CONCATENATE',
+    ].includes(upper)
+  ) {
+    return false;
+  }
+
+  return /[().\s,]/.test(trimmed);
+}
+
 export default function PreProcessModal() {
   const {
     isPreProcessModalOpen,
@@ -234,7 +260,11 @@ export default function PreProcessModal() {
 
   useEffect(() => {
     if (activeMapping) {
-      setExpression(activeMapping.expression || activeMapping.sourceColumn || '');
+      const suggestedExpression =
+        !activeMapping.expression && looksLikeSqlExpression(activeMapping.aiSuggestedRule)
+          ? activeMapping.aiSuggestedRule?.trim() ?? ''
+          : '';
+      setExpression(activeMapping.expression || suggestedExpression || activeMapping.sourceColumn || '');
       const initialColumns =
         activeMapping.sourceColumns && activeMapping.sourceColumns.length
           ? activeMapping.sourceColumns

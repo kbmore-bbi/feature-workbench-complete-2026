@@ -116,6 +116,16 @@ class SemanticContextService:
         semantic_view_name = existing["semantic_view_name"] if existing else None
         analyst_tool_name = existing.get("analyst_tool_name") if existing else None
         achieved_level = request.requested_level
+        bundle_has_required_level = (
+            existing is not None
+            and _LEVEL_ORDER.get(existing["semantic_level"], -1) >= _LEVEL_ORDER[request.requested_level]
+        )
+        existing_view_is_usable = bool(
+            existing
+            and existing.get("semantic_view_name")
+            and not request.force
+            and bundle_has_required_level
+        )
 
         if (
             allow_agent_refresh
@@ -170,13 +180,8 @@ class SemanticContextService:
             SemanticLevel.L3_MAPPING_ENRICHED,
         }:
             semantic_view_name = self._semantic_view_name(bundle_id)
-            if (
-                existing
-                and existing.get("semantic_view_name")
-                and not request.force
-                and _LEVEL_ORDER.get(existing["semantic_level"], -1) >= _LEVEL_ORDER[request.requested_level]
-            ):
-                promoted = True
+            if existing_view_is_usable:
+                semantic_view_name = existing["semantic_view_name"]
             else:
                 try:
                     analyst_source_tables = self._analyst_source_tables(selected_source_tables)
@@ -200,9 +205,13 @@ class SemanticContextService:
         should_sync_analyst_tool = bool(
             semantic_view_name
             and (
-                promoted
-                or not analyst_tool_name
-                or request.force
+                not promoted
+                and (
+                    request.force
+                    or not analyst_tool_name
+                    or not existing
+                    or str(existing.get("semantic_view_name") or "") != semantic_view_name
+                )
             )
         )
 
@@ -900,6 +909,8 @@ class SemanticContextService:
                 and str(tool["tool_spec"].get("name") or "") == existing_tool_name
                 for tool in tools
             )
+            if tool_present:
+                return existing_tool_name
             if not tool_present:
                 tools.append(
                     {

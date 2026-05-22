@@ -20,19 +20,20 @@ import {
 import {
   Search as SearchIcon,
   ExpandMore as ExpandMoreIcon,
-  TableChart as TableIcon,
   FiberManualRecord as DotIcon,
+  TableChart as TableIcon,
 } from '@mui/icons-material';
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
+import KeyboardDoubleArrowLeftRoundedIcon from '@mui/icons-material/KeyboardDoubleArrowLeftRounded';
 import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
 import IconButton from "@mui/material/IconButton";
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import { useAppDispatch } from '@/store/hooks';
 import { fetchAttributes } from '@/features/sttm/store/sttm-builder-slice';
-import type { DerivedSource } from '@/features/sttm/types/sttm.types';
 import { getDerivedDisplayColumns, typeChipSx } from '@/features/sttm/mapping/mapping-utils';
 import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
+import { useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
 
 function derivedTypeChipSx() {
   return {
@@ -48,6 +49,7 @@ function derivedTypeChipSx() {
 const SourceTargetAttributeList = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const dispatch = useAppDispatch();
+  const { setCollapsed } = useSidebarSlot();
 
   const {
     sourceAttributeGroups,
@@ -125,6 +127,9 @@ const SourceTargetAttributeList = () => {
 
   const attributesLoading = loadState.attributes === 'loading';
   const attributesError = errorState.attributes;
+  const hasAvailableSourceColumns =
+    sourceAttributeGroups.length > 0 ||
+    derivedSources.some((source) => source.isSelected && getDerivedDisplayColumns(source).length > 0);
 
   const schemaLabel =
     sourceInfo.schemaName?.trim() ||
@@ -143,46 +148,58 @@ const SourceTargetAttributeList = () => {
         flexDirection: 'column',
         bgcolor: '#fff',
         borderRight: '1px solid #e0e0e0',
+        overflow: 'hidden',
       }}
     >
-      {/* 1. HEADER & SEARCH */}
       <Box sx={{ p: 2, flexShrink: 0 }}>
-        <Box sx={{ justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
-          <Typography sx={{ fontSize: 16, fontWeight: 800, color: '#111827', mb: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 2 }}>
+          <Typography sx={{ fontSize: 16, fontWeight: 800, color: '#111827', minWidth: 0 }}>
             STTM Builder
           </Typography>
+          <IconButton
+            size="small"
+            onClick={() => setCollapsed(true)}
+            sx={{
+              color: '#64748b',
+              border: '1px solid #dbe2ea',
+              borderRadius: '10px',
+              flexShrink: 0,
+            }}
+          >
+            <KeyboardDoubleArrowLeftRoundedIcon sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Box>
 
-          <Box className="flex h-[38px] items-center justify-between rounded-full bg-[#F3F4F6] px-4">
-            <Typography className="text-[13px] font-medium" sx={{ color: "var(--color-text)" }}>
-              Cortex
-            </Typography>
-            <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: '#4B5563' }} />
-          </Box>
-          <Box sx={{ display: 'flex',  marginTop: '10px', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
-            <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem', color: '#333' }}>
-              Source columns
-            </Typography>
-            <Button
-              size="small"
-              variant="contained"
-              disabled={mappingLoading || !sourceAttributeGroups.length}
-              startIcon={<AutoAwesomeRoundedIcon sx={{ fontSize: 14 }} />}
-              onClick={() => runAutoMap()}
-              sx={{
-                minWidth: 0,
-                px: 1.25,
-                height: 28,
-                fontSize: '0.72rem',
-                fontWeight: 700,
-                textTransform: 'none',
-                bgcolor: '#1d4ed8',
-                boxShadow: 'none',
-                '&:hover': { bgcolor: '#1e40af', boxShadow: 'none' },
-              }}
-            >
-              Auto
-            </Button>
-          </Box>
+        <Box className="flex h-[38px] items-center justify-between rounded-full bg-[#F3F4F6] px-4">
+          <Typography className="text-[13px] font-medium" sx={{ color: "var(--color-text)" }}>
+            Cortex
+          </Typography>
+          <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: '#4B5563' }} />
+        </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mt: 1.5 }}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, fontSize: '0.9rem', color: '#333' }}>
+            Source columns
+          </Typography>
+          <Button
+            size="small"
+            variant="contained"
+            disabled={mappingLoading || !hasAvailableSourceColumns}
+            startIcon={<AutoAwesomeRoundedIcon sx={{ fontSize: 14 }} />}
+            onClick={() => runAutoMap()}
+            sx={{
+              minWidth: 0,
+              px: 1.25,
+              height: 28,
+              fontSize: '0.72rem',
+              fontWeight: 700,
+              textTransform: 'none',
+              bgcolor: '#1d4ed8',
+              boxShadow: 'none',
+              '&:hover': { bgcolor: '#1e40af', boxShadow: 'none' },
+            }}
+          >
+            Auto
+          </Button>
         </Box>
         <TextField
           fullWidth
@@ -208,8 +225,7 @@ const SourceTargetAttributeList = () => {
         />
       </Box>
 
-      {/* 2. SCROLLABLE SOURCE LIST */}
-      <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: 'auto' }}>
+      <Box sx={{ flexGrow: 1, minHeight: 0, overflowY: 'auto', overflowX: 'hidden' }}>
         <Typography
           variant="overline"
           sx={{
@@ -271,7 +287,16 @@ const SourceTargetAttributeList = () => {
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%', minWidth: 0 }}>
                 <DotIcon sx={{ fontSize: 8, color: '#333', flexShrink: 0 }} />
-                <Typography sx={{ fontWeight: 600, fontSize: '0.85rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <Typography
+                  sx={{
+                    fontWeight: 600,
+                    fontSize: '0.85rem',
+                    minWidth: 0,
+                    whiteSpace: 'normal',
+                    overflowWrap: 'anywhere',
+                    lineHeight: 1.3,
+                  }}
+                >
                   {group.table}
                 </Typography>
                 <Typography sx={{ ml: 'auto', fontSize: '0.75rem', color: '#bbb', flexShrink: 0 }}>
@@ -284,9 +309,21 @@ const SourceTargetAttributeList = () => {
                 {group.columns.map((col) => (
                   <ListItem
                     key={`${group.qualifiedName}:${col.name}`}
-                    sx={{ py: 0.5, px: 4, display: 'flex', justifyContent: 'space-between' }}
+                    sx={{ py: 0.75, px: 4, display: 'flex', justifyContent: 'space-between', gap: 1, alignItems: 'flex-start' }}
                   >
-                    <Typography sx={{ fontSize: '0.75rem', color: '#666', pr: 1 }}>{col.name}</Typography>
+                    <Typography
+                      sx={{
+                        fontSize: '0.75rem',
+                        color: '#666',
+                        pr: 1,
+                        minWidth: 0,
+                        whiteSpace: 'normal',
+                        overflowWrap: 'anywhere',
+                        lineHeight: 1.35,
+                      }}
+                    >
+                      {col.name}
+                    </Typography>
                     <Chip label={col.type || '—'} size="small" sx={typeChipSx(col.type)} />
                   </ListItem>
                 ))}
@@ -295,7 +332,6 @@ const SourceTargetAttributeList = () => {
           </Accordion>
         ))}
 
-        {/* Derived sources (from Add derived modal / API) */}
         <Box sx={{ mt: 1.5, borderTop: '1px solid #f1f5f9', pt: 1 }}>
           <Typography
             variant="overline"
@@ -365,8 +401,10 @@ const SourceTargetAttributeList = () => {
                             fontWeight: 700,
                             fontSize: '0.8rem',
                             color: '#14532d',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
+                            minWidth: 0,
+                            whiteSpace: 'normal',
+                            overflowWrap: 'anywhere',
+                            lineHeight: 1.3,
                           }}
                         >
                           {source.sourceName}
@@ -395,9 +433,19 @@ const SourceTargetAttributeList = () => {
                         {displayCols.map((col) => (
                           <ListItem
                             key={`${source.id}:${col.name}`}
-                            sx={{ py: 0.45, px: 4, display: 'flex', justifyContent: 'space-between' }}
+                            sx={{ py: 0.45, px: 4, display: 'flex', justifyContent: 'space-between', gap: 1, alignItems: 'flex-start' }}
                           >
-                            <Typography sx={{ fontSize: '0.75rem', color: '#334155', pr: 1 }}>
+                            <Typography
+                              sx={{
+                                fontSize: '0.75rem',
+                                color: '#334155',
+                                pr: 1,
+                                minWidth: 0,
+                                whiteSpace: 'normal',
+                                overflowWrap: 'anywhere',
+                                lineHeight: 1.35,
+                              }}
+                            >
                               {col.name}
                             </Typography>
                             <Chip label={col.type} size="small" sx={derivedTypeChipSx()} />
@@ -419,7 +467,6 @@ const SourceTargetAttributeList = () => {
 
       <Divider />
 
-      {/* 3. TARGET TABLE SECTION */}
       <Box sx={{ p: 2, flexShrink: 0, backgroundColor: "var(--color-header-bg)" }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
           <Typography
@@ -448,13 +495,23 @@ const SourceTargetAttributeList = () => {
             alignItems: 'center',
             bgcolor: '#fff',
             borderRadius: '8px',
+            minWidth: 0,
+            overflow: 'hidden',
           }}
         >
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="caption" sx={{ color: '#bbb', display: 'block', lineHeight: 1 }}>
               {targetInfo.dbName || '—'}
             </Typography>
-            <Typography sx={{ fontSize: '0.8rem', fontWeight: 700 }}>
+            <Typography
+              sx={{
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                whiteSpace: 'normal',
+                overflowWrap: 'anywhere',
+                lineHeight: 1.35,
+              }}
+            >
               {selectedTarget?.tableName ?? targetAttributeGroup?.table ?? 'Select a target table'}
             </Typography>
           </Box>
@@ -464,7 +521,7 @@ const SourceTargetAttributeList = () => {
         <Typography variant="overline" sx={{ color: '#bbb', fontSize: '0.65rem', display: 'block', mb: 0.5 }}>
           TARGET COLUMNS
         </Typography>
-        <Box sx={{ maxHeight: 300, overflowY: 'auto' }}>
+        <Box sx={{ maxHeight: 300, overflowY: 'auto', overflowX: 'hidden' }}>
           {attributesLoading && !targetAttributeGroup?.columns?.length ? (
             <Box sx={{ display: 'flex', justifyContent: 'center', py: 2 }}>
               <CircularProgress size={20} />
@@ -498,8 +555,9 @@ const SourceTargetAttributeList = () => {
                       fontSize: '0.75rem',
                       fontWeight: 500,
                       color: mapped ? '#333' : '#999',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
+                      whiteSpace: 'normal',
+                      overflowWrap: 'anywhere',
+                      lineHeight: 1.35,
                     }}
                   >
                     {col.name}

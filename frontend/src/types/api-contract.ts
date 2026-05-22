@@ -66,6 +66,8 @@ export type SemanticContextItem = {
 export type TargetAttributeItem = {
   target_table: TableRef;
   target_attribute: string;
+  target_data_type?: string | null;
+  target_description?: string | null;
   source_mappings?: AttributeRef[] | null;
 };
 
@@ -100,8 +102,25 @@ export type SemanticRefreshStatus = {
   stale_reason?: string | null;
 };
 
+export type SemanticContextBundleResponse = {
+  bundle_id: string;
+  bundle_hash: string;
+  bundle_label?: string | null;
+  requested_level: SemanticLevel;
+  achieved_level: SemanticLevel;
+  semantic_view_name?: string | null;
+  status: "ready" | "refreshed" | "promoted" | "partial" | "failed";
+  promoted?: boolean;
+  cache_hit?: boolean;
+  summary: Record<string, unknown>;
+  lineage?: Array<Record<string, unknown>>;
+  semantic_context?: Array<Record<string, unknown>>;
+  datahub_context?: Record<string, unknown> | null;
+};
+
 export type STTMBuilderContext = {
   thread_id?: string | null;
+  parent_message_id?: number | null;
   current_role?: string | null;
   current_database?: string | null;
   current_schema?: string | null;
@@ -131,6 +150,14 @@ export type STTMBuilderRequestData = {
 export type AttributeMapping = {
   source_attributes: string[];
   confidence_score: number;
+  confidence_reason?: string | null;
+  candidate_source_attributes?: string[];
+  unmatched_reason?: string | null;
+  preprocessing_rule?: string | null;
+  preprocessing_rule_type?: string | null;
+  preprocessing_nl_rule?: string | null;
+  processing_order?: number | null;
+  description?: string | null;
 };
 
 export type SourceMappingResult = {
@@ -172,6 +199,7 @@ export type STTMBuilderEnvelopeResponse = ApiEnvelope<
 > & {
   operation: STTMOperation;
   thread_id: string;
+  parent_message_id?: number | null;
   agent: STTMAgent | null;
   result: SourceMappingResult | TransformationResult | null;
   message?: string | null;

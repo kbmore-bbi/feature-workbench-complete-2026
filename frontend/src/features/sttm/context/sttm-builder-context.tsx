@@ -25,8 +25,11 @@ import {
   openPendingDerivedSourceDraft as openPendingDerivedSourceDraftAction,
   acknowledgePendingDerivedSourceDraft as acknowledgePendingDerivedSourceDraftAction,
   dismissPendingDerivedSourceDraft as dismissPendingDerivedSourceDraftAction,
+  applySemanticRefresh as applySemanticRefreshAction,
   initializeMappings as initializeMappingsAction,
   updateMapping as updateMappingAction,
+  applyPendingAiMappingReview as applyPendingAiMappingReviewAction,
+  skipPendingAiMappingReview as skipPendingAiMappingReviewAction,
   toggleMappingSelection as toggleMappingSelectionAction,
   selectAllMappings as selectAllMappingsAction,
   bulkMarkMapped as bulkMarkMappedAction,
@@ -81,6 +84,7 @@ export function SttmBuilderProvider({
       // Mapping
       mappingSuggestions: state.mappingSuggestions,
       mappingLoading: state.mappingLoading,
+      autoMapStatusMessage: state.autoMapStatusMessage,
 
       // Chat
       chatMessages: state.chatMessages,
@@ -91,6 +95,9 @@ export function SttmBuilderProvider({
       semanticStatus: state.semanticStatus,
       semanticViewName: state.semanticViewName,
       semanticContextSummary: state.semanticContextSummary,
+      semanticContextItems: state.semanticContextItems,
+      semanticLineage: state.semanticLineage,
+      semanticDatahubContext: state.semanticDatahubContext,
       datahubStatus: state.datahubStatus,
       pendingDerivedSourceDraft: state.pendingDerivedSourceDraft,
       derivedSourceDraftRequested: state.derivedSourceDraftRequested,
@@ -160,6 +167,12 @@ export function SttmBuilderProvider({
       dismissPendingDerivedSourceDraft: () => {
         dispatch(dismissPendingDerivedSourceDraftAction());
       },
+      applyPendingAiMappingReview: () => {
+        dispatch(applyPendingAiMappingReviewAction());
+      },
+      skipPendingAiMappingReview: () => {
+        dispatch(skipPendingAiMappingReviewAction());
+      },
 
       // Computed
       selectedSourceCount: state.sources.filter((t) => t.isSelected).length,
@@ -185,7 +198,16 @@ export function SttmBuilderProvider({
 
       sourceFilterSql: state.sourceFilterSql,
       sourceFilterGroups: state.sourceFilterGroups,
-      setSourceFilterConditions: (payload: { sql: string; groups: RuleGroup[] }) =>
+      sourceQuerySql: state.sourceQuerySql,
+      sourceGroupBySql: state.sourceGroupBySql,
+      sourceOrderBySql: state.sourceOrderBySql,
+      setSourceFilterConditions: (payload: {
+        sql: string;
+        groups: RuleGroup[];
+        baseSql?: string;
+        groupBySql?: string;
+        orderBySql?: string;
+      }) =>
         dispatch(setSourceFilterConditionsAction(payload)),
 
       // UI Mapping state
@@ -194,8 +216,10 @@ export function SttmBuilderProvider({
       mappingSql: state.mappingSql,
       isPreProcessModalOpen: state.isPreProcessModalOpen,
       activeMappingId: state.activeMappingId,
+      pendingAiMappingReviews: state.pendingAiMappingReviews,
       
       // UI Mapping actions
+      applySemanticRefresh: (payload) => dispatch(applySemanticRefreshAction(payload)),
       initializeMappings: (mappings) => dispatch(initializeMappingsAction(mappings)),
       updateMapping: (id, updates) => dispatch(updateMappingAction({ id, updates })),
       toggleMappingSelection: (id) => dispatch(toggleMappingSelectionAction({ id })),

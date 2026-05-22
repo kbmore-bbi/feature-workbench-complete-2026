@@ -127,6 +127,13 @@ def test_canonical_agent_response_parses_to_typed_mapping_result() -> None:
                         "DB.SCH.TGT.CUSTOMER_ID": {
                             "source_attributes": ["DB.SCH.SRC.CUST_ID"],
                             "confidence_score": 0.92,
+                            "confidence_reason": "Column names and semantic descriptions align.",
+                            "candidate_source_attributes": ["DB.SCH.SRC.CUSTOMER_KEY"],
+                            "preprocessing_rule": "Direct",
+                            "preprocessing_rule_type": "Direct",
+                            "preprocessing_nl_rule": "Use the source value directly.",
+                            "processing_order": 1,
+                            "description": "Customer identifier copied from the source record.",
                         }
                     }
                 },
@@ -138,11 +145,17 @@ def test_canonical_agent_response_parses_to_typed_mapping_result() -> None:
         }
     )
 
-    agent, result, message, warnings, error, meta, status = service._parse_envelope(raw)
+    agent, result, message, warnings, error, meta, status, *_ = service._parse_envelope(raw)
 
     assert agent == SubAgent.SOURCE_MAPPING_AGENT
     assert result is not None
-    assert result.mappings["DB.SCH.TGT.CUSTOMER_ID"].confidence_score == 0.92
+    mapping = result.mappings["DB.SCH.TGT.CUSTOMER_ID"]
+    assert mapping.confidence_score == 0.92
+    assert mapping.confidence_reason == "Column names and semantic descriptions align."
+    assert mapping.candidate_source_attributes == ["DB.SCH.SRC.CUSTOMER_KEY"]
+    assert mapping.preprocessing_rule == "Direct"
+    assert mapping.preprocessing_nl_rule == "Use the source value directly."
+    assert mapping.processing_order == 1
     assert message == "Mapped one column."
     assert warnings == []
     assert error is None
@@ -166,16 +179,92 @@ def test_legacy_agent_mapping_array_is_normalized_temporarily() -> None:
                                 "confidence": "HIGH",
                             }
                         ],
+                        "candidates": [{"table": "DB.SCH.SRC", "column": "CUSTOMER_KEY"}],
+                        "reason": "Best semantic match for the customer identifier.",
+                        "processing_order": "2",
                     }
                 ]
             },
         }
     )
 
-    agent, result, _, _, _, _, _ = service._parse_envelope(raw)
+    agent, result, *_ = service._parse_envelope(raw)
 
     assert agent == SubAgent.SOURCE_MAPPING_AGENT
     assert result is not None
     mapping = result.mappings["DB.SCH.TGT.CUSTOMER_ID"]
     assert mapping.source_attributes == ["DB.SCH.SRC.CUST_ID"]
     assert mapping.confidence_score == 0.9
+    assert mapping.candidate_source_attributes == ["DB.SCH.SRC.CUSTOMER_KEY"]
+    assert mapping.confidence_reason == "Best semantic match for the customer identifier."
+    assert mapping.processing_order == 2
+
+
+def test_chat_response_unwraps_structured_envelope_embedded_in_message() -> None:
+    service = STTMBuilderService.__new__(STTMBuilderService)
+    nested = {
+        "contract_version": "1.0",
+        "request_id": "req-transform-1",
+        "operation": "sttm.transform",
+        "context": {},
+        "data": {
+            "intent": "TRANSFORM",
+            "status": "completed",
+            "agent": "TRANSFORMATION_AGENT",
+            "result": {
+                "rules": [
+                    {
+                        "target_attribute": "DB.SCH.TGT.NOTE_ID",
+                        "rule": "TRY_CAST(DB.SCH.SRC.VERIFIED_INCOME_ID AS NUMBER(20,0))",
+                        "description": "Casts the UUID-shaped source into a numeric target with TRY_CAST.",
+                    }
+                ]
+            },
+            "message": "Generated transformation rule for NOTE_ID.",
+            "artifact_type": "transformation_rules",
+            "artifact": {
+                "sql_text": "TRY_CAST(DB.SCH.SRC.VERIFIED_INCOME_ID AS NUMBER(20,0))",
+            },
+            "semantic_level_achieved": "L3_MAPPING_ENRICHED",
+        },
+        "warnings": [],
+        "error": None,
+        "meta": {"routed_by": "AGT_STTM_BUILDER"},
+    }
+    outer = json.dumps(
+        {
+            "contract_version": "1.0",
+            "request_id": "req-chat-1",
+            "operation": "sttm.chat",
+            "context": {},
+            "data": {
+                "intent": "CHAT",
+                "status": "completed",
+                "agent": None,
+                "result": None,
+                "message": f"```json\n{json.dumps(nested, indent=2)}\n```",
+                "artifact_type": "none",
+                "artifact": None,
+            },
+            "warnings": [],
+            "error": None,
+            "meta": {"orchestration_model": "claude-sonnet-4-6"},
+        }
+    )
+
+    agent, result, message, warnings, error, meta, status, artifact_type, artifact, *_ = (
+        service._parse_chat_response(outer)
+    )
+
+    assert agent == SubAgent.TRANSFORMATION_AGENT
+    assert result is not None
+    assert result.rules[0].target_attribute == "DB.SCH.TGT.NOTE_ID"
+    assert result.rules[0].rule == "TRY_CAST(DB.SCH.SRC.VERIFIED_INCOME_ID AS NUMBER(20,0))"
+    assert message == "Generated transformation rule for NOTE_ID."
+    assert warnings == []
+    assert error is None
+    assert meta["orchestration_model"] == "claude-sonnet-4-6"
+    assert meta["routed_by"] == "AGT_STTM_BUILDER"
+    assert status == STTMStatus.COMPLETED
+    assert artifact_type is not None and artifact_type.value == "transformation_rules"
+    assert artifact == {"sql_text": "TRY_CAST(DB.SCH.SRC.VERIFIED_INCOME_ID AS NUMBER(20,0))"}

@@ -39,6 +39,7 @@ class OperationContext(BaseModel):
     """Cross-cutting context shared by APIs, agents, skills, and tools."""
 
     thread_id: str | None = None
+    parent_message_id: int | None = None
     current_role: str | None = None
     current_database: str | None = None
     current_schema: str | None = None

@@ -51,11 +51,13 @@ class SnowflakeAgentClient:
         *,
         agent: str | None = None,
         thread_id: str | None = None,
+        parent_message_id: int | None = None,
     ) -> tuple[str, str]:
         text, resolved_thread_id, _ = self.run_detailed(
             messages,
             agent=agent,
             thread_id=thread_id,
+            parent_message_id=parent_message_id,
         )
         return text, resolved_thread_id
 
@@ -65,6 +67,7 @@ class SnowflakeAgentClient:
         *,
         agent: str | None = None,
         thread_id: str | None = None,
+        parent_message_id: int | None = None,
     ) -> Iterator[tuple[str, Any]]:
         payload: dict[str, Any] = {
             "models": {"orchestration": self.model},
@@ -77,6 +80,8 @@ class SnowflakeAgentClient:
 
         if thread_id:
             payload["thread_id"] = thread_id
+        if parent_message_id is not None:
+            payload["parent_message_id"] = parent_message_id
 
         headers = self._build_headers()
         endpoint = self._build_endpoint(agent)
@@ -106,6 +111,7 @@ class SnowflakeAgentClient:
         *,
         agent: str | None = None,
         thread_id: str | None = None,
+        parent_message_id: int | None = None,
     ) -> tuple[str, str, dict[str, Any] | None]:
         """
         Send *messages* to the Cortex Agent and return
@@ -129,6 +135,8 @@ class SnowflakeAgentClient:
 
         if thread_id:
             payload["thread_id"] = thread_id
+        if parent_message_id is not None:
+            payload["parent_message_id"] = parent_message_id
 
         headers = self._build_headers()
         endpoint = self._build_endpoint(agent)

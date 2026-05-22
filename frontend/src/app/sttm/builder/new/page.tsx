@@ -6,12 +6,14 @@ import SourceTargetPanel from "@/features/sttm/source-target/source-target-panel
 import SourceTargetDbSelection from "@/features/sttm/source-target/source-target-db-selection";
 import SttmTableRelationshipFlow from "@/features/sttm/source-target/table-relationship-flow";
 
-
 export default function SttmBuilderPage() {
   const { setContent } = useSidebarSlot();
 
   useEffect(() => {
     setContent(<SourceTargetDbSelection />);
+    return () => {
+      setContent(null);
+    };
   }, [setContent]);
 
   return (

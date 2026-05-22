@@ -40,7 +40,7 @@ def refresh_semantic_context(
     result = service.refresh_bundle(
         payload,
         agent_client=agent_client,
-        allow_agent_refresh=False,
+        allow_agent_refresh=True,
     )
     return build_response_envelope(
         operation="semantic_context.refresh",

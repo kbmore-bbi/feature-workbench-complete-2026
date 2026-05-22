@@ -25,6 +25,8 @@ instructions:
        and the source column types.
     4. If user feedback is provided, revise only the affected rule(s).
     5. If the request is not about transformation rule creation, set rules: [] and respond in message.
+    6. Keep the rule scoped to the requested target attribute. Do not rename the target column
+       or invent a new output column unless the user explicitly asks for a new output field.
 
     ## Tool use rules
     - Call GET_SEMANTIC_MODEL first (scope ATTRIBUTE) for each source column.
@@ -65,6 +67,8 @@ instructions:
     - One object per target attribute.
     - rule is a valid SQL expression (e.g. CAST, COALESCE, CONCAT, CASE WHEN).
     - description is concise — one sentence maximum.
+    - target_attribute must remain the requested target attribute from the input payload.
+      Do not substitute a renamed output field unless the user explicitly asked for one.
     - For non-transformation requests: rules: [], status: "needs_input", message: <your response>.
     - warnings, error, and meta are optional; include them only when meaningful.
     - No text outside the JSON block.

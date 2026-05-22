@@ -23,6 +23,10 @@ import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 
+const APPROVAL_RESPONSE_PATTERN =
+  /^(yes|yep|yeah|ok|okay|sure|approve|approved|apply|apply it|please apply|go ahead|looks good|do it|use it)[.! ]*$/i;
+const SKIP_RESPONSE_PATTERN = /^(skip|pass|next one|next)[.! ]*$/i;
+
 function renderInline(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, index) => {
@@ -353,9 +357,12 @@ export default function AIAgentPanel({
     chatMessages,
     datahubStatus,
     dismissPendingDerivedSourceDraft,
+    applyPendingAiMappingReview,
+    skipPendingAiMappingReview,
     mappingCount,
     openPendingDerivedSourceDraft,
     pendingDerivedSourceDraft,
+    pendingAiMappingReviews,
     relationships,
     semanticBundleLabel,
     semanticLevel,
@@ -377,10 +384,25 @@ export default function AIAgentPanel({
     () => chatMessages.some((message) => message.isStreaming),
     [chatMessages]
   );
+  const activeReview = pendingAiMappingReviews[0] ?? null;
+  const isTransformationReview = !!activeReview?.preprocessingRule;
 
   const handleSend = () => {
     const message = draft.trim();
     if (!message || chatLoading) return;
+
+    if (pendingAiMappingReviews[0] && APPROVAL_RESPONSE_PATTERN.test(message)) {
+      applyPendingAiMappingReview();
+      setDraft("");
+      return;
+    }
+
+    if (pendingAiMappingReviews[0] && SKIP_RESPONSE_PATTERN.test(message)) {
+      skipPendingAiMappingReview();
+      setDraft("");
+      return;
+    }
+
     sendChatMessage(message);
     setDraft("");
   };
@@ -705,6 +727,118 @@ export default function AIAgentPanel({
               </Typography>
             </Paper>
           </Stack>
+        ) : null}
+
+        {activeReview ? (
+          <Paper
+            elevation={0}
+            sx={{
+              p: 1.5,
+              borderRadius: "12px",
+              border: "1px solid #fde68a",
+              backgroundColor: "#fffbeb",
+              display: "grid",
+              gap: 1,
+            }}
+          >
+            <Box>
+              <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#92400e" }}>
+                {isTransformationReview
+                  ? "Review AI transformation suggestion"
+                  : "Review AI mapping suggestion"}
+              </Typography>
+              <Typography sx={{ fontSize: 12, color: "#475569", mt: 0.35 }}>
+                {activeReview.targetColumn} · {Math.round(activeReview.confidenceScore * 100)}% confidence
+              </Typography>
+            </Box>
+            <Box sx={{ display: "grid", gap: 0.75 }}>
+              <Typography sx={{ fontSize: 12.5, color: "#0f172a" }}>
+                <strong>Suggested source:</strong> {activeReview.sourceAttributes.join(", ") || "No confident source found"}
+              </Typography>
+              {activeReview.preprocessingRule ? (
+                <Box
+                  component="pre"
+                  sx={{
+                    m: 0,
+                    px: 1.25,
+                    py: 1,
+                    borderRadius: 1.5,
+                    backgroundColor: "#fff7ed",
+                    border: "1px solid #fed7aa",
+                    color: "#7c2d12",
+                    fontSize: 12,
+                    whiteSpace: "pre-wrap",
+                    overflowX: "auto",
+                  }}
+                >
+                  <strong>Suggested SQL rule:</strong>
+                  {"\n"}
+                  {activeReview.preprocessingRule}
+                </Box>
+              ) : null}
+              {activeReview.preprocessingNlRule ? (
+                <Typography sx={{ fontSize: 12.5, color: "#0f172a" }}>
+                  <strong>Why:</strong> {activeReview.preprocessingNlRule}
+                </Typography>
+              ) : null}
+              {activeReview.confidenceReason ? (
+                <Typography sx={{ fontSize: 12.5, color: "#475569", lineHeight: 1.6 }}>
+                  {activeReview.confidenceReason}
+                </Typography>
+              ) : null}
+              {!activeReview.confidenceReason && activeReview.unmatchedReason ? (
+                <Typography sx={{ fontSize: 12.5, color: "#b45309", lineHeight: 1.6 }}>
+                  {activeReview.unmatchedReason}
+                </Typography>
+              ) : null}
+              {activeReview.candidateSourceAttributes.length > 0 ? (
+                <Typography sx={{ fontSize: 12, color: "#64748b", lineHeight: 1.6 }}>
+                  Alternatives: {activeReview.candidateSourceAttributes.join(", ")}
+                </Typography>
+              ) : null}
+            </Box>
+            <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={applyPendingAiMappingReview}
+                sx={{
+                  textTransform: "none",
+                  borderRadius: "999px",
+                  boxShadow: "none",
+                  backgroundColor: "#1d4ed8",
+                  "&:hover": { backgroundColor: "#1e40af", boxShadow: "none" },
+                }}
+              >
+                Apply Changes
+              </Button>
+              <Button
+                size="small"
+                variant="outlined"
+                onClick={() =>
+                  setDraft(
+                    isTransformationReview
+                      ? `Revise the transformation rule for ${activeReview.targetColumn}. Use these notes: `
+                      : `Revise the mapping for ${activeReview.targetColumn}. Use these notes: `,
+                  )
+                }
+                sx={{
+                  textTransform: "none",
+                  borderRadius: "999px",
+                }}
+              >
+                Make Further Changes
+              </Button>
+              <Button
+                size="small"
+                variant="text"
+                onClick={skipPendingAiMappingReview}
+                sx={{ textTransform: "none", color: "#64748b" }}
+              >
+                Dismiss
+              </Button>
+            </Stack>
+          </Paper>
         ) : null}
 
         {pendingDerivedSourceDraft ? (

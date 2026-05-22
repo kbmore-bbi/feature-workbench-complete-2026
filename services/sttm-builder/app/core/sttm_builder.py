@@ -1,6 +1,7 @@
 import json
 import logging
 import re
+import time
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -16,6 +17,7 @@ from app.core.snowflake_agent import SnowflakeAgentClient
 from app.core.snowflake_analyst import SnowflakeAnalystClient
 from app.schema.contracts import ApiError, ApiWarning
 from app.schema.semantic_context import SemanticContextRefreshRequest, SemanticLevel, SemanticSurface
+from app.schema.semantic_context import SemanticBundleStatus
 from app.schema.sttm_builder import (
     AttributeMapping,
     Interface,
@@ -28,10 +30,12 @@ from app.schema.sttm_builder import (
     STTMBuilderResponse,
     STTMStatus,
     SubAgent,
+    TransformationRule,
     TransformationResult,
 )
 
 logger = logging.getLogger(__name__)
+_local_chat_threads: dict[str, list[dict[str, Any]]] = {}
 
 
 class STTMBuilderService:
@@ -61,36 +65,66 @@ class STTMBuilderService:
         self._semantic_model_service = semantic_model_service
         self._semantic_context_service = semantic_context_service
 
-        agent_name = settings.resolved_sttm_builder_agent.strip()
-        if not agent_name:
+        builder_agent_name = settings.resolved_sttm_builder_agent.strip()
+        if not builder_agent_name:
             raise SnowflakeAgentError(
                 "Could not resolve the STTM builder agent. Set "
                 "SNOWFLAKE_STTM_BUILDER_AGENT or provide the metadata "
                 "database/schema configuration."
             )
-        self._agent_name = agent_name
+        self._agent_name = builder_agent_name
+
+        source_mapping_agent_name = settings.resolved_source_mapping_agent.strip()
+        if not source_mapping_agent_name:
+            raise SnowflakeAgentError(
+                "Could not resolve the source mapping agent. Set "
+                "SNOWFLAKE_SOURCE_MAPPING_AGENT or provide the metadata "
+                "database/schema configuration."
+            )
+        self._source_mapping_agent_name = source_mapping_agent_name
 
     def invoke(self, req: STTMBuilderEnvelopeRequest) -> STTMBuilderResponse:
+        started_at = time.perf_counter()
         req, semantic_refresh = self._with_semantic_context(req)
+        semantic_context_ms = (time.perf_counter() - started_at) * 1000
 
         user_text = self._build_agent_payload(req)
+        messages, local_thread_id = self._prepare_agent_messages(req, user_text)
         logger.info(
-            "Sending STTM agent payload: request_id=%s operation=%s chars=%s surface=%s level=%s bundle=%s",
+            "Sending STTM agent payload: request_id=%s operation=%s chars=%s surface=%s level=%s bundle=%s agent=%s",
             req.request_id,
             req.operation.value,
             len(user_text),
             req.context.surface.value,
             req.context.semantic_level_requested.value,
             req.context.semantic_bundle_id,
+            self._resolved_agent_name(req),
         )
 
-        thread_id_to_use = None if self._should_reset_thread(req) else req.context.thread_id
+        thread_id_to_use = (
+            None
+            if local_thread_id is not None or self._should_reset_thread(req)
+            else req.context.thread_id
+        )
+        parent_message_id_to_use = None if thread_id_to_use is None else req.context.parent_message_id
 
-        raw_text, thread_id, raw_payload = self._agent.run_detailed(
-            [{"role": "user", "content": [{"type": "text", "text": user_text}]}],
-            agent=self._agent_name,
+        agent_started_at = time.perf_counter()
+        raw_text, thread_id, raw_payload = self._run_agent_detailed(
+            messages=messages,
+            agent_name=self._resolved_agent_name(req),
             thread_id=thread_id_to_use,
+            parent_message_id=parent_message_id_to_use,
         )
+        agent_ms = (time.perf_counter() - agent_started_at) * 1000
+        parent_message_id = _extract_assistant_message_id(raw_payload)
+        response_thread_id = local_thread_id or thread_id
+        response_meta = {
+            "timings_ms": {
+                "semantic_context": round(semantic_context_ms, 1),
+                "agent": round(agent_ms, 1),
+                "total": round((time.perf_counter() - started_at) * 1000, 1),
+            }
+        }
 
         if req.data.intent == Interface.CHAT:
             (
@@ -106,6 +140,14 @@ class STTMBuilderService:
                 semantic_level_achieved,
                 semantic_refresh_status,
             ) = self._parse_chat_response(raw_text, raw_payload)
+            warnings = self._normalize_response_warnings(warnings)
+            final_chat_message = self._sanitize_final_chat_message(message or raw_text.strip())
+            if local_thread_id:
+                self._store_local_chat_history(
+                    thread_id=local_thread_id,
+                    messages=messages,
+                    assistant_text=final_chat_message or "",
+                )
             artifact_type, artifact = self._coerce_chat_artifact(
                 req,
                 artifact_type=artifact_type,
@@ -113,10 +155,11 @@ class STTMBuilderService:
             )
             return STTMBuilderResponse.from_invocation(
                 req,
-                thread_id=thread_id,
+                thread_id=response_thread_id,
+                parent_message_id=None if local_thread_id else parent_message_id,
                 agent=sub_agent,
                 result=result,
-                message=self._sanitize_final_chat_message(message or raw_text.strip()),
+                message=final_chat_message,
                 status=status,
                 artifact_type=artifact_type or (
                     STTMArtifactType.SEMANTIC_CONTEXT
@@ -146,11 +189,18 @@ class STTMBuilderService:
                 warnings=warnings,
                 error=error,
                 meta=self._merge_agent_meta(
-                    meta,
+                    {**(meta or {}), **response_meta},
                     raw_payload=raw_payload,
                     artifact_type=artifact_type,
                     artifact=artifact,
                 ),
+            )
+
+        if local_thread_id and req.data.intent == Interface.CHAT:
+            self._store_local_chat_history(
+                thread_id=local_thread_id,
+                messages=messages,
+                assistant_text=message or raw_text.strip(),
             )
 
         (
@@ -166,9 +216,11 @@ class STTMBuilderService:
             semantic_level_achieved,
             semantic_refresh_status,
         ) = self._parse_envelope(raw_text)
+        warnings = self._normalize_response_warnings(warnings)
         return STTMBuilderResponse.from_invocation(
             req,
-            thread_id=thread_id,
+            thread_id=response_thread_id,
+            parent_message_id=None if local_thread_id else parent_message_id,
             agent=sub_agent,
             result=result,
             message=message,
@@ -197,7 +249,7 @@ class STTMBuilderService:
             warnings=warnings,
             error=error,
             meta=self._merge_agent_meta(
-                meta,
+                {**(meta or {}), **response_meta},
                 raw_payload=raw_payload,
                 artifact_type=artifact_type,
                 artifact=artifact,
@@ -213,7 +265,7 @@ class STTMBuilderService:
                 "status",
                 {
                     "phase": "semantic_refresh_started",
-                    "message": "Refreshing semantic context for the current selection.",
+                    "message": "Checking semantic context for the current selection.",
                 },
             )
             req_with_context, semantic_refresh = self._with_semantic_context(req)
@@ -222,11 +274,7 @@ class STTMBuilderService:
                     "status",
                     {
                         "phase": "semantic_refresh_completed",
-                        "message": (
-                            "Semantic context is ready. Handing the request to AGT_STTM_BUILDER."
-                            if semantic_refresh.semantic_view_name
-                            else "Semantic context is ready. Handing the request to AGT_STTM_BUILDER."
-                        ),
+                        "message": self._semantic_refresh_status_message(semantic_refresh),
                         "bundle_id": semantic_refresh.bundle_id,
                         "bundle_label": semantic_refresh.bundle_label,
                         "semantic_level": semantic_refresh.achieved_level,
@@ -236,14 +284,24 @@ class STTMBuilderService:
                 )
 
             user_text = self._build_agent_payload(req_with_context)
+            messages, local_thread_id = self._prepare_agent_messages(req_with_context, user_text)
             thread_id_to_use = (
-                None if self._should_reset_thread(req_with_context) else req_with_context.context.thread_id
+                None
+                if local_thread_id is not None or self._should_reset_thread(req_with_context)
+                else req_with_context.context.thread_id
+            )
+            parent_message_id_to_use = (
+                None if thread_id_to_use is None else req_with_context.context.parent_message_id
             )
             yield emit(
                 "status",
                 {
                     "phase": "agent_started",
-                    "message": "AGT_STTM_BUILDER is evaluating the request and choosing the right path.",
+                    "message": (
+                        "AGT_SOURCE_MAPPING is generating mapping suggestions."
+                        if req_with_context.data.intent == Interface.AUTO_MAP
+                        else "AGT_STTM_BUILDER is evaluating the request and choosing the right path."
+                    ),
                     "bundle_id": req_with_context.context.semantic_bundle_id,
                     "semantic_level": req_with_context.context.semantic_level_requested,
                 },
@@ -251,34 +309,88 @@ class STTMBuilderService:
 
             final_payload: dict[str, Any] | None = None
             resolved_thread_id = thread_id_to_use
+            resolved_parent_message_id = parent_message_id_to_use
             text_parts: list[str] = []
 
             try:
-                for event_name, payload in self._agent.stream_events(
-                    [{"role": "user", "content": [{"type": "text", "text": user_text}]}],
-                    agent=self._agent_name,
-                    thread_id=thread_id_to_use,
-                ):
-                    potential_thread = _find_nested_string(payload, "thread_id")
-                    if potential_thread:
-                        resolved_thread_id = potential_thread
+                def consume_stream(active_thread_id: str | None) -> Iterator[tuple[str, Any]]:
+                    return self._agent.stream_events(
+                        messages,
+                        agent=self._resolved_agent_name(req_with_context),
+                        thread_id=active_thread_id,
+                        parent_message_id=resolved_parent_message_id if active_thread_id else None,
+                    )
 
-                    delta = _extract_stream_text_delta(event_name, payload)
-                    if delta:
-                        text_parts.append(delta)
-                        yield emit("delta", {"text": delta})
+                try:
+                    stream_iterator = consume_stream(thread_id_to_use)
+                    for event_name, payload in stream_iterator:
+                        potential_thread = _find_nested_string(payload, "thread_id")
+                        if potential_thread:
+                            resolved_thread_id = potential_thread
+                        metadata = _extract_stream_message_metadata(event_name, payload)
+                        if metadata and metadata["role"] == "assistant":
+                            resolved_parent_message_id = metadata["message_id"]
 
-                    suggestions = _extract_stream_suggestions(payload)
-                    if suggestions:
-                        yield emit("suggestions", {"items": suggestions})
+                        delta = _extract_stream_text_delta(event_name, payload)
+                        if delta:
+                            text_parts.append(delta)
+                            yield emit("delta", {"text": delta})
 
-                    status_message = _extract_stream_status(event_name, payload)
-                    if status_message:
-                        yield emit("status", {"phase": "agent_progress", "message": status_message})
+                        suggestions = _extract_stream_suggestions(payload)
+                        if suggestions:
+                            yield emit("suggestions", {"items": suggestions})
 
-                    response_payload = _extract_stream_response_payload(event_name, payload)
-                    if response_payload is not None:
-                        final_payload = response_payload
+                        status_message = _extract_stream_status(event_name, payload)
+                        if status_message:
+                            yield emit("status", {"phase": "agent_progress", "message": status_message})
+
+                        response_payload = _extract_stream_response_payload(event_name, payload)
+                        if response_payload is not None:
+                            final_payload = response_payload
+                except SnowflakeAgentError as exc:
+                    if not self._should_retry_without_thread(exc, thread_id_to_use):
+                        raise
+                    logger.warning(
+                        "Retrying Cortex Agent stream without thread after HTTP 400: request_id=%s thread_id=%s",
+                        req_with_context.request_id,
+                        thread_id_to_use,
+                    )
+                    resolved_thread_id = None
+                    resolved_parent_message_id = None
+                    text_parts = []
+                    final_payload = None
+                    yield emit(
+                        "status",
+                        {
+                            "phase": "agent_thread_reset",
+                            "message": "The prior agent thread expired. Retrying with a fresh conversation thread.",
+                        },
+                    )
+                    stream_iterator = consume_stream(None)
+                    for event_name, payload in stream_iterator:
+                        potential_thread = _find_nested_string(payload, "thread_id")
+                        if potential_thread:
+                            resolved_thread_id = potential_thread
+                        metadata = _extract_stream_message_metadata(event_name, payload)
+                        if metadata and metadata["role"] == "assistant":
+                            resolved_parent_message_id = metadata["message_id"]
+
+                        delta = _extract_stream_text_delta(event_name, payload)
+                        if delta:
+                            text_parts.append(delta)
+                            yield emit("delta", {"text": delta})
+
+                        suggestions = _extract_stream_suggestions(payload)
+                        if suggestions:
+                            yield emit("suggestions", {"items": suggestions})
+
+                        status_message = _extract_stream_status(event_name, payload)
+                        if status_message:
+                            yield emit("status", {"phase": "agent_progress", "message": status_message})
+
+                        response_payload = _extract_stream_response_payload(event_name, payload)
+                        if response_payload is not None:
+                            final_payload = response_payload
             except Exception as exc:
                 logger.exception("Streaming STTM agent request failed")
                 yield emit(
@@ -292,11 +404,20 @@ class STTMBuilderService:
 
             raw_payload = final_payload
             raw_text = _extract_stream_message_text(final_payload) or "".join(text_parts).strip()
+            resolved_parent_message_id = _extract_assistant_message_id(final_payload) or resolved_parent_message_id
+            response_thread_id = local_thread_id or resolved_thread_id or str(uuid.uuid4())
+            if local_thread_id and req_with_context.data.intent == Interface.CHAT:
+                self._store_local_chat_history(
+                    thread_id=local_thread_id,
+                    messages=messages,
+                    assistant_text=raw_text,
+                )
             response = self._build_chat_response(
                 req_with_context,
                 raw_text=raw_text,
                 raw_payload=raw_payload,
-                thread_id=resolved_thread_id or str(uuid.uuid4()),
+                thread_id=response_thread_id,
+                parent_message_id=None if local_thread_id else resolved_parent_message_id,
                 semantic_refresh=semantic_refresh,
             )
             yield emit("final", response.model_dump(mode="json"))
@@ -310,6 +431,15 @@ class STTMBuilderService:
         source_tables = req.context.source_tables or []
         selected_derived_sources = req.context.selected_derived_sources or []
         if not source_tables and not selected_derived_sources:
+            return req, None
+        if self._should_reuse_prefetched_semantic_context(req):
+            logger.info(
+                "Reusing prefetched semantic context without refresh: request_id=%s bundle=%s surface=%s level=%s",
+                req.request_id,
+                req.context.semantic_bundle_id,
+                req.context.surface.value,
+                req.context.semantic_level_requested.value,
+            )
             return req, None
         try:
             requested_level = self._determine_semantic_level(req)
@@ -326,7 +456,7 @@ class STTMBuilderService:
                     force=False,
                 ),
                 agent_client=self._agent,
-                allow_agent_refresh=False,
+                allow_agent_refresh=True,
             )
             context = req.context.model_copy(
                 update={
@@ -352,6 +482,23 @@ class STTMBuilderService:
             )
             return req, None
 
+    @staticmethod
+    def _should_reuse_prefetched_semantic_context(req: STTMBuilderEnvelopeRequest) -> bool:
+        if req.context.surface != SemanticSurface.MAPPING:
+            return False
+        if req.context.semantic_level_requested != SemanticLevel.L3_MAPPING_ENRICHED:
+            return False
+        if not req.context.semantic_bundle_id or not req.context.semantic_view_name:
+            return False
+        semantic_context = req.context.semantic_context or []
+        if not semantic_context:
+            return False
+        return req.data.intent in {
+            Interface.AUTO_MAP,
+            Interface.CHAT,
+            Interface.TRANSFORM,
+        }
+
     def _build_chat_response(
         self,
         req: STTMBuilderEnvelopeRequest,
@@ -359,6 +506,7 @@ class STTMBuilderService:
         raw_text: str,
         raw_payload: dict[str, Any] | None,
         thread_id: str,
+        parent_message_id: int | None,
         semantic_refresh: Any | None,
     ) -> STTMBuilderResponse:
         (
@@ -383,6 +531,7 @@ class STTMBuilderService:
         return STTMBuilderResponse.from_invocation(
             req,
             thread_id=thread_id,
+            parent_message_id=parent_message_id,
             agent=sub_agent,
             result=result,
             message=self._sanitize_final_chat_message(message or raw_text.strip()),
@@ -469,7 +618,102 @@ class STTMBuilderService:
 
     @classmethod
     def _should_reset_thread(cls, req: STTMBuilderEnvelopeRequest) -> bool:
+        if req.data.intent != Interface.CHAT:
+            return True
         return cls._is_derived_source_request(req)
+
+    def _resolved_agent_name(self, req: STTMBuilderEnvelopeRequest) -> str:
+        if req.data.intent == Interface.AUTO_MAP:
+            return self._source_mapping_agent_name
+        return self._agent_name
+
+    def _prepare_agent_messages(
+        self,
+        req: STTMBuilderEnvelopeRequest,
+        user_text: str,
+    ) -> tuple[list[dict[str, Any]], str | None]:
+        user_message = {"role": "user", "content": [{"type": "text", "text": user_text}]}
+        if not self._should_use_local_chat_history(req):
+            return [user_message], None
+
+        local_thread_id = req.context.thread_id or f"local-{uuid.uuid4()}"
+        if self._should_reset_thread(req):
+            _local_chat_threads.pop(local_thread_id, None)
+        history = list(_local_chat_threads.get(local_thread_id, []))
+        return [*history, user_message], local_thread_id
+
+    def _store_local_chat_history(
+        self,
+        *,
+        thread_id: str,
+        messages: list[dict[str, Any]],
+        assistant_text: str,
+    ) -> None:
+        stored_messages = list(messages)
+        if assistant_text.strip():
+            stored_messages.append(
+                {
+                    "role": "assistant",
+                    "content": [{"type": "text", "text": assistant_text.strip()}],
+                }
+            )
+        _local_chat_threads[thread_id] = stored_messages[-60:]
+
+    def _should_use_local_chat_history(self, req: STTMBuilderEnvelopeRequest) -> bool:
+        return self._settings.local_dev_auth_enabled and req.data.intent == Interface.CHAT
+
+    def _run_agent_detailed(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        agent_name: str,
+        thread_id: str | None,
+        parent_message_id: int | None,
+    ) -> tuple[str, str, dict[str, Any] | None]:
+        try:
+            return self._agent.run_detailed(
+                messages,
+                agent=agent_name,
+                thread_id=thread_id,
+                parent_message_id=parent_message_id,
+            )
+        except SnowflakeAgentError as exc:
+            if not self._should_retry_without_thread(exc, thread_id):
+                raise
+            logger.warning(
+                "Retrying Cortex Agent request without thread after HTTP 400: agent=%s thread_id=%s",
+                agent_name,
+                thread_id,
+            )
+            return self._agent.run_detailed(
+                messages,
+                agent=agent_name,
+                thread_id=None,
+                parent_message_id=None,
+            )
+
+    @staticmethod
+    def _should_retry_without_thread(
+        exc: SnowflakeAgentError,
+        thread_id: str | None,
+    ) -> bool:
+        if not thread_id:
+            return False
+        message = str(exc)
+        return "Cortex Agent returned HTTP 400" in message
+
+    @staticmethod
+    def _semantic_refresh_status_message(semantic_refresh: Any) -> str:
+        if semantic_refresh.cache_hit:
+            return "Semantic context is already fresh. Handing the request to AGT_STTM_BUILDER."
+        if semantic_refresh.status == SemanticBundleStatus.PARTIAL:
+            return "Semantic context is partially ready. Handing the request to AGT_STTM_BUILDER with the freshest available context."
+        if semantic_refresh.promoted and semantic_refresh.semantic_view_name:
+            return (
+                f"Semantic view {semantic_refresh.semantic_view_name} is ready. "
+                "Handing the request to AGT_STTM_BUILDER."
+            )
+        return "Semantic context is ready. Handing the request to AGT_STTM_BUILDER."
 
     @staticmethod
     def _determine_semantic_level(req: STTMBuilderEnvelopeRequest) -> SemanticLevel:
@@ -767,6 +1011,7 @@ class STTMBuilderService:
         return STTMBuilderResponse.from_invocation(
             req,
             thread_id=thread_id,
+            parent_message_id=req.context.parent_message_id,
             agent=None,
             result=None,
             message=response_message,
@@ -843,6 +1088,7 @@ class STTMBuilderService:
         return STTMBuilderResponse.from_invocation(
             req,
             thread_id=req.context.thread_id or f"semantic-{uuid.uuid4()}",
+            parent_message_id=req.context.parent_message_id,
             agent=None,
             result=None,
             message=message,
@@ -1116,6 +1362,28 @@ class STTMBuilderService:
             result = None
             if sub_agent and parsed.data.result is not None:
                 result = self._validate_result(sub_agent, parsed.data.result.model_dump(mode="json"))
+            if result is None and sub_agent is None:
+                embedded = self._parse_embedded_envelope(parsed.data.message)
+                if embedded is not None:
+                    logger.info("Unwrapped structured sub-agent response from orchestrator message")
+                    return self._merge_embedded_envelope(
+                        outer=(
+                            parsed.data.agent,
+                            result,
+                            parsed.data.message,
+                            parsed.warnings,
+                            parsed.error,
+                            parsed.meta,
+                            parsed.data.status,
+                            parsed.data.artifact_type,
+                            parsed.data.artifact,
+                            parsed.data.semantic_level_achieved,
+                            parsed.data.semantic_refresh_status.model_dump(mode="json")
+                            if parsed.data.semantic_refresh_status
+                            else None,
+                        ),
+                        nested=embedded,
+                    )
             return (
                 sub_agent,
                 result,
@@ -1142,6 +1410,31 @@ class STTMBuilderService:
         status = _status_from_payload(data)
 
         if not agent_name:
+            embedded = self._parse_embedded_envelope(message)
+            if embedded is not None:
+                logger.info("Unwrapped structured sub-agent response from legacy orchestrator message")
+                return self._merge_embedded_envelope(
+                    outer=(
+                        None,
+                        None,
+                        message,
+                        warnings,
+                        error,
+                        meta,
+                        STTMStatus.NEEDS_INPUT if message else status,
+                        STTMArtifactType(data.get("artifact_type"))
+                        if data.get("artifact_type") in {item.value for item in STTMArtifactType}
+                        else None,
+                        data.get("artifact") if isinstance(data.get("artifact"), dict) else None,
+                        SemanticLevel(data.get("semantic_level_achieved"))
+                        if data.get("semantic_level_achieved") in {item.value for item in SemanticLevel}
+                        else None,
+                        data.get("semantic_refresh_status")
+                        if isinstance(data.get("semantic_refresh_status"), dict)
+                        else None,
+                    ),
+                    nested=embedded,
+                )
             return (
                 None,
                 None,
@@ -1268,6 +1561,87 @@ class STTMBuilderService:
                 )
             return None, None, text or None, [], None, {}, STTMStatus.COMPLETED, None, None, None, None
 
+    def _parse_embedded_envelope(
+        self,
+        message: str | None,
+    ) -> tuple[
+        SubAgent | None,
+        SourceMappingResult | TransformationResult | None,
+        str | None,
+        list[Any],
+        Any,
+        dict[str, Any],
+        STTMStatus,
+        STTMArtifactType | None,
+        dict[str, Any] | None,
+        SemanticLevel | None,
+        dict[str, Any] | None,
+    ] | None:
+        embedded_json = _extract_embedded_envelope_json(message)
+        if embedded_json is None:
+            return None
+        try:
+            return self._parse_envelope(embedded_json)
+        except SnowflakeAgentError:
+            logger.debug("Embedded orchestrator message looked like JSON but was not a valid envelope")
+            return None
+
+    @staticmethod
+    def _merge_embedded_envelope(
+        *,
+        outer: tuple[
+            SubAgent | None,
+            SourceMappingResult | TransformationResult | None,
+            str | None,
+            list[Any],
+            Any,
+            dict[str, Any],
+            STTMStatus,
+            STTMArtifactType | None,
+            dict[str, Any] | None,
+            SemanticLevel | None,
+            dict[str, Any] | None,
+        ],
+        nested: tuple[
+            SubAgent | None,
+            SourceMappingResult | TransformationResult | None,
+            str | None,
+            list[Any],
+            Any,
+            dict[str, Any],
+            STTMStatus,
+            STTMArtifactType | None,
+            dict[str, Any] | None,
+            SemanticLevel | None,
+            dict[str, Any] | None,
+        ],
+    ) -> tuple[
+        SubAgent | None,
+        SourceMappingResult | TransformationResult | None,
+        str | None,
+        list[Any],
+        Any,
+        dict[str, Any],
+        STTMStatus,
+        STTMArtifactType | None,
+        dict[str, Any] | None,
+        SemanticLevel | None,
+        dict[str, Any] | None,
+    ]:
+        return (
+            nested[0] or outer[0],
+            nested[1] or outer[1],
+            nested[2] or outer[2],
+            [*(outer[3] or []), *(nested[3] or [])],
+            nested[4] or outer[4],
+            {**(outer[5] or {}), **(nested[5] or {})},
+            nested[6] or outer[6],
+            nested[7] or outer[7],
+            nested[8] or outer[8],
+            nested[9] or outer[9],
+            nested[10] or outer[10],
+        )
+
     @staticmethod
     def _extract_agentic_analyst_artifact(
         raw_payload: dict[str, Any] | None,
@@ -1384,6 +1758,42 @@ def _extract_json_object(text: str) -> str:
     return text.strip()
 
 
+def _extract_embedded_envelope_json(text: str | None) -> str | None:
+    if not isinstance(text, str):
+        return None
+
+    candidates: list[str] = []
+    stripped = text.strip()
+    if not stripped:
+        return None
+
+    fenced_blocks = re.findall(r"```(?:json)?\s*([\s\S]*?)```", stripped, flags=re.IGNORECASE)
+    candidates.extend(block.strip() for block in fenced_blocks if block.strip())
+
+    if stripped.startswith("{") and stripped.endswith("}"):
+        candidates.append(stripped)
+
+    if '"contract_version"' in stripped or '"operation"' in stripped or '"data"' in stripped:
+        candidates.append(_extract_json_object(stripped))
+
+    for candidate in candidates:
+        json_candidate = _extract_json_object(candidate)
+        try:
+            payload = json.loads(json_candidate)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if (
+            payload.get("contract_version") == "1.0"
+            or isinstance(payload.get("data"), dict)
+            or payload.get("operation")
+        ):
+            return json.dumps(payload)
+
+    return None
+
+
 def _prune_empty(value: Any) -> Any:
     if isinstance(value, dict):
         out: dict[str, Any] = {}
@@ -1465,9 +1875,39 @@ def _normalize_source_mappings(raw_result: dict[str, Any]) -> dict[str, Attribut
             elif "confidence" in source:
                 confidences.append(_confidence_to_score(source["confidence"]))
 
+        candidate_sources = item.get("candidate_source_attributes") or item.get("candidates") or []
+        candidate_source_attributes: list[str] = []
+        for candidate in candidate_sources:
+            if isinstance(candidate, str):
+                candidate_source_attributes.append(candidate)
+                continue
+            if not isinstance(candidate, dict):
+                continue
+            table_name = candidate.get("table")
+            column_name = candidate.get("column") or candidate.get("attribute")
+            if table_name and column_name:
+                candidate_source_attributes.append(f"{table_name}.{column_name}")
+            elif column_name:
+                candidate_source_attributes.append(str(column_name))
+
+        processing_order = item.get("processing_order")
+        if processing_order is not None:
+            try:
+                processing_order = int(processing_order)
+            except (TypeError, ValueError):
+                processing_order = None
+
         mappings[target] = AttributeMapping(
             source_attributes=source_attributes,
             confidence_score=max(confidences) if confidences else 0.0,
+            confidence_reason=item.get("confidence_reason") or item.get("reason") or item.get("explanation"),
+            candidate_source_attributes=candidate_source_attributes,
+            unmatched_reason=item.get("unmatched_reason"),
+            preprocessing_rule=item.get("preprocessing_rule") or item.get("rule"),
+            preprocessing_rule_type=item.get("preprocessing_rule_type") or item.get("rule_type"),
+            preprocessing_nl_rule=item.get("preprocessing_nl_rule") or item.get("nl_rule"),
+            processing_order=processing_order,
+            description=item.get("description"),
         )
 
     return mappings
@@ -1568,6 +2008,93 @@ def _find_nested_string(payload: Any, key: str) -> str | None:
             found = _find_nested_string(nested, key)
             if found:
                 return found
+    return None
+
+
+def _find_nested_int(payload: Any, key: str) -> int | None:
+    if isinstance(payload, dict):
+        value = payload.get(key)
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+        for nested in payload.values():
+            found = _find_nested_int(nested, key)
+            if found is not None:
+                return found
+    if isinstance(payload, list):
+        for nested in payload:
+            found = _find_nested_int(nested, key)
+            if found is not None:
+                return found
+    return None
+
+
+def _extract_assistant_message_id(payload: dict[str, Any] | None) -> int | None:
+    if not isinstance(payload, dict):
+        return None
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict):
+        assistant_message_id = metadata.get("assistant_message_id") or metadata.get("message_id")
+        if isinstance(assistant_message_id, int):
+            return assistant_message_id
+        if isinstance(assistant_message_id, str) and assistant_message_id.isdigit():
+            return int(assistant_message_id)
+    message = payload.get("message")
+    if isinstance(message, dict):
+        metadata = message.get("metadata")
+        if isinstance(metadata, dict):
+            assistant_message_id = metadata.get("assistant_message_id") or metadata.get("message_id")
+            role = str(metadata.get("role") or "").strip().lower()
+            if role in {"", "assistant"}:
+                if isinstance(assistant_message_id, int):
+                    return assistant_message_id
+                if isinstance(assistant_message_id, str) and assistant_message_id.isdigit():
+                    return int(assistant_message_id)
+
+    def visit(node: Any) -> int | None:
+        if isinstance(node, dict):
+            role = str(node.get("role") or "").strip().lower()
+            message_id = (
+                node.get("assistant_message_id")
+                or node.get("message_id")
+            )
+            if role == "assistant":
+                if isinstance(message_id, int):
+                    return message_id
+                if isinstance(message_id, str) and message_id.isdigit():
+                    return int(message_id)
+            for nested in node.values():
+                found = visit(nested)
+                if found is not None:
+                    return found
+        if isinstance(node, list):
+            for nested in node:
+                found = visit(nested)
+                if found is not None:
+                    return found
+        return None
+
+    return visit(payload) or _find_nested_int(payload, "message_id")
+
+
+def _extract_stream_message_metadata(
+    event_name: str,
+    payload: Any,
+) -> dict[str, int | str] | None:
+    if event_name != "metadata" or not isinstance(payload, dict):
+        return None
+    metadata = payload.get("metadata")
+    if not isinstance(metadata, dict):
+        return None
+    role = str(metadata.get("role") or "").strip().lower()
+    message_id = metadata.get("message_id")
+    if not role:
+        return None
+    if isinstance(message_id, str) and message_id.isdigit():
+        return {"role": role, "message_id": int(message_id)}
+    if isinstance(message_id, int):
+        return {"role": role, "message_id": message_id}
     return None
 
 

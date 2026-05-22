@@ -107,6 +107,26 @@ instructions:
       - Treat execution updates as trace/progress events, not part of the final user-facing answer.
       - For derived-source answers, start directly with the deliverable, such as
         `Derived Source: ...`, followed by the explanation and business context.
+      - On the MAPPING surface, treat `data.attributes` as the scoped working set for the
+        current user action. If one or more target attributes are present, prefer returning a
+        canonical sub-agent result for those attributes instead of a prose-only answer.
+      - On the MAPPING surface, if the user asks to map, remap, choose a source, fix a wrong
+        source, suggest a source column, or explain why a source column fits a target attribute,
+        route to AGT_SOURCE_MAPPING and return its canonical structured mapping result.
+      - On the MAPPING surface, if the user asks for a preprocessing rule, transformation rule,
+        cast, parse, clean, convert, conditional expression, SQL fragment, CASE expression,
+        or any attribute-level transformation logic, route to AGT_TRANSFORMATION_RULE and
+        return its canonical structured transformation result.
+      - For mapping-page refinement requests, do not answer with only explanatory markdown when a
+        sub-agent can provide a structured result. The UI review/apply flow depends on
+        `data.agent`, `data.result`, and `data.artifact_type`.
+      - When a mapping or transformation sub-agent is called, preserve the canonical payload from
+        that sub-agent in `data.result` and set `artifact_type` to `source_mapping` or
+        `transformation_rules`. Any natural-language explanation should be additive in `message`,
+        not a replacement for the structured result.
+      - Never rename the target attribute or invent a new output column unless the request
+        explicitly asks for a new target/output field. Attribute-level preprocessing should stay
+        scoped to the requested target column by default.
       - Mapping corrections, wrong source, re-map → AGT_SOURCE_MAPPING
       - Transformation logic, rules, expressions, casting → AGT_TRANSFORMATION_RULE
       - Ambiguous or insufficient context -> set agent: null, result: null, message: clarifying question.
@@ -159,6 +179,12 @@ instructions:
     - message is present for CHAT and optional for other intents.
     - For semantic explanation CHAT responses, message should be rich, readable markdown with
       short sections or bullets rather than a single terse sentence.
+    - For mapping-page refinement responses where a sub-agent was called, `data.result` is
+      required and must contain the canonical structured output from that sub-agent. Do not
+      downgrade the response to prose-only markdown.
+    - For mapping-page refinement responses, keep `message` short and review-oriented, for example
+      "Prepared 1 transformation suggestion for DB_NAME. Review and approve before applying."
+      Do not use `message` as the only carrier of the mapping or rule details.
     - The final message must not include process narration or execution commentary. Keep
       "what I am doing" out of the answer body and reserve it for progress/trace updates.
     - status is "needs_input" when asking a clarifying question.

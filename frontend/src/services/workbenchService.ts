@@ -24,6 +24,7 @@ export type { RelationshipContextItem, TableRef, TargetAttributeItem };
 export type WorkbenchRequest = {
   interface: STTMIntent;
   thread_id?: string | null;
+  parent_message_id?: number | null;
   attributes?: TargetAttributeItem[] | null;
   source_tables?: TableRef[] | null;
   message?: string | null;
@@ -61,6 +62,7 @@ function toEnvelope(payload: WorkbenchRequest): STTMBuilderEnvelopeRequest {
     },
     {
       thread_id: payload.thread_id ?? null,
+      parent_message_id: payload.parent_message_id ?? null,
       source_tables: nullableNonEmptyArray(payload.source_tables),
       driving_table: payload.driving_table ?? null,
       relationships: payload.relationships ?? null,
@@ -86,7 +88,7 @@ export const workbenchService = {
     }
 
     const response = await api.post<STTMBuilderEnvelopeResponse>('/v1/workbench/invoke', toEnvelope(payload), {
-      timeout: 120000,
+      timeout: 300000,
     });
     return response.data;
   },

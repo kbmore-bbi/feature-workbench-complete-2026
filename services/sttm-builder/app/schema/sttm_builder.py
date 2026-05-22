@@ -43,6 +43,17 @@ class TargetAttributeItem(BaseModel):
 
     target_table: TableRef = Field(description="Target table this attribute belongs to.")
     target_attribute: str = Field(description="Target column name.")
+    target_data_type: str | None = Field(
+        default=None,
+        description="Target column data type when the UI already knows it.",
+    )
+    target_description: str | None = Field(
+        default=None,
+        description=(
+            "Optional business description or user-edited mapping guidance for the target "
+            "attribute. Use this as additional context before probing metadata tools."
+        ),
+    )
     source_mappings: list[AttributeRef] | None = Field(
         default=None,
         description=(
@@ -108,6 +119,10 @@ class STTMBuilderRequest(BaseModel):
     thread_id: str | None = Field(
         default=None,
         description="Cortex Agent thread ID. Omit to start a new session; supply to continue one.",
+    )
+    parent_message_id: int | None = Field(
+        default=None,
+        description="Assistant message ID to continue within an existing Cortex Agent thread.",
     )
 
     # Structured input — required for AUTO_MAP and TRANSFORM
@@ -292,6 +307,7 @@ class STTMBuilderEnvelopeRequest(BaseModel):
         return STTMBuilderRequest(
             interface=self.data.intent,
             thread_id=self.context.thread_id,
+            parent_message_id=self.context.parent_message_id,
             attributes=self.data.attributes,
             source_tables=self.context.source_tables,
             message=self.data.message,
@@ -314,6 +330,7 @@ class STTMBuilderEnvelopeRequest(BaseModel):
             operation=_INTERFACE_TO_OPERATION[req.interface],
             context=STTMBuilderContext(
                 thread_id=req.thread_id,
+                parent_message_id=req.parent_message_id,
                 source_tables=req.source_tables,
                 driving_table=req.driving_table,
                 relationships=req.relationships,
@@ -342,6 +359,38 @@ class AttributeMapping(BaseModel):
         ge=0.0,
         le=1.0,
         description="Mapping confidence (0 = no match, 1 = exact).",
+    )
+    confidence_reason: str | None = Field(
+        default=None,
+        description="Why the selected source attributes were chosen.",
+    )
+    candidate_source_attributes: list[str] = Field(
+        default_factory=list,
+        description="Best fallback source attributes when confidence is low or ambiguous.",
+    )
+    unmatched_reason: str | None = Field(
+        default=None,
+        description="Why no confident source mapping could be identified.",
+    )
+    preprocessing_rule: str | None = Field(
+        default=None,
+        description="Suggested preprocessing expression or built-in rule name.",
+    )
+    preprocessing_rule_type: str | None = Field(
+        default=None,
+        description="Suggested preprocessing rule type, for example Direct or Custom.",
+    )
+    preprocessing_nl_rule: str | None = Field(
+        default=None,
+        description="Natural-language description of the preprocessing rule.",
+    )
+    processing_order: int | None = Field(
+        default=None,
+        description="Suggested processing order for this mapping.",
+    )
+    description: str | None = Field(
+        default=None,
+        description="Suggested human-readable description for the mapping.",
     )
 
 
@@ -418,6 +467,10 @@ class STTMBuilderResponse(BaseModel):
     thread_id: str = Field(
         description="Cortex Agent thread ID — pass back on follow-up calls."
     )
+    parent_message_id: int | None = Field(
+        default=None,
+        description="Assistant message ID to use as the next parent when continuing the thread.",
+    )
     agent: SubAgent | None = Field(
         default=None,
         description="Which sub-agent handled the request. Null when no sub-agent was called.",
@@ -437,6 +490,7 @@ class STTMBuilderResponse(BaseModel):
         request: STTMBuilderEnvelopeRequest,
         *,
         thread_id: str,
+        parent_message_id: int | None,
         agent: SubAgent | None,
         result: SourceMappingResult | TransformationResult | None,
         message: str | None,
@@ -449,7 +503,12 @@ class STTMBuilderResponse(BaseModel):
         error: ApiError | None = None,
         meta: dict[str, Any] | None = None,
     ) -> "STTMBuilderResponse":
-        context = request.context.model_copy(update={"thread_id": thread_id})
+        context = request.context.model_copy(
+            update={
+                "thread_id": thread_id,
+                "parent_message_id": parent_message_id,
+            }
+        )
         response_warnings = [*request.warnings, *(warnings or [])]
         data = STTMBuilderResponseData(
             intent=request.data.intent,
@@ -472,6 +531,7 @@ class STTMBuilderResponse(BaseModel):
             error=error,
             meta={**request.meta, **(meta or {})},
             thread_id=thread_id,
+            parent_message_id=parent_message_id,
             agent=agent,
             result=result,
             message=message,

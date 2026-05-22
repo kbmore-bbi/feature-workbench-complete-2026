@@ -554,7 +554,22 @@ export default function SttmTableRelationshipFlow({
           tables={activeTables}
           initialGroups={sourceFilterGroups}
           previewSql={queryPreviewSql}
-          onChange={(groups, sql) => setSourceFilterConditions({ groups, sql })}
+          onChange={(groups, sql) =>
+            setSourceFilterConditions({
+              groups,
+              sql,
+              baseSql: queryPreviewSql,
+            })
+          }
+          onQueryChange={(payload) =>
+            setSourceFilterConditions({
+              groups: payload.groups,
+              sql: payload.whereSql,
+              baseSql: queryPreviewSql,
+              groupBySql: payload.groupBySql,
+              orderBySql: payload.orderBySql,
+            })
+          }
         />
       ) : null}
 

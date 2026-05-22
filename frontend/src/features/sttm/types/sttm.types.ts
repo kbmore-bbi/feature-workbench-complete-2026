@@ -1,5 +1,6 @@
 
 import type { UserSession } from "@/types/user";
+import type { SemanticContextBundleResponse, SemanticContextItem } from "@/types/api-contract";
 
 export interface Sttm {
   id?: string;
@@ -103,7 +104,7 @@ export interface DerivedSource {
       rightColumn: string;
     }[];
   }[];
-  filters: any[];
+  filters: RuleGroup[];
   columns: Column[];
   previewColumns?: Array<{
     name: string;
@@ -162,6 +163,29 @@ export type MappingSuggestion = {
   targetAttribute: string;
   sourceAttributes: string[];
   confidenceScore: number;
+  confidenceReason?: string | null;
+  candidateSourceAttributes?: string[];
+  unmatchedReason?: string | null;
+  preprocessingRule?: string | null;
+  preprocessingRuleType?: string | null;
+  preprocessingNlRule?: string | null;
+  processingOrder?: number | null;
+  description?: string | null;
+};
+
+export type PendingAiMappingReview = {
+  mappingId: string;
+  targetColumn: string;
+  sourceAttributes: string[];
+  confidenceScore: number;
+  confidenceReason?: string | null;
+  candidateSourceAttributes: string[];
+  unmatchedReason?: string | null;
+  preprocessingRule?: string | null;
+  preprocessingRuleType?: string | null;
+  preprocessingNlRule?: string | null;
+  processingOrder?: number | null;
+  description?: string | null;
 };
 
 export type ChatMessage = {
@@ -230,6 +254,7 @@ export type SttmBuilderContextValue = {
   // Mapping
   mappingSuggestions: MappingSuggestion[];
   mappingLoading: boolean;
+  autoMapStatusMessage: string | null;
 
   // Chat
   chatMessages: ChatMessage[];
@@ -240,6 +265,9 @@ export type SttmBuilderContextValue = {
   semanticStatus: string | null;
   semanticViewName: string | null;
   semanticContextSummary: Record<string, unknown> | null;
+  semanticContextItems: SemanticContextItem[] | null;
+  semanticLineage: Array<Record<string, unknown>>;
+  semanticDatahubContext: Record<string, unknown> | null;
   datahubStatus: string | null;
   pendingDerivedSourceDraft: PendingDerivedSourceDraft | null;
   derivedSourceDraftRequested: boolean;
@@ -268,6 +296,9 @@ export type SttmBuilderContextValue = {
   openPendingDerivedSourceDraft: () => void;
   acknowledgePendingDerivedSourceDraft: () => void;
   dismissPendingDerivedSourceDraft: () => void;
+  applyPendingAiMappingReview: () => void;
+  skipPendingAiMappingReview: () => void;
+  applySemanticRefresh: (payload: SemanticContextBundleResponse) => void;
 
   // Computed
   selectedSourceCount: number;
@@ -288,7 +319,16 @@ export type SttmBuilderContextValue = {
   sourceFilterSql: string;
   /** Parsed filter tree (keeps UI + preview when navigating away and back). */
   sourceFilterGroups: RuleGroup[];
-  setSourceFilterConditions: (payload: { sql: string; groups: RuleGroup[] }) => void;
+  sourceQuerySql: string;
+  sourceGroupBySql: string;
+  sourceOrderBySql: string;
+  setSourceFilterConditions: (payload: {
+    sql: string;
+    groups: RuleGroup[];
+    baseSql?: string;
+    groupBySql?: string;
+    orderBySql?: string;
+  }) => void;
 
   // UI Mapping state
   mappings: MappingState[];
@@ -296,6 +336,7 @@ export type SttmBuilderContextValue = {
   mappingSql: string;
   isPreProcessModalOpen: boolean;
   activeMappingId: string | null;
+  pendingAiMappingReviews: PendingAiMappingReview[];
   
   // Mapping actions
   initializeMappings: (mappings: MappingState[]) => void;
@@ -325,4 +366,10 @@ export interface MappingState {
   loadOrder?: string | null;
   description?: string | null;
   descriptionEdited?: boolean;
+  confidenceScore?: number | null;
+  confidenceReason?: string | null;
+  candidateSourceColumns?: string[];
+  unmatchedReason?: string | null;
+  aiSuggestedRule?: string | null;
+  aiSuggestedRuleType?: string | null;
 }

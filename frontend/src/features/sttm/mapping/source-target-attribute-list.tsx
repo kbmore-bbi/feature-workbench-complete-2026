@@ -158,7 +158,7 @@ const SourceTargetAttributeList = () => {
             </Typography>
             <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: '#4B5563' }} />
           </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
+          <Box sx={{ display: 'flex',  marginTop: '10px', alignItems: 'center', justifyContent: 'space-between', gap: 1 }}>
             <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: '0.9rem', color: '#333' }}>
               Source columns
             </Typography>

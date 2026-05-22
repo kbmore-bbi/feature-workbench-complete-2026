@@ -191,6 +191,7 @@ type BuilderContentHeaderProps = {
   onRunValidation?: () => void;
   onPublish?: () => void;
   onStepChange?: (step: 1 | 2) => void;
+  embedded?: boolean;
 };
 
 const steps = [
@@ -206,18 +207,19 @@ export default function BuilderContentHeader({
   onRunValidation,
   onPublish,
   onStepChange,
+  embedded = false,
 }: BuilderContentHeaderProps) {
   return (
     <Box
       sx={{
-        minHeight: 54,
+        minHeight: embedded ? 40 : 54,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
         gap: 2,
-        px: 2,
-        borderBottom: "1px solid var(--color-soft-border)",
-        backgroundColor: "var(--color-surface)",
+        px: embedded ? 0 : 2,
+        borderBottom: embedded ? "none" : "1px solid var(--color-soft-border)",
+        backgroundColor: embedded ? "transparent" : "var(--color-surface)",
       }}
     >
       <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, minWidth: 0 }}>

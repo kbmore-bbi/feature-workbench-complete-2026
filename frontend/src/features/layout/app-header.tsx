@@ -8,10 +8,12 @@ import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownR
 import { Avatar, Box, IconButton, Tooltip, Typography } from "@mui/material";
 import { useThemeMode } from "@/app/Providers";
 import Link from 'next/link';
+import { usePathname, useRouter } from "next/navigation";
 import { authService } from "@/services/authService";
 import type { UserSession } from "@/types/user";
 import { CLIENT_CONFIG as config } from '@/config/client.config';
-
+import { useAppSelector } from "@/store/hooks";
+import BuilderContentHeader from "@/features/sttm/layout/builder-content-header";
 
 type AppHeaderProps = {
   userName?: string;
@@ -24,6 +26,9 @@ export default function AppHeader({
 }: AppHeaderProps) {
   const { mode, toggleMode } = useThemeMode();
   const [session, setSession] = useState<UserSession | null>(null);
+  const pathname = usePathname();
+  const router = useRouter();
+  const { sources, targets, mappings } = useAppSelector((state) => state.sttmBuilder);
 
   useEffect(() => {
     let cancelled = false;
@@ -57,6 +62,16 @@ export default function AppHeader({
     .join("")
     .slice(0, 2)
     .toUpperCase();
+
+  const isSttmBuilderHeader =
+    pathname === "/sttm/builder/new" || pathname === "/sttm/builder/new/mapping";
+  const currentStep: 1 | 2 = pathname.includes("/mapping") ? 2 : 1;
+  const tableCount =
+    sources.filter((table) => table.isSelected).length +
+    (targets.some((table) => table.isSelected) ? 1 : 0);
+  const mappedCount = mappings.filter((mapping) => mapping.status === "MAPPED").length;
+  const canProceedToMapping =
+    sources.some((table) => table.isSelected) && targets.some((table) => table.isSelected);
 
   return (
     <Box
@@ -112,6 +127,39 @@ export default function AppHeader({
         </Tooltip>
 
         <Avatar
+    {isSttmBuilderHeader ? (
+      <Box sx={{ mx: 4, flex: 1, minWidth: 0 }}>
+        <BuilderContentHeader
+          embedded
+          currentStep={currentStep}
+          tableCount={tableCount}
+          mappingCount={mappedCount}
+          onProceed={() => {
+            if (!canProceedToMapping) {
+              return;
+            }
+            router.push("/sttm/builder/new/mapping");
+          }}
+          onRunValidation={() => {
+            window.dispatchEvent(new CustomEvent("sttm:run-validation"));
+          }}
+          onPublish={() => console.log("publish mapping")}
+          onStepChange={(step) => {
+            if (step === 1) {
+              router.push("/sttm/builder/new");
+            } else if (canProceedToMapping) {
+              router.push("/sttm/builder/new/mapping");
+            }
+          }}
+        />
+      </Box>
+    ) : null}
+
+    <Box className="flex items-center gap-3 shrink-0">
+      <Tooltip title={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}>
+        <IconButton
+          onClick={toggleMode}
+          aria-label="Toggle light and dark theme"
           sx={{
             width: 28,
             height: 28,
@@ -141,6 +189,9 @@ export default function AppHeader({
 
         <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#ffffff" }} />
       </Box>
+
+      <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#ffffff" }} />
     </Box>
+    </header>
   );
 }

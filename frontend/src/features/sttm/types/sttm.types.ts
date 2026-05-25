@@ -1,6 +1,10 @@
 
 import type { UserSession } from "@/types/user";
-import type { SemanticContextBundleResponse, SemanticContextItem } from "@/types/api-contract";
+import type {
+  SemanticContextBundleResponse,
+  SemanticContextItem,
+  TableRef,
+} from "@/types/api-contract";
 
 export interface Sttm {
   id?: string;
@@ -82,6 +86,7 @@ export interface DerivedSource {
   sourceName: string;
   isSelected?: boolean;
   derivedSourceIds?: string[];
+  parentDerivedSourceIds?: string[];
   sqlText?: string;
   semanticBundleId?: string | null;
   semanticBundleLabel?: string | null;
@@ -92,6 +97,8 @@ export interface DerivedSource {
   alias?: string;
   drivingTableId?: string;
   tableIds?: string[];
+  baseSourceTables?: TableRef[];
+  selectedColumnsByTable?: Record<string, string[]>;
   joins: {
     id: string;
     joinType: "INNER" | "LEFT" | "RIGHT" | "FULL";

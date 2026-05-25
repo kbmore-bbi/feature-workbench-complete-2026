@@ -1012,6 +1012,42 @@ function extractAssistantDisplayText(
     artifact && typeof artifact.answer_text === "string" ? artifact.answer_text.trim() : "";
   const rootMessage = resolved.message;
 
+  if (resolved.artifactType === "derived_source_draft" && artifact && typeof artifact === "object") {
+    const sqlText =
+      typeof artifact.sql_text === "string" ? artifact.sql_text.trim() : "";
+    const sourceNameSuggestion =
+      typeof artifact.source_name_suggestion === "string"
+        ? artifact.source_name_suggestion.trim()
+        : "";
+    const semanticViewName =
+      typeof artifact.semantic_view_name === "string"
+        ? artifact.semantic_view_name.trim()
+        : "";
+    const previewRows = Array.isArray(artifact.preview_rows) ? artifact.preview_rows : [];
+    const requestSummary =
+      typeof artifact.request_summary === "string" ? artifact.request_summary.trim() : "";
+    const detailText = artifactAnswerText || rootMessage;
+    const lines = ["## Derived Source Ready"];
+
+    if (requestSummary) {
+      lines.push(`- **What I generated:** ${requestSummary}`);
+    } else if (detailText && !looksLikeEmbeddedAgentEnvelope(detailText)) {
+      lines.push(`- **What I generated:** ${detailText}`);
+    }
+    if (sourceNameSuggestion) {
+      lines.push(`- **Suggested derived source name:** ${sourceNameSuggestion}`);
+    }
+    if (semanticViewName) {
+      lines.push(`- **Semantic view used:** ${semanticViewName}`);
+    }
+    if (sqlText) {
+      lines.push(`- **SQL shape:** ${previewRows.length > 0 ? `Validated with ${previewRows.length} preview row${previewRows.length === 1 ? "" : "s"}.` : "SQL draft is ready to review and save in the derived-source builder."}`);
+      lines.push("- **Business use:** Reuse this curated source in the next mapping step with the joins, filters, and selected attributes already preserved.");
+    }
+    lines.push("Open it below to review the generated SQL, validate it, and save it through the existing derived-source flow.");
+    return lines.join("\n");
+  }
+
   const candidates = [artifactAnswerText, rootMessage].filter(Boolean);
   if (!candidates.length) return "Done.";
 
@@ -1321,6 +1357,7 @@ export const fetchDerivedSources = createAsyncThunk(
             id: row.derived_source_id,
             sourceName: row.derived_source_name,
             sqlText: row.sql_text,
+            parentDerivedSourceIds: row.parent_derived_source_ids ?? [],
             semanticBundleId: row.semantic_bundle_id ?? null,
             semanticViewName: row.semantic_view_name ?? null,
             semanticLevel: row.semantic_level ?? null,
@@ -1330,6 +1367,8 @@ export const fetchDerivedSources = createAsyncThunk(
               ? `${row.driving_table.database}.${row.driving_table.schema}.${row.driving_table.table}`
               : undefined,
             tableIds: sourceTableIds,
+            baseSourceTables: row.base_source_tables ?? [],
+            selectedColumnsByTable: selectedColumns,
             joins: (row.relationships ?? []).map((relationship, index) => ({
               id:
                 relationship.id ??

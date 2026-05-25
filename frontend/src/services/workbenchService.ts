@@ -57,7 +57,7 @@ function toEnvelope(payload: WorkbenchRequest): STTMBuilderEnvelopeRequest {
     operationByIntent[payload.interface],
     {
       intent: payload.interface,
-      attributes: payload.attributes ?? null,
+      attributes: nullableNonEmptyArray(payload.attributes),
       message: payload.message ?? null,
     },
     {

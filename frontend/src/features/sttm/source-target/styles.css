@@ -179,7 +179,7 @@
 
 /* --- TableNode Component --- */
 .tnode {
-  width: 280px;
+  width: 360px;
   background: #ffffff;
   border: 1px solid #e5e7eb;
   border-radius: 14px;
@@ -189,7 +189,7 @@
 }
 
 .tnode--compact {
-  width: 240px;
+  width: 280px;
 }
 
 .tnode:hover {
@@ -249,7 +249,11 @@
   font-weight: 800;
   color: #0f172a;
   line-height: 1.25;
-  word-break: break-word;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
 }
 
 .tnode__chip {
@@ -271,6 +275,32 @@
 .tnode__divider {
   height: 1px;
   background: #e5e7eb;
+}
+
+.tnode__section-head {
+  padding: 10px 12px 0;
+}
+
+.tnode__section-toggle {
+  width: 100%;
+  border: none;
+  background: #f8fafc;
+  border-radius: 10px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 800;
+  color: #334155;
+  cursor: pointer;
+}
+
+.tnode__section-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #64748b;
 }
 
 .tnode__search-wrap {
@@ -302,11 +332,6 @@
 
 .tnode__cols {
   padding: 6px 0 4px;
-}
-
-.tnode__cols--scrollable {
-  max-height: 332px;
-  overflow-y: auto;
 }
 
 .tnode__col {
@@ -367,8 +392,10 @@
   letter-spacing: 0.02em;
   text-transform: uppercase;
   line-height: 1.25;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .tnode__col-type {
@@ -378,7 +405,7 @@
   text-transform: uppercase;
   flex-shrink: 0;
   text-align: right;
-  max-width: 84px;
+  max-width: 108px;
   line-height: 1.25;
 }
 

@@ -145,6 +145,33 @@ function normalizeBaseQuerySql(baseSql: string) {
   return trimmed.replace(/^SELECT\s+\*\s+/i, '');
 }
 
+export function buildSourceQueryPreviewSql(params: {
+  sourceQuerySql: string;
+  sourceFilterSql?: string;
+  sourceGroupBySql?: string;
+  sourceOrderBySql?: string;
+}) {
+  const { sourceQuerySql, sourceFilterSql, sourceGroupBySql, sourceOrderBySql } = params;
+  const fromClause = normalizeBaseQuerySql(sourceQuerySql);
+  if (!fromClause) {
+    return '-- Select source tables and relationships in Step 1 to generate SQL.';
+  }
+
+  const lines = ['SELECT', '  *', fromClause];
+
+  if (sourceFilterSql?.trim()) {
+    lines.push(`WHERE\n${sourceFilterSql.trim()}`);
+  }
+  if (sourceGroupBySql?.trim()) {
+    lines.push(`GROUP BY\n  ${sourceGroupBySql.trim()}`);
+  }
+  if (sourceOrderBySql?.trim()) {
+    lines.push(`ORDER BY\n  ${sourceOrderBySql.trim()}`);
+  }
+
+  return lines.join('\n');
+}
+
 export function buildMappingExpression(mapping: MappingState) {
   const sourceColumns =
     mapping.sourceColumns && mapping.sourceColumns.length

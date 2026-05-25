@@ -54,12 +54,7 @@ def build_caller_token(user_token: str) -> str:
         )
     combined = f"{get_service_token()}.{user_token.strip()}"
 
-    logger.debug(
-        "Built combined token: prefix=%s...%s length=%d",
-        combined[:8],
-        combined[-4:],
-        len(combined),
-    )
+    logger.debug("Built combined caller token for SPCS request (length=%d)", len(combined))
     return combined
 
 

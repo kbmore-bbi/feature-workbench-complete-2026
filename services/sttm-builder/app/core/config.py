@@ -135,6 +135,19 @@ class Settings(BaseSettings):
     datahub_dataset_env: str = Field(default="PROD", alias="DATAHUB_DATASET_ENV")
     datahub_timeout_seconds: float = Field(default=10.0, alias="DATAHUB_TIMEOUT_SECONDS")
     cors_allowed_origins: str = Field(default="", alias="CORS_ALLOWED_ORIGINS")
+    guardrails_enabled: bool = Field(default=True, alias="GUARDRAILS_ENABLED")
+    guardrails_debug_routes_enabled: bool = Field(
+        default=False,
+        alias="GUARDRAILS_DEBUG_ROUTES_ENABLED",
+    )
+    guardrails_presidio_enabled: bool = Field(
+        default=False,
+        alias="GUARDRAILS_PRESIDIO_ENABLED",
+    )
+    guardrails_reject_raw_pii: bool = Field(
+        default=False,
+        alias="GUARDRAILS_REJECT_RAW_PII",
+    )
 
     @computed_field
     @property
@@ -252,6 +265,16 @@ class Settings(BaseSettings):
         if host == "your_org-your_account.snowflakecomputing.com":
             return ""
         return host
+
+    @property
+    def non_local_env(self) -> bool:
+        return self.app_env.strip().lower() not in {"", "dev", "local", "test"}
+
+    @property
+    def debug_routes_enabled(self) -> bool:
+        if self.guardrails_debug_routes_enabled:
+            return True
+        return not self.non_local_env
 
     def _resolve_agent_name(
         self,

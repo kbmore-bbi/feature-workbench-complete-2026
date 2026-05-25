@@ -11,6 +11,10 @@ from snowflake.snowpark import Session
 
 from app.core.config import Settings
 from app.core.exceptions import SnowflakeAgentError
+from app.guardrails.config.loader import load_config
+from app.guardrails.contracts.decisions import GovernanceDecision
+from app.guardrails.runtime.model_boundary import ModelBoundaryGuard
+from app.guardrails.runtime.postflight import PostflightGuard
 from app.core.semantic_context import SemanticContextService
 from app.core.semantic_model import SemanticModelService
 from app.core.snowflake_agent import SnowflakeAgentClient
@@ -64,6 +68,9 @@ class STTMBuilderService:
         self._session = session
         self._semantic_model_service = semantic_model_service
         self._semantic_context_service = semantic_context_service
+        self._guardrails_config = load_config(settings=settings)
+        self._model_guard = ModelBoundaryGuard(self._guardrails_config)
+        self._postflight_guard = PostflightGuard(self._guardrails_config)
 
         builder_agent_name = settings.resolved_sttm_builder_agent.strip()
         if not builder_agent_name:
@@ -83,13 +90,25 @@ class STTMBuilderService:
             )
         self._source_mapping_agent_name = source_mapping_agent_name
 
-    def invoke(self, req: STTMBuilderEnvelopeRequest) -> STTMBuilderResponse:
+    def invoke(
+        self,
+        req: STTMBuilderEnvelopeRequest,
+        *,
+        governance_decision: GovernanceDecision | None = None,
+    ) -> STTMBuilderResponse:
+        decision = governance_decision or self._build_governance_decision(req)
         started_at = time.perf_counter()
         req, semantic_refresh = self._with_semantic_context(req)
+        req = self._govern_request_for_model(req, decision)
         semantic_context_ms = (time.perf_counter() - started_at) * 1000
 
         user_text = self._build_agent_payload(req)
         messages, local_thread_id = self._prepare_agent_messages(req, user_text)
+        self._model_guard.assert_model_target_allowed(
+            operation=req.operation.value,
+            target="agent",
+            decision=decision,
+        )
         logger.info(
             "Sending STTM agent payload: request_id=%s operation=%s chars=%s surface=%s level=%s bundle=%s agent=%s",
             req.request_id,
@@ -147,13 +166,13 @@ class STTMBuilderService:
                     thread_id=local_thread_id,
                     messages=messages,
                     assistant_text=final_chat_message or "",
-                )
+            )
             artifact_type, artifact = self._coerce_chat_artifact(
                 req,
                 artifact_type=artifact_type,
                 artifact=artifact,
             )
-            return STTMBuilderResponse.from_invocation(
+            response = STTMBuilderResponse.from_invocation(
                 req,
                 thread_id=response_thread_id,
                 parent_message_id=None if local_thread_id else parent_message_id,
@@ -195,6 +214,7 @@ class STTMBuilderService:
                     artifact=artifact,
                 ),
             )
+            return self._postflight_guard.finalize_sttm_response(response, decision)
 
         if local_thread_id and req.data.intent == Interface.CHAT:
             self._store_local_chat_history(
@@ -217,7 +237,7 @@ class STTMBuilderService:
             semantic_refresh_status,
         ) = self._parse_envelope(raw_text)
         warnings = self._normalize_response_warnings(warnings)
-        return STTMBuilderResponse.from_invocation(
+        response = STTMBuilderResponse.from_invocation(
             req,
             thread_id=response_thread_id,
             parent_message_id=None if local_thread_id else parent_message_id,
@@ -255,12 +275,19 @@ class STTMBuilderService:
                 artifact=artifact,
             ),
         )
+        return self._postflight_guard.finalize_sttm_response(response, decision)
 
-    def invoke_stream(self, req: STTMBuilderEnvelopeRequest) -> Iterator[str]:
+    def invoke_stream(
+        self,
+        req: STTMBuilderEnvelopeRequest,
+        *,
+        governance_decision: GovernanceDecision | None = None,
+    ) -> Iterator[str]:
         def emit(event: str, data: dict[str, Any]) -> str:
             return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
         def iterator() -> Iterator[str]:
+            decision = governance_decision or self._build_governance_decision(req)
             yield emit(
                 "status",
                 {
@@ -269,6 +296,7 @@ class STTMBuilderService:
                 },
             )
             req_with_context, semantic_refresh = self._with_semantic_context(req)
+            req_with_context = self._govern_request_for_model(req_with_context, decision)
             if semantic_refresh is not None:
                 yield emit(
                     "status",
@@ -280,11 +308,16 @@ class STTMBuilderService:
                         "semantic_level": semantic_refresh.achieved_level,
                         "status": semantic_refresh.status,
                         "semantic_view_name": semantic_refresh.semantic_view_name,
-                    },
-                )
+                },
+            )
 
             user_text = self._build_agent_payload(req_with_context)
             messages, local_thread_id = self._prepare_agent_messages(req_with_context, user_text)
+            self._model_guard.assert_model_target_allowed(
+                operation=req_with_context.operation.value,
+                target="agent",
+                decision=decision,
+            )
             thread_id_to_use = (
                 None
                 if local_thread_id is not None or self._should_reset_thread(req_with_context)
@@ -420,9 +453,46 @@ class STTMBuilderService:
                 parent_message_id=None if local_thread_id else resolved_parent_message_id,
                 semantic_refresh=semantic_refresh,
             )
+            response = self._postflight_guard.finalize_sttm_response(response, decision)
             yield emit("final", response.model_dump(mode="json"))
 
         return iterator()
+
+    @staticmethod
+    def _build_governance_decision(req: STTMBuilderEnvelopeRequest) -> GovernanceDecision:
+        guardrails_meta = dict(req.meta.get("guardrails") or {})
+        return GovernanceDecision(
+            trace_id=str(req.context.trace_id or guardrails_meta.get("trace_id") or uuid.uuid4()),
+            request_id=req.request_id,
+            operation=req.operation.value,
+            persona=guardrails_meta.get("persona"),
+            redaction_count=int(guardrails_meta.get("redaction_count") or 0),
+            detected_pii=list(guardrails_meta.get("detected_pii") or []),
+        )
+
+    @staticmethod
+    def _govern_request_for_model(
+        req: STTMBuilderEnvelopeRequest,
+        decision: GovernanceDecision,
+    ) -> STTMBuilderEnvelopeRequest:
+        guardrails_meta = dict(req.meta.get("guardrails") or {})
+        policy = dict(guardrails_meta.get("policy") or {})
+        if policy.get("allow_sample_rows", False):
+            return req
+
+        payload = req.model_dump(mode="python")
+        context = dict(payload.get("context") or {})
+        for key in ("semantic_context", "datahub_context", "derived_source_lineage"):
+            if key in context:
+                from app.guardrails.adapters.snowflake import strip_sample_data
+
+                context[key] = strip_sample_data(context[key])
+        payload["context"] = context
+        decision.add_warning(
+            "MODEL_CONTEXT_SANITIZED",
+            "Sample data was removed from model-facing context after semantic enrichment.",
+        )
+        return STTMBuilderEnvelopeRequest.model_validate(payload)
 
     def _with_semantic_context(
         self,
@@ -957,12 +1027,24 @@ class STTMBuilderService:
         self,
         req: STTMBuilderEnvelopeRequest,
         semantic_refresh: Any,
+        decision: GovernanceDecision | None = None,
     ) -> STTMBuilderResponse:
+        effective_decision = decision or self._build_governance_decision(req)
+        self._model_guard.assert_model_target_allowed(
+            operation=req.operation.value,
+            target="analyst",
+            decision=effective_decision,
+        )
         analyst_response = self._analyst.ask(
             question=req.data.message or "",
             semantic_view=semantic_refresh.semantic_view_name,
         )
-        preview_rows = self._preview_sql_rows(analyst_response.sql)
+        self._model_guard.guard_sql(analyst_response.sql, effective_decision)
+        preview_rows = (
+            []
+            if any(warning.code == "UNSAFE_SQL_ARTIFACT" for warning in effective_decision.warnings)
+            else self._preview_sql_rows(analyst_response.sql)
+        )
         warnings = [
             ApiWarning(code="ANALYST_WARNING", message=warning.get("message", "Cortex Analyst warning"))
             for warning in analyst_response.warnings
@@ -1008,7 +1090,7 @@ class STTMBuilderService:
                 code="ANALYST_EMPTY_RESPONSE",
             )
 
-        return STTMBuilderResponse.from_invocation(
+        response = STTMBuilderResponse.from_invocation(
             req,
             thread_id=thread_id,
             parent_message_id=req.context.parent_message_id,
@@ -1035,6 +1117,7 @@ class STTMBuilderService:
             error=error,
             meta=meta,
         )
+        return self._postflight_guard.finalize_sttm_response(response, effective_decision)
 
     @staticmethod
     def _should_answer_from_semantic_context(

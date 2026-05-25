@@ -131,13 +131,40 @@ def build_response_envelope(
     error: ApiError | None = None,
     meta: dict[str, Any] | None = None,
 ) -> ApiResponseEnvelope[DataT]:
+    resolved_context = dict(context or {})
+    resolved_warnings = list(warnings or [])
+    resolved_meta = dict(meta or {})
+
+    if request is not None:
+        trace_id = getattr(request.state, "trace_id", None)
+        if isinstance(trace_id, str) and trace_id and not resolved_context.get("trace_id"):
+            resolved_context["trace_id"] = trace_id
+
+        governance = getattr(request.state, "governance_decision", None)
+        if governance is not None:
+            for item in getattr(governance, "warnings", []):
+                resolved_warnings.append(
+                    ApiWarning(code=item.code, message=item.message, field=item.field)
+                )
+            guardrails_meta = dict(resolved_meta.get("guardrails") or {})
+            guardrails_meta.update(
+                {
+                    "trace_id": getattr(governance, "trace_id", None),
+                    "request_id": getattr(governance, "request_id", None),
+                    "persona": getattr(governance, "persona", None),
+                    "redaction_count": getattr(governance, "redaction_count", 0),
+                    "approval_required": getattr(governance, "approval_required", False),
+                }
+            )
+            resolved_meta["guardrails"] = guardrails_meta
+
     return ApiResponseEnvelope[DataT](
         request_id=resolve_request_id(request, preferred=request_id),
         operation=operation,
         actor=actor,
-        context=context or {},
+        context=resolved_context,
         data=data,
-        warnings=warnings or [],
+        warnings=resolved_warnings,
         error=error,
-        meta=meta or {},
+        meta=resolved_meta,
     )

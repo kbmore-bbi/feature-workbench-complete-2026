@@ -131,6 +131,10 @@ export default function SttmTableRelationshipFlow({
     updateDerivedSource,
     setSourceFilterConditions,
     sourceFilterGroups,
+    sourceFilterSql,
+    sourceGroupBySql,
+    sourceOrderBySql,
+    sourceQuerySql,
   } = useSttmBuilderContext();
 
   const [editingDerivedSource, setEditingDerivedSource] = useState<DerivedSource | null>(null);
@@ -468,6 +472,28 @@ export default function SttmTableRelationshipFlow({
 
     return lines.join("\n");
   }, [activeTables, currentJoins, effectiveDrivingTableId]);
+
+  useEffect(() => {
+    if (queryPreviewSql === sourceQuerySql) {
+      return;
+    }
+
+    setSourceFilterConditions({
+      sql: sourceFilterSql,
+      groups: sourceFilterGroups,
+      baseSql: queryPreviewSql,
+      groupBySql: sourceGroupBySql,
+      orderBySql: sourceOrderBySql,
+    });
+  }, [
+    queryPreviewSql,
+    setSourceFilterConditions,
+    sourceFilterGroups,
+    sourceFilterSql,
+    sourceGroupBySql,
+    sourceOrderBySql,
+    sourceQuerySql,
+  ]);
 
   return (
     <div className="flex flex-col gap-3">

@@ -2,6 +2,8 @@
 
 import React, { memo, useMemo, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
+import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
+import KeyboardArrowUpRoundedIcon from "@mui/icons-material/KeyboardArrowUpRounded";
 import TableChartIcon from "@mui/icons-material/TableChart";
 import KeyIcon from "@mui/icons-material/Key";
 import LinkIcon from "@mui/icons-material/Link";
@@ -21,8 +23,18 @@ export interface TableNodeData {
   rowCount: string;
   colCount: number;
   columns: Column[];
+  width?: number | string;
+  accentColor?: string;
+  surfaceTint?: string;
+  headerBg?: string;
+  iconBg?: string;
+  iconColor?: string;
   selectableColumns?: boolean;
   selectedColumns?: string[];
+  highlightedColumns?: string[];
+  activeColumnName?: string | null;
+  globalColumnSearch?: string;
+  onColumnSelect?: (columnName: string) => void;
   onToggleColumn?: (columnName: string, checked: boolean) => void;
   showColumnSearch?: boolean;
   onEdit?: () => void;
@@ -30,8 +42,7 @@ export interface TableNodeData {
   [key: string]: unknown;
 }
 
-const MAX_VISIBLE_COLS = 5;
-const MAX_EXPANDED_VISIBLE_COLS = 10;
+const MAX_VISIBLE_COLS = 4;
 
 function ColumnLeading({ col }: { col: Column }) {
   if (col.isPrimaryKey) {
@@ -51,33 +62,54 @@ function ColumnLeading({ col }: { col: Column }) {
 function TableNodeComponent({ data, selected }: NodeProps) {
   const d = data as unknown as TableNodeData;
   const [expanded, setExpanded] = useState(false);
+  const [columnsCollapsed, setColumnsCollapsed] = useState(false);
   const [columnSearch, setColumnSearch] = useState("");
   const selectedColumns = useMemo(() => new Set(d.selectedColumns ?? []), [d.selectedColumns]);
+  const highlightedColumns = useMemo(
+    () => new Set((d.highlightedColumns ?? []).map((column) => column.toLowerCase())),
+    [d.highlightedColumns],
+  );
   const filteredColumns = useMemo(() => {
-    const query = columnSearch.trim().toLowerCase();
+    const query = (columnSearch || d.globalColumnSearch || "").trim().toLowerCase();
     if (!query) return d.columns;
     return d.columns.filter((column) =>
       `${column.name ?? ""} ${column.type ?? ""}`.toLowerCase().includes(query)
     );
-  }, [columnSearch, d.columns]);
+  }, [columnSearch, d.columns, d.globalColumnSearch]);
   const visibleCols = expanded ? filteredColumns : filteredColumns.slice(0, MAX_VISIBLE_COLS);
   const hiddenCount = Math.max(filteredColumns.length - MAX_VISIBLE_COLS, 0);
-  const showScrollableList = expanded && filteredColumns.length > MAX_EXPANDED_VISIBLE_COLS;
 
   return (
     <div 
       className={`tnode ${d.compact ? "tnode--compact" : ""} ${selected ? "tnode--selected" : ""}`}
-      style={{ cursor: d.onEdit ? "pointer" : "default" }}
+      style={{
+        width: d.width ?? (d.compact ? 268 : 360),
+        cursor: d.onEdit ? "pointer" : "default",
+        backgroundColor: d.surfaceTint ?? "#ffffff",
+        borderColor: selected ? "#93c5fd" : d.accentColor ? `${d.accentColor}45` : undefined,
+      }}
       onClick={d.onEdit ? (e) => {
         // Prevent click from affecting the background / selection if needed
         e.stopPropagation();
         d.onEdit?.();
       } : undefined}
     >
-      <div className="tnode__header">
+      {d.accentColor ? (
+        <div
+          style={{
+            height: 4,
+            width: "100%",
+            background: `linear-gradient(90deg, ${d.accentColor}, ${d.accentColor}cc)`,
+          }}
+        />
+      ) : null}
+      <div className="tnode__header" style={{ backgroundColor: d.headerBg ?? "#f9fafb" }}>
         <div className="tnode__header-main">
-          <div className="tnode__icon-wrap">
-            <TableChartIcon sx={{ fontSize: 22, color: "#ffffff" }} />
+          <div
+            className="tnode__icon-wrap"
+            style={{ backgroundColor: d.iconBg ?? "#111827" }}
+          >
+            <TableChartIcon sx={{ fontSize: 22, color: d.iconColor ?? "#ffffff" }} />
           </div>
           <div className="tnode__header-text">
             <div className="tnode__title-row">
@@ -113,86 +145,142 @@ function TableNodeComponent({ data, selected }: NodeProps) {
 
       <div className="tnode__divider" />
 
-      {d.showColumnSearch ? (
-        <div className="tnode__search-wrap" onClick={(event) => event.stopPropagation()}>
-          <div className="tnode__search">
-            <SearchRoundedIcon sx={{ fontSize: 16, color: "#9ca3af", flexShrink: 0 }} />
-            <input
-              value={columnSearch}
-              onChange={(event) => setColumnSearch(event.target.value)}
-              placeholder="Search columns"
-              className="tnode__search-input"
-            />
-          </div>
-        </div>
-      ) : null}
-
-      <div className={`tnode__cols ${showScrollableList ? "tnode__cols--scrollable" : ""}`}>
-        {visibleCols.map((col, index) => {
-          const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}-${index}`;
-          return (
-          <div key={columnKey} className="tnode__col">
-            <Handle
-              type="target"
-              position={Position.Left}
-              id={`${columnKey}-target`}
-              className="tnode__handle tnode__handle--left"
-              style={{ top: "50%" }}
-            />
-
-            <div className="tnode__col-inner">
-              <div className="tnode__col-left">
-                {d.selectableColumns ? (
-                  <input
-                    type="checkbox"
-                    checked={selectedColumns.has(col.name ?? "")}
-                    onChange={(event) =>
-                      d.onToggleColumn?.(col.name ?? "", event.target.checked)
-                    }
-                    onClick={(event) => event.stopPropagation()}
-                    style={{ width: 16, height: 16, margin: 0, accentColor: "#2563eb", flexShrink: 0 }}
-                  />
-                ) : null}
-                {d.selectableColumns ? (
-                  col.isPrimaryKey || col.isForeignKey ? (
-                    <span className="tnode__col-key-inline">
-                      <ColumnLeading col={col} />
-                    </span>
-                  ) : null
-                ) : (
-                  <span className="tnode__col-icon-slot">
-                    <ColumnLeading col={col} />
-                  </span>
-                )}
-                <span className="tnode__col-name">{col.name}</span>
-              </div>
-              <span className="tnode__col-type">{col.type}</span>
-            </div>
-
-            <Handle
-              type="source"
-              position={Position.Right}
-              id={`${columnKey}-source`}
-              className="tnode__handle tnode__handle--right"
-              style={{ top: "50%" }}
-            />
-          </div>
-        )})}
-      </div>
-
-      {hiddenCount > 0 && (
+      <div className="tnode__section-head">
         <button
           type="button"
-          className="tnode__more"
+          className="tnode__section-toggle"
           onClick={(event) => {
             event.stopPropagation();
-            setExpanded((prev) => !prev);
+            setColumnsCollapsed((previous) => !previous);
           }}
-          style={{ background: "none", border: "none", cursor: "pointer" }}
         >
-          {expanded ? "Show less" : `+${hiddenCount} more`}
+          <span>Columns</span>
+          <span className="tnode__section-meta">
+            {filteredColumns.length}
+            {columnsCollapsed ? (
+              <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18 }} />
+            ) : (
+              <KeyboardArrowUpRoundedIcon sx={{ fontSize: 18 }} />
+            )}
+          </span>
         </button>
-      )}
+      </div>
+
+      {!columnsCollapsed ? (
+        <>
+          {d.showColumnSearch ? (
+            <div className="tnode__search-wrap" onClick={(event) => event.stopPropagation()}>
+              <div className="tnode__search">
+                <SearchRoundedIcon sx={{ fontSize: 16, color: "#9ca3af", flexShrink: 0 }} />
+                <input
+                  value={columnSearch}
+                  onChange={(event) => setColumnSearch(event.target.value)}
+                  placeholder="Search columns"
+                  className="tnode__search-input"
+                />
+              </div>
+            </div>
+          ) : null}
+
+          <div className="tnode__cols">
+            {visibleCols.map((col, index) => {
+              const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}-${index}`;
+              const isHighlighted = highlightedColumns.has(String(col.name ?? "").toLowerCase());
+              const isActiveColumn = d.activeColumnName === col.name;
+              return (
+                <div
+                  key={columnKey}
+                  className="tnode__col"
+                  style={{
+                    backgroundColor: isActiveColumn
+                      ? "rgba(29, 78, 216, 0.12)"
+                      : isHighlighted
+                        ? "rgba(251, 191, 36, 0.18)"
+                        : undefined,
+                    cursor: d.onColumnSelect ? "pointer" : "default",
+                  }}
+                  onClick={(event) => {
+                    if (!d.onColumnSelect || !col.name) {
+                      return;
+                    }
+                    event.stopPropagation();
+                    d.onColumnSelect(col.name);
+                  }}
+                >
+                  <Handle
+                    type="target"
+                    position={Position.Left}
+                    id={`${columnKey}-target`}
+                    className="tnode__handle tnode__handle--left"
+                    style={{ top: "50%" }}
+                  />
+
+                  <div className="tnode__col-inner">
+                    <div className="tnode__col-left">
+                      {d.selectableColumns ? (
+                        <input
+                          type="checkbox"
+                          checked={selectedColumns.has(col.name ?? "")}
+                          onChange={(event) =>
+                            d.onToggleColumn?.(col.name ?? "", event.target.checked)
+                          }
+                          onClick={(event) => event.stopPropagation()}
+                          style={{ width: 16, height: 16, margin: 0, accentColor: "#2563eb", flexShrink: 0 }}
+                        />
+                      ) : null}
+                      {d.selectableColumns ? (
+                        col.isPrimaryKey || col.isForeignKey ? (
+                          <span className="tnode__col-key-inline">
+                            <ColumnLeading col={col} />
+                          </span>
+                        ) : null
+                      ) : (
+                        <span className="tnode__col-icon-slot">
+                          <ColumnLeading col={col} />
+                        </span>
+                      )}
+                      <span
+                        className="tnode__col-name"
+                        style={{
+                          color: isActiveColumn
+                            ? "#1d4ed8"
+                            : isHighlighted
+                              ? "#92400e"
+                              : undefined,
+                        }}
+                      >
+                        {col.name}
+                      </span>
+                    </div>
+                    <span className="tnode__col-type">{col.type}</span>
+                  </div>
+
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={`${columnKey}-source`}
+                    className="tnode__handle tnode__handle--right"
+                    style={{ top: "50%" }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+          {hiddenCount > 0 && (
+            <button
+              type="button"
+              className="tnode__more"
+              onClick={(event) => {
+                event.stopPropagation();
+                setExpanded((prev) => !prev);
+              }}
+              style={{ background: "none", border: "none", cursor: "pointer" }}
+            >
+              {expanded ? "Show less" : `+${hiddenCount} more`}
+            </button>
+          )}
+        </>
+      ) : null}
     </div>
   );
 }

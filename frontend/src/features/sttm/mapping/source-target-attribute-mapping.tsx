@@ -344,7 +344,23 @@ const SourceTargetAttributeMapping = () => {
                   key={row.id}
                   hover
                   sx={{
-                    bgcolor: isSelected ? 'rgba(59, 130, 246, 0.04)' : '#fff',
+                    bgcolor: (() => {
+                      if (isSelected) return 'rgba(59, 130, 246, 0.04)';
+                      const needsAttention =
+                        row.status !== 'MAPPED' ||
+                        !!row.unmatchedReason ||
+                        ((row.confidenceScore ?? 1) < 0.55 && !!row.sourceColumn);
+                      return needsAttention ? 'rgba(254, 226, 226, 0.45)' : '#fff';
+                    })(),
+                    '&:hover': {
+                      bgcolor: isSelected
+                        ? 'rgba(59, 130, 246, 0.07)'
+                        : row.status !== 'MAPPED' ||
+                            !!row.unmatchedReason ||
+                            ((row.confidenceScore ?? 1) < 0.55 && !!row.sourceColumn)
+                          ? 'rgba(254, 202, 202, 0.55)'
+                          : '#fafafa',
+                    },
                   }}
                 >
                   <FocusCheckboxCell

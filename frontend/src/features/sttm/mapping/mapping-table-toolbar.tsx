@@ -11,8 +11,6 @@ type MappingTableToolbarProps = {
 };
 
 export default function MappingTableToolbar({
-  rowCount,
-  mappedCount,
   joinCount,
 }: MappingTableToolbarProps) {
   return (
@@ -46,8 +44,8 @@ export default function MappingTableToolbar({
         )}
       </Box>
 
-      <Typography sx={{ fontSize: '0.8rem', color: '#6b7280', fontWeight: 500 }}>
-        {rowCount} rows • {mappedCount} mapped
+      <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', fontWeight: 500 }}>
+        Mapping table
       </Typography>
     </Box>
   );

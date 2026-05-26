@@ -27,11 +27,16 @@ import { useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
 import SourceTargetAttributeList from '@/features/sttm/mapping/source-target-attribute-list';
 import SourceTargetAttributeMapping from '@/features/sttm/mapping/source-target-attribute-mapping';
 import PreProcessModal from '@/features/sttm/mapping/pre-process-modal';
+import LineageTab from '@/features/sttm/lineage/lineage-tab';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import { useAppDispatch } from '@/store/hooks';
 import { fetchAttributes } from '@/features/sttm/store/sttm-builder-slice';
 import { dbService } from '@/services/dbService';
-import { buildMappingInsertSql, buildMappingSelectSql } from '@/features/sttm/mapping/mapping-utils';
+import {
+  buildMappingInsertSql,
+  buildMappingSelectSql,
+  buildSourceQueryPreviewSql,
+} from '@/features/sttm/mapping/mapping-utils';
 
 type MappingTab = 'mapping' | 'sql-preview' | 'data-preview' | 'data-lineage';
 
@@ -353,6 +358,17 @@ export default function MappingPage() {
     [mappings, sourceFilterSql, sourceGroupBySql, sourceOrderBySql, sourceQuerySql],
   );
 
+  const sourceQueryPreviewSql = useMemo(
+    () =>
+      buildSourceQueryPreviewSql({
+        sourceQuerySql,
+        sourceFilterSql,
+        sourceGroupBySql,
+        sourceOrderBySql,
+      }),
+    [sourceFilterSql, sourceGroupBySql, sourceOrderBySql, sourceQuerySql],
+  );
+
   useEffect(() => {
     if (activeTab !== 'data-preview') {
       return;
@@ -475,7 +491,7 @@ export default function MappingPage() {
     { key: 'mapping', label: 'Mapping', icon: <ChecklistRtlRoundedIcon sx={{ fontSize: 17 }} /> },
     { key: 'sql-preview', label: 'SQL Preview', icon: <CodeRoundedIcon sx={{ fontSize: 17 }} /> },
     { key: 'data-preview', label: 'Data Preview', icon: <TableRowsRoundedIcon sx={{ fontSize: 17 }} /> },
-    { key: 'data-lineage', label: 'Data Lineage', icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
+    { key: 'data-lineage', label: 'Lineage', icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
   ];
 
   const handleCopySql = async () => {
@@ -489,7 +505,7 @@ export default function MappingPage() {
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
+    <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-white">
       <Box
         sx={{
           display: 'flex',
@@ -529,13 +545,21 @@ export default function MappingPage() {
             </Button>
           );
         })}
-        <Box sx={{ ml: 'auto', minWidth: 180 }}>
+        <Box sx={{ ml: 'auto', minWidth: 220 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.4 }}>
+            <Typography sx={{ fontSize: '0.76rem', color: '#64748b', fontWeight: 600 }}>
+              {totalCount} rows • {mappedCount} mapped
+            </Typography>
+            <Typography sx={{ fontSize: '0.76rem', color: '#64748b' }}>
+              {totalCount > 0 ? `${Math.round(progressValue)}%` : '0%'}
+            </Typography>
+          </Box>
           <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
             <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, color: '#111827' }}>
               Mapping progress
             </Typography>
-            <Typography sx={{ fontSize: '0.76rem', color: '#64748b' }}>
-              {mappedCount}/{totalCount} {totalCount > 0 ? `${Math.round(progressValue)}%` : '0%'}
+            <Typography sx={{ fontSize: '0.76rem', color: '#94a3b8' }}>
+              {mappedCount}/{totalCount}
             </Typography>
           </Box>
           <LinearProgress
@@ -554,7 +578,7 @@ export default function MappingPage() {
         </Box>
       </Box>
 
-      <div className="flex min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden">
         {activeTab === 'mapping' ? (
           <div className="min-w-0 flex-1 overflow-hidden">
             <SourceTargetAttributeMapping />
@@ -565,6 +589,8 @@ export default function MappingPage() {
           <Box
             sx={{
               flex: 1,
+              width: '100%',
+              minWidth: 0,
               minHeight: 0,
               overflow: 'hidden',
               backgroundColor: '#0b1220',
@@ -657,6 +683,54 @@ export default function MappingPage() {
               <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 2.5, py: 2.25 }}>
                 <Box
                   sx={{
+                    mb: 2.25,
+                    borderRadius: 3,
+                    border: '1px solid rgba(148,163,184,0.16)',
+                    backgroundColor: 'rgba(15,23,42,0.42)',
+                    overflow: 'hidden',
+                  }}
+                >
+                  <Box
+                    sx={{
+                      px: 1.5,
+                      py: 1.15,
+                      borderBottom: '1px solid rgba(148,163,184,0.12)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 1.5,
+                    }}
+                  >
+                    <Box>
+                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: '#f8fafc' }}>
+                        Source query foundation
+                      </Typography>
+                      <Typography sx={{ fontSize: '0.76rem', color: '#94a3b8' }}>
+                        Lowest-level Step 1 SQL with joins, filters, grouping, and ordering.
+                      </Typography>
+                    </Box>
+                    <Box sx={sqlStatPillSx}>{relationships.length} JOINS</Box>
+                  </Box>
+                  <Box
+                    component="pre"
+                    sx={{
+                      m: 0,
+                      px: 1.5,
+                      py: 1.35,
+                      fontSize: 13.25,
+                      lineHeight: 1.72,
+                      whiteSpace: 'pre-wrap',
+                      wordBreak: 'break-word',
+                      fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
+                    }}
+                  >
+                    {sourceQueryPreviewSql
+                      .split('\n')
+                      .map((line, index) => renderSqlLine(line, index))}
+                  </Box>
+                </Box>
+                <Box
+                  sx={{
                     mb: 2,
                     display: 'inline-grid',
                     gap: 0.25,
@@ -688,7 +762,9 @@ export default function MappingPage() {
                     fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
                   }}
                 >
-                  {generatedSql.split('\n').map((line, index) => renderSqlLine(line, index))}
+                  {generatedSql.split('\n').map((line, index) =>
+                    renderSqlLine(line, index + sourceQueryPreviewSql.split('\n').length + 1),
+                  )}
                 </Box>
               </Box>
               <Box
@@ -741,8 +817,11 @@ export default function MappingPage() {
         ) : null}
 
         {activeTab === 'data-preview' ? (
-          <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', p: 2, backgroundColor: '#fff' }}>
-            <Paper elevation={0} sx={{ border: '1px solid #e5e7eb', borderRadius: 3, overflow: 'hidden' }}>
+          <Box sx={{ flex: 1, width: '100%', minWidth: 0, minHeight: 0, overflow: 'auto', p: 2, backgroundColor: '#fff' }}>
+            <Paper
+              elevation={0}
+              sx={{ border: '1px solid #e5e7eb', borderRadius: 3, overflow: 'hidden', width: '100%' }}
+            >
               <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                 <Typography sx={{ fontSize: '0.85rem', fontWeight: 800, color: '#111827' }}>
                   Result preview
@@ -803,26 +882,8 @@ export default function MappingPage() {
             </Paper>
           </Box>
         ) : null}
-
         {activeTab === 'data-lineage' ? (
-          <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', p: 2 }}>
-            <Paper
-              elevation={0}
-              sx={{
-                border: '1px dashed #cbd5e1',
-                borderRadius: 3,
-                p: 3,
-                minHeight: 260,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Typography sx={{ fontSize: '0.85rem', color: '#64748b' }}>
-                Data lineage will be added here next.
-              </Typography>
-            </Paper>
-          </Box>
+          <LineageTab />
         ) : null}
       </div>
       <PreProcessModal />

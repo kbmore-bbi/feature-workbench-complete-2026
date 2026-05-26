@@ -1,14 +1,19 @@
 "use client";
 
 import { Box, Paper } from "@mui/material";
-import AppHeader from "@/features/layout/app-header";
 import DashboardSidebar from "./DashboardSidebar";
 import DashboardStats from "./DashboardStats";
 import QuickStatsPanel from "./QuickStatsPanel";
 import RecentMappingsPanel from "./RecentMappingsPanel";
 import DashboardHeader from "./DashboardHeader";
 
-export default function DashboardPage() {
+type DashboardPageProps = {
+    initialNewMappingOpen?: boolean;
+};
+
+export default function DashboardPage({
+    initialNewMappingOpen = false,
+}: DashboardPageProps) {
     return (
         <Box className="h-screen overflow-hidden bg-[#F7F8FA]">
             <Paper
@@ -18,7 +23,7 @@ export default function DashboardPage() {
                 {/* <AppHeader /> */}
 
                 <Box className="flex min-h-0 flex-1">
-                    <DashboardSidebar />
+                    <DashboardSidebar initialNewMappingOpen={initialNewMappingOpen} />
 
                     <Box className="flex min-w-0 flex-1 flex-col px-6 py-5">
                         <DashboardHeader />

@@ -687,6 +687,11 @@ export default function AIAgentPanel({
           const messageId = message.id ?? `${message.role}-${index}-${message.content.slice(0, 24)}`;
           const traceSteps = message.traceSteps ?? [];
           const isTraceExpanded = message.isStreaming || !!expandedTraces[messageId];
+          const pendingFeedbackEntry = pendingFeedback[messageId];
+          const thumbsUpSelected =
+            pendingFeedbackEntry?.rating === 5 || (message.feedbackStatus === "sent" && message.feedbackRating === 5);
+          const thumbsDownSelected =
+            pendingFeedbackEntry?.rating === 1 || (message.feedbackStatus === "sent" && message.feedbackRating === 1);
           return (
             <Stack
               key={messageId}
@@ -770,7 +775,7 @@ export default function AIAgentPanel({
                       size="small"
                       onClick={() => startFeedback(messageId, 5)}
                       disabled={message.feedbackStatus === "sent" || chatLoading}
-                      sx={{ color: message.feedbackStatus === "sent" ? "#16a34a" : "#64748b" }}
+                      sx={{ color: thumbsUpSelected ? "#16a34a" : "#64748b" }}
                     >
                       <ThumbUpAltOutlinedIcon fontSize="small" />
                     </IconButton>
@@ -778,7 +783,7 @@ export default function AIAgentPanel({
                       size="small"
                       onClick={() => startFeedback(messageId, 1)}
                       disabled={message.feedbackStatus === "sent" || chatLoading}
-                      sx={{ color: message.feedbackStatus === "failed" ? "#dc2626" : "#64748b" }}
+                      sx={{ color: thumbsDownSelected || message.feedbackStatus === "failed" ? "#dc2626" : "#64748b" }}
                     >
                       <ThumbDownAltOutlinedIcon fontSize="small" />
                     </IconButton>
@@ -794,7 +799,7 @@ export default function AIAgentPanel({
                     ) : null}
                   </Stack>
                 ) : null}
-                {isAssistant && pendingFeedback[messageId] && message.feedbackStatus !== "sent" ? (
+                {isAssistant && pendingFeedbackEntry && message.feedbackStatus !== "sent" ? (
                   <Stack
                     spacing={1}
                     sx={{
@@ -813,7 +818,7 @@ export default function AIAgentPanel({
                       fullWidth
                       multiline
                       minRows={2}
-                      value={pendingFeedback[messageId]?.comment ?? ""}
+                      value={pendingFeedbackEntry.comment ?? ""}
                       onChange={(event) => changeFeedbackComment(messageId, event.target.value)}
                       placeholder="Tell us what worked well or what felt off..."
                     />

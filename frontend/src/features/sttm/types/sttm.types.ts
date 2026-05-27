@@ -206,6 +206,7 @@ export type ChatMessage = {
   requestId?: string | null;
   conversationId?: string | null;
   feedbackStatus?: "idle" | "sent" | "failed";
+  feedbackRating?: number | null;
 };
 
 export type PendingDerivedSourceDraft = {

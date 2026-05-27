@@ -1655,6 +1655,7 @@ export const submitChatFeedback = createAsyncThunk(
       return {
         messageId: payload.messageId,
         requestId: response.request_id ?? payload.requestId ?? null,
+        rating: payload.rating,
       };
     } catch (err) {
       return rejectWithValue({
@@ -2405,6 +2406,7 @@ export const sttmBuilderSlice = createSlice({
               message.requestId = conversationResponse.request_id ?? null;
               message.conversationId = conversationResponse.data?.artifact?.conversation_id ?? null;
               message.feedbackStatus = "idle";
+              message.feedbackRating = null;
             }
           }
           return;
@@ -2523,6 +2525,7 @@ export const sttmBuilderSlice = createSlice({
         const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
         if (!message) return;
         message.feedbackStatus = "sent";
+        message.feedbackRating = action.payload.rating ?? null;
       })
       .addCase(submitChatFeedback.rejected, (state, action) => {
         const payload = action.payload as { messageId?: string } | undefined;

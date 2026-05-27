@@ -11,6 +11,7 @@ import {
   fetchRelationships,
   runAutoMap as runAutoMapThunk,
   sendChatMessage as sendChatMessageThunk,
+  submitChatFeedback as submitChatFeedbackThunk,
   toggleSource as toggleSourceAction,
   selectTarget as selectTargetAction,
   clearSources as clearSourcesAction,
@@ -157,6 +158,18 @@ export function SttmBuilderProvider({
       },
       sendChatMessage: (message: string) => {
         dispatch(sendChatMessageThunk(message));
+      },
+      submitChatFeedback: ({ messageId, rating, comment }) => {
+        const targetMessage = state.chatMessages.find((item) => item.id === messageId);
+        dispatch(
+          submitChatFeedbackThunk({
+            messageId,
+            rating,
+            comment: comment ?? null,
+            requestId: targetMessage?.requestId ?? null,
+            conversationId: targetMessage?.conversationId ?? state.agentThreadId,
+          }),
+        );
       },
       openPendingDerivedSourceDraft: () => {
         dispatch(openPendingDerivedSourceDraftAction());

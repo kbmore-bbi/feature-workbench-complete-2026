@@ -203,6 +203,9 @@ export type ChatMessage = {
   options?: string[];
   isStreaming?: boolean;
   traceSteps?: string[];
+  requestId?: string | null;
+  conversationId?: string | null;
+  feedbackStatus?: "idle" | "sent" | "failed";
 };
 
 export type PendingDerivedSourceDraft = {
@@ -300,6 +303,7 @@ export type SttmBuilderContextValue = {
   // Actions — AI
   runAutoMap: () => void;
   sendChatMessage: (message: string) => void;
+  submitChatFeedback: (payload: { messageId: string; rating: number; comment?: string | null }) => void;
   openPendingDerivedSourceDraft: () => void;
   acknowledgePendingDerivedSourceDraft: () => void;
   dismissPendingDerivedSourceDraft: () => void;

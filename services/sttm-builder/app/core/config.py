@@ -100,6 +100,10 @@ class Settings(BaseSettings):
         default="",
         alias="SNOWFLAKE_SEMANTIC_MODEL_AGENT",
     )
+    snowflake_workbench_conversation_agent: str = Field(
+        default="",
+        alias="SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT",
+    )
     snowflake_relationships_procedure: str = Field(
         default="",
         alias="SNOWFLAKE_RELATIONSHIPS_PROCEDURE",
@@ -123,6 +127,30 @@ class Settings(BaseSettings):
     snowflake_derived_view_prefix: str = Field(
         default="VW_DERIVED_SOURCE_",
         alias="SNOWFLAKE_DERIVED_VIEW_PREFIX",
+    )
+    snowflake_conversation_turns_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_CONVERSATION_TURNS",
+        alias="SNOWFLAKE_CONVERSATION_TURNS_TABLE",
+    )
+    snowflake_conversation_feedback_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_FEEDBACK",
+        alias="SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE",
+    )
+    snowflake_conversation_recommendations_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RECOMMENDATIONS",
+        alias="SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE",
+    )
+    snowflake_relationship_facts_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RELATIONSHIP_FACTS",
+        alias="SNOWFLAKE_RELATIONSHIP_FACTS_TABLE",
+    )
+    snowflake_rag_documents_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RAG_DOCUMENTS",
+        alias="SNOWFLAKE_RAG_DOCUMENTS_TABLE",
+    )
+    snowflake_rag_search_service: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_WORKBENCH_RAG",
+        alias="SNOWFLAKE_RAG_SEARCH_SERVICE",
     )
     snowflake_agent_orchestration_model: str = Field(
         default="claude-sonnet-4",
@@ -153,6 +181,16 @@ class Settings(BaseSettings):
     @property
     def agents(self) -> list[AgentConfig]:
         return [
+            AgentConfig(
+                id="workbench_conversation",
+                display_name="Workbench Conversation Agent",
+                description=(
+                    "Fast governed conversation agent for quick answers, recommendations, "
+                    "feedback capture, and approved semantic-context RAG before any STTM handoff."
+                ),
+                snowflake_name=self.resolved_workbench_conversation_agent,
+                default_model=self.snowflake_agent_orchestration_model,
+            ),
             AgentConfig(
                 id="sttm_builder",
                 display_name="STTM Builder Agent",
@@ -235,6 +273,14 @@ class Settings(BaseSettings):
             self.snowflake_source_mapping_agent,
             legacy_object_name="SOURCE_MAPPING_AGENT",
             default_object_name="AGT_SOURCE_MAPPING",
+        )
+
+    @property
+    def resolved_workbench_conversation_agent(self) -> str:
+        return self._resolve_agent_name(
+            self.snowflake_workbench_conversation_agent,
+            legacy_object_name="WORKBENCH_CONVERSATION_AGENT",
+            default_object_name="AGT_WORKBENCH_CONVERSATION",
         )
 
     @property

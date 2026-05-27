@@ -8,6 +8,7 @@ from app.guardrails.config.schema import GuardrailsConfig
 from app.guardrails.contracts.decisions import GovernanceDecision
 from app.guardrails.policies.redaction import Redactor
 from app.guardrails.policies.resolver import PolicyResolver
+from app.guardrails.runtime.trust_boundary import build_request_trust_bundle
 
 
 class PreflightGuard:
@@ -23,6 +24,16 @@ class PreflightGuard:
         trace_id: str,
         persona: str | None,
     ) -> tuple[dict[str, Any], GovernanceDecision]:
+        return self.apply_to_request(payload, trace_id=trace_id, persona=persona, strip_samples=True)
+
+    def apply_to_request(
+        self,
+        payload: dict[str, Any],
+        *,
+        trace_id: str,
+        persona: str | None,
+        strip_samples: bool,
+    ) -> tuple[dict[str, Any], GovernanceDecision]:
         decision = GovernanceDecision(
             trace_id=trace_id,
             request_id=payload.get("request_id"),
@@ -31,6 +42,7 @@ class PreflightGuard:
         )
         policy = self._policies.resolve(persona)
         decision.merge_meta(policy=policy.model_dump())
+        decision.trust = build_request_trust_bundle(payload)
 
         operation = str(payload.get("operation") or "")
         if not policy.allows_operation(operation):
@@ -52,7 +64,7 @@ class PreflightGuard:
         decision.redaction_count += data_result.redaction_count
         decision.detected_pii.extend(data_result.detected_pii)
 
-        if not policy.allow_sample_rows:
+        if strip_samples and not policy.allow_sample_rows:
             context = strip_sample_data(context)
             decision.add_warning(
                 "SAMPLE_ROWS_STRIPPED",
@@ -77,6 +89,7 @@ class PreflightGuard:
             "policy": policy.model_dump(),
             "redaction_count": decision.redaction_count,
             "detected_pii": sorted(set(decision.detected_pii)),
+            "trust_labels": decision.trust.labels(),
         }
         sanitized["meta"] = sanitized_meta
         return sanitized, decision

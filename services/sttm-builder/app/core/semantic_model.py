@@ -417,13 +417,25 @@ def _build_prompt(
     semantic_level: SemanticLevel,
 ) -> str:
     payload: dict[str, Any] = {
-        "scope": scope,
-        "database": db,
-        "schema": schema,
-        "semantic_level": semantic_level.value,
+        "contract_version": "1.0",
+        "operation": "semantic_model.generate",
+        "context": {
+            "semantic_level_requested": semantic_level.value,
+            "source_tables": (
+                [{"database": db, "schema": schema, "table": tbl}]
+                if scope == "TABLE" and tbl
+                else []
+            ),
+        },
+        "data": {
+            "scope": scope,
+            "database": db,
+            "schema": schema,
+            "semantic_level": semantic_level.value,
+        },
     }
     if tbl:
-        payload["table"] = tbl
+        payload["data"]["table"] = tbl
     return json.dumps(payload)
 
 

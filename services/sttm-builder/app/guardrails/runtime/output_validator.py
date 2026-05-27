@@ -44,7 +44,7 @@ class OutputValidator:
         if isinstance(sql_text, str):
             forbidden = find_forbidden_sql_tokens(sql_text, self._config.output.reject_sql_patterns)
             if forbidden:
-                decision.approval_required = True
+                decision.require_approval("unsafe_sql")
                 decision.add_warning(
                     "UNSAFE_SQL_ARTIFACT",
                     f"Generated SQL contains restricted token(s): {', '.join(sorted(set(forbidden)))}.",

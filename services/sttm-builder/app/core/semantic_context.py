@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
@@ -179,7 +180,12 @@ class SemanticContextService:
             SemanticLevel.L2_ANALYST_READY,
             SemanticLevel.L3_MAPPING_ENRICHED,
         }:
-            semantic_view_name = self._semantic_view_name(bundle_id)
+            semantic_view_name = self._semantic_view_name(
+                bundle_id=bundle_id,
+                selected_source_tables=selected_source_tables,
+                derived_records=derived_records,
+                target_table=request.target_table,
+            )
             if existing_view_is_usable:
                 semantic_view_name = existing["semantic_view_name"]
             else:
@@ -554,6 +560,9 @@ class SemanticContextService:
         analyst_tool_name = self._sync_builder_agent_analyst_tool(
             bundle_id=bundle_id,
             semantic_view_name=semantic_view_name,
+            selected_source_tables=selected_source_tables,
+            derived_records=derived_records,
+            target_table=target_table,
         )
         self._persist_semantic_view_metadata(
             bundle_id=bundle_id,
@@ -870,6 +879,9 @@ class SemanticContextService:
         *,
         bundle_id: str,
         semantic_view_name: str,
+        selected_source_tables: list[TableRef],
+        derived_records: list[Any],
+        target_table: TableRef | None,
     ) -> str:
         agent_name = self._settings.resolved_sttm_builder_agent
         rows = self._session.sql(f"DESCRIBE AGENT {agent_name}").collect()
@@ -894,6 +906,13 @@ class SemanticContextService:
         if not isinstance(tool_resources, dict):
             raise ValueError("Agent spec tool_resources section is not a mapping")
 
+        desired_tool_name = _analyst_tool_name(
+            selected_source_tables=selected_source_tables,
+            derived_records=derived_records,
+            target_table=target_table,
+            bundle_id=bundle_id,
+        )
+
         existing_tool_name = None
         for tool_name, resource in tool_resources.items():
             if not isinstance(resource, dict):
@@ -901,6 +920,21 @@ class SemanticContextService:
             if str(resource.get("semantic_view") or "") == semantic_view_name:
                 existing_tool_name = str(tool_name)
                 break
+
+        if existing_tool_name:
+            if existing_tool_name != desired_tool_name:
+                tool_resources.pop(existing_tool_name, None)
+                tools = [
+                    tool
+                    for tool in tools
+                    if not (
+                        isinstance(tool, dict)
+                        and isinstance(tool.get("tool_spec"), dict)
+                        and str(tool["tool_spec"].get("name") or "") == existing_tool_name
+                    )
+                ]
+                spec["tools"] = tools
+                existing_tool_name = None
 
         if existing_tool_name:
             tool_present = any(
@@ -927,12 +961,11 @@ class SemanticContextService:
             self._replace_agent_from_spec(agent_name=agent_name, profile=str(profile), spec=spec)
             return existing_tool_name
 
-        tool_name = f"ANALYST_{bundle_id.upper()}"
         tools.append(
             {
                 "tool_spec": {
                     "type": "cortex_analyst_text_to_sql",
-                    "name": tool_name,
+                    "name": desired_tool_name,
                     "description": (
                         f"Uses Cortex Analyst over semantic view {semantic_view_name} "
                         f"for analytical questions on {self._bundle_label_from_id(bundle_id)}."
@@ -946,9 +979,9 @@ class SemanticContextService:
                 "type": "warehouse",
                 "warehouse": self._settings.snowflake_warehouse,
             }
-        tool_resources[tool_name] = resource
+        tool_resources[desired_tool_name] = resource
         self._replace_agent_from_spec(agent_name=agent_name, profile=str(profile), spec=spec)
-        return tool_name
+        return desired_tool_name
 
     def _replace_agent_from_spec(
         self,
@@ -1186,11 +1219,24 @@ class SemanticContextService:
     def _analyst_source_tables(selected_source_tables: list[TableRef]) -> list[TableRef]:
         return list(selected_source_tables)
 
-    def _semantic_view_name(self, bundle_id: str) -> str:
+    def _semantic_view_name(
+        self,
+        *,
+        bundle_id: str,
+        selected_source_tables: list[TableRef],
+        derived_records: list[Any],
+        target_table: TableRef | None,
+    ) -> str:
+        readable = _semantic_asset_suffix(
+            selected_source_tables=selected_source_tables,
+            derived_records=derived_records,
+            target_table=target_table,
+            bundle_id=bundle_id,
+        )
         return (
             f"{self._settings.resolved_metadata_database}."
             f"{self._settings.resolved_metadata_schema}."
-            f"SV_{bundle_id.upper()}"
+            f"SV_STTM_{readable}"
         )
 
     def _bundle_label(
@@ -1438,3 +1484,37 @@ def _bundle_label_from_payload(
     if isinstance(target_table, dict) and target_table.get("table"):
         label = f"{label} -> {target_table['table']}"
     return label
+
+
+def _semantic_asset_suffix(
+    *,
+    selected_source_tables: list[TableRef],
+    derived_records: list[Any],
+    target_table: TableRef | None,
+    bundle_id: str,
+) -> str:
+    raw_names = [table.table for table in selected_source_tables]
+    raw_names.extend(
+        str(record.derived_source_name or record.derived_source_id or "")
+        for record in derived_records
+    )
+    source_slug = _slugify_identifier("_".join([name for name in raw_names[:2] if name]), limit=17) or "WORKSET"
+    target_slug = _slugify_identifier(target_table.table if target_table else "", limit=17) or "CONTEXT"
+    return f"{source_slug}__TO__{target_slug}__{bundle_id[-8:].upper()}"
+
+
+def _analyst_tool_name(
+    *,
+    selected_source_tables: list[TableRef],
+    derived_records: list[Any],
+    target_table: TableRef | None,
+    bundle_id: str,
+) -> str:
+    return f"ANALYST_STTM_{_semantic_asset_suffix(selected_source_tables=selected_source_tables, derived_records=derived_records, target_table=target_table, bundle_id=bundle_id)}"
+
+
+def _slugify_identifier(value: str, *, limit: int = 48) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_").upper()
+    if not normalized:
+        return ""
+    return normalized[:limit].rstrip("_")

@@ -154,6 +154,10 @@ def build_response_envelope(
                     "persona": getattr(governance, "persona", None),
                     "redaction_count": getattr(governance, "redaction_count", 0),
                     "approval_required": getattr(governance, "approval_required", False),
+                    "approval": getattr(getattr(governance, "approval", None), "model_dump", lambda **_: {})(
+                        mode="json"
+                    ),
+                    "trust_labels": getattr(getattr(governance, "trust", None), "labels", lambda: [])(),
                 }
             )
             resolved_meta["guardrails"] = guardrails_meta

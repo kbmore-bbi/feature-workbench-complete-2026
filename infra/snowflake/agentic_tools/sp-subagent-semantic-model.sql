@@ -40,6 +40,28 @@ def _normalize_table_ref(item):
 
 
 def _extract_request_tables(payload):
+    if isinstance(payload.get("data"), dict):
+        data = payload.get("data") or {}
+        scope = str(data.get("scope") or "TABLE").upper()
+        semantic_level = str(
+            (payload.get("context") or {}).get("semantic_level_requested")
+            or data.get("semantic_level")
+            or "L1_CONTEXT"
+        ).upper()
+        if scope != "TABLE":
+            return [], semantic_level
+        table_name = str(data.get("table") or "").strip()
+        if not table_name:
+            return [], semantic_level
+        ref = _normalize_table_ref(
+            {
+                "database": data.get("database"),
+                "schema": data.get("schema"),
+                "table": table_name,
+            }
+        )
+        return ([ref] if ref else []), semantic_level
+
     if "scope" in payload and "database" in payload and "schema" in payload:
         scope = str(payload.get("scope") or "TABLE").upper()
         if scope != "TABLE":

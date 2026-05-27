@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
+from starlette.datastructures import MutableHeaders
+from starlette.requests import ClientDisconnect, Request
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.guardrails.config.schema import GuardrailsConfig
 from app.guardrails.contracts.decisions import GovernanceDecision
@@ -27,16 +26,24 @@ def attach_governance_decision(request: Request, decision: GovernanceDecision) -
     return decision
 
 
-class GuardrailsMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app: Any, *, config: GuardrailsConfig) -> None:
-        super().__init__(app)
+class GuardrailsMiddleware:
+    def __init__(self, app: ASGIApp, *, config: GuardrailsConfig) -> None:
+        self.app = app
         self._config = config
 
-    async def dispatch(self, request: Request, call_next: Any) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        scope.setdefault("state", {})
+        request = Request(scope, receive=receive)
         decision = get_governance_decision(request)
 
-        if self._config.enabled and request.headers.get("content-type", "").startswith("application/json"):
-            body = await request.body()
+        downstream_receive = receive
+        content_type = request.headers.get("content-type", "")
+        if self._config.enabled and content_type.startswith("application/json"):
+            body = await _consume_request_body(receive)
             if body:
                 try:
                     payload = json.loads(body)
@@ -47,14 +54,39 @@ class GuardrailsMiddleware(BaseHTTPMiddleware):
                         decision.request_id = payload["request_id"]
                     if isinstance(payload.get("operation"), str) and payload["operation"]:
                         decision.operation = payload["operation"]
+            downstream_receive = _buffered_receive(body, receive)
 
-                async def receive() -> dict[str, Any]:
-                    return {"type": "http.request", "body": body, "more_body": False}
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers.setdefault("X-Trace-Id", decision.trace_id)
+                if decision.request_id:
+                    headers.setdefault("X-Request-Id", decision.request_id)
+            await send(message)
 
-                request._receive = receive  # type: ignore[attr-defined]
+        await self.app(scope, downstream_receive, send_wrapper)
 
-        response = await call_next(request)
-        response.headers.setdefault("X-Trace-Id", decision.trace_id)
-        if decision.request_id:
-            response.headers.setdefault("X-Request-Id", decision.request_id)
-        return response
+
+async def _consume_request_body(receive: Receive) -> bytes:
+    body_parts: list[bytes] = []
+    more_body = True
+    while more_body:
+        message = await receive()
+        if message["type"] == "http.disconnect":
+            raise ClientDisconnect()
+        body_parts.append(message.get("body", b""))
+        more_body = bool(message.get("more_body", False))
+    return b"".join(body_parts)
+
+
+def _buffered_receive(body: bytes, receive: Receive) -> Receive:
+    consumed = False
+
+    async def buffered() -> Message:
+        nonlocal consumed
+        if not consumed:
+            consumed = True
+            return {"type": "http.request", "body": body, "more_body": False}
+        return await receive()
+
+    return buffered

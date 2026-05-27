@@ -10,6 +10,7 @@ import {
   InputBase,
   Paper,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
@@ -20,6 +21,10 @@ import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
+import ThumbUpAltOutlinedIcon from "@mui/icons-material/ThumbUpAltOutlined";
+import ThumbDownAltOutlinedIcon from "@mui/icons-material/ThumbDownAltOutlined";
+import TipsAndUpdatesOutlinedIcon from "@mui/icons-material/TipsAndUpdatesOutlined";
+import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 
@@ -370,9 +375,11 @@ export default function AIAgentPanel({
     semanticViewName,
     selectedSourceCount,
     sendChatMessage,
+    submitChatFeedback,
   } = useSttmBuilderContext();
   const [draft, setDraft] = useState("");
   const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
+  const [pendingFeedback, setPendingFeedback] = useState<Record<string, { rating: number; comment: string }>>({});
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const statsLabel = useMemo(() => {
@@ -407,6 +414,11 @@ export default function AIAgentPanel({
     setDraft("");
   };
 
+  const handleQuickAction = (message: string) => {
+    if (chatLoading) return;
+    sendChatMessage(message);
+  };
+
   useEffect(() => {
     const node = messagesRef.current;
     if (!node) return;
@@ -418,6 +430,60 @@ export default function AIAgentPanel({
       ...current,
       [messageId]: !current[messageId],
     }));
+  };
+
+  const startFeedback = (messageId: string, rating: number) => {
+    setPendingFeedback((current) => ({
+      ...current,
+      [messageId]: {
+        rating,
+        comment: current[messageId]?.comment ?? "",
+      },
+    }));
+  };
+
+  const changeFeedbackComment = (messageId: string, comment: string) => {
+    setPendingFeedback((current) => {
+      const existing = current[messageId];
+      if (!existing) return current;
+      return {
+        ...current,
+        [messageId]: {
+          ...existing,
+          comment,
+        },
+      };
+    });
+  };
+
+  const submitPendingFeedback = (messageId: string) => {
+    const pending = pendingFeedback[messageId];
+    if (!pending) return;
+    submitChatFeedback({
+      messageId,
+      rating: pending.rating,
+      comment: pending.comment.trim() || null,
+    });
+    setPendingFeedback((current) => {
+      const next = { ...current };
+      delete next[messageId];
+      return next;
+    });
+  };
+
+  const skipFeedbackComment = (messageId: string) => {
+    const pending = pendingFeedback[messageId];
+    if (!pending) return;
+    submitChatFeedback({
+      messageId,
+      rating: pending.rating,
+      comment: null,
+    });
+    setPendingFeedback((current) => {
+      const next = { ...current };
+      delete next[messageId];
+      return next;
+    });
   };
 
   return (
@@ -698,6 +764,81 @@ export default function AIAgentPanel({
                     ))}
                   </Stack>
                 ) : null}
+                {isAssistant && !message.isStreaming ? (
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 1, alignItems: "center" }}>
+                    <IconButton
+                      size="small"
+                      onClick={() => startFeedback(messageId, 5)}
+                      disabled={message.feedbackStatus === "sent" || chatLoading}
+                      sx={{ color: message.feedbackStatus === "sent" ? "#16a34a" : "#64748b" }}
+                    >
+                      <ThumbUpAltOutlinedIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => startFeedback(messageId, 1)}
+                      disabled={message.feedbackStatus === "sent" || chatLoading}
+                      sx={{ color: message.feedbackStatus === "failed" ? "#dc2626" : "#64748b" }}
+                    >
+                      <ThumbDownAltOutlinedIcon fontSize="small" />
+                    </IconButton>
+                    {message.feedbackStatus === "sent" ? (
+                      <Typography variant="caption" sx={{ color: "#16a34a" }}>
+                        Feedback saved
+                      </Typography>
+                    ) : null}
+                    {message.feedbackStatus === "failed" ? (
+                      <Typography variant="caption" sx={{ color: "#dc2626" }}>
+                        Feedback failed
+                      </Typography>
+                    ) : null}
+                  </Stack>
+                ) : null}
+                {isAssistant && pendingFeedback[messageId] && message.feedbackStatus !== "sent" ? (
+                  <Stack
+                    spacing={1}
+                    sx={{
+                      mt: 1,
+                      p: 1.25,
+                      borderRadius: 2,
+                      border: "1px solid #dbeafe",
+                      backgroundColor: "#f8fbff",
+                    }}
+                  >
+                    <Typography variant="caption" sx={{ color: "#1e3a8a", fontWeight: 700 }}>
+                      Any additional comments?
+                    </Typography>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      multiline
+                      minRows={2}
+                      value={pendingFeedback[messageId]?.comment ?? ""}
+                      onChange={(event) => changeFeedbackComment(messageId, event.target.value)}
+                      placeholder="Tell us what worked well or what felt off..."
+                    />
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => submitPendingFeedback(messageId)}
+                        disabled={chatLoading}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Send feedback
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => skipFeedbackComment(messageId)}
+                        disabled={chatLoading}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Skip comment
+                      </Button>
+                    </Stack>
+                  </Stack>
+                ) : null}
               </Paper>
             </Stack>
           );
@@ -890,6 +1031,37 @@ export default function AIAgentPanel({
       </Box>
 
       <Box sx={{ p: 1, backgroundColor: "#ffffff", borderTop: "1px solid #e2e8f0" }}>
+        <Stack direction="row" spacing={1} useFlexGap sx={{ px: 0.5, pb: 1, flexWrap: "wrap" }}>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<TipsAndUpdatesOutlinedIcon fontSize="small" />}
+            onClick={() => handleQuickAction("Recommend next steps for the selected tables and tell me what to validate first.")}
+            disabled={chatLoading}
+            sx={{ textTransform: "none", borderRadius: "999px" }}
+          >
+            Ask for recommendations
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<HelpOutlineOutlinedIcon fontSize="small" />}
+            onClick={() => handleQuickAction("I have a doubt about the selected tables. Ask me clarifying questions and give me options.")}
+            disabled={chatLoading}
+            sx={{ textTransform: "none", borderRadius: "999px" }}
+          >
+            Clear doubts
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => handleQuickAction("Show the relationship between the selected tables only.")}
+            disabled={chatLoading}
+            sx={{ textTransform: "none", borderRadius: "999px" }}
+          >
+            Explain selected tables
+          </Button>
+        </Stack>
         <Paper
           elevation={0}
           sx={{

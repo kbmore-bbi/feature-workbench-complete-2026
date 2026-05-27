@@ -1,13 +1,14 @@
 import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
 import { getApiErrorMessage } from "@/api/axiosInstance";
+import { conversationService } from "@/services/conversationService";
 import { dbService } from "@/services/dbService";
 import { workbenchService, type TableRef } from "@/services/workbenchService";
 import { authService } from "@/services/authService";
 import type {
+  ConversationEnvelopeResponse,
   SemanticContextItem,
   SourceMappingResult,
   STTMBuilderEnvelopeResponse,
-  STTMIntent,
   TransformationResult,
 } from "@/types/api-contract";
 import type { UserSession } from "@/types/user";
@@ -169,6 +170,20 @@ function isDerivedSourceGenerationText(text: string): boolean {
 
 function createChatMessageId() {
   return `chat_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+}
+
+type AssistantEnvelopeResponse = STTMBuilderEnvelopeResponse | ConversationEnvelopeResponse;
+
+function isConversationEnvelopeResponse(
+  response: AssistantEnvelopeResponse | Record<string, unknown> | null | undefined,
+): response is ConversationEnvelopeResponse {
+  return Boolean(
+    response &&
+      typeof response === "object" &&
+      "operation" in response &&
+      typeof response.operation === "string" &&
+      response.operation.startsWith("conversation."),
+  );
 }
 
 function extractClarificationOptions(response: {
@@ -339,44 +354,6 @@ function targetKeyVariants(value: string) {
   const normalized = normalizeTargetKey(value);
   const parts = normalized.split(".");
   return new Set([normalized, parts[parts.length - 1] ?? normalized]);
-}
-
-function buildSourceAttributesForChat(mapping: MappingState, targetQualifiedName: string) {
-  const table = makeTableRef(targetQualifiedName);
-  const sourceMappings = (mapping.sourceColumns && mapping.sourceColumns.length
-    ? mapping.sourceColumns
-    : (mapping.sourceColumn ?? "")
-        .split(",")
-        .map((part) => part.trim())
-        .filter(Boolean))
-    .map((value) => {
-      const parts = value.split(".");
-      if (parts.length >= 4) {
-        const [database, schema, tableName, ...attributeParts] = parts;
-        return {
-          table: { database, schema, table: tableName },
-          attribute: attributeParts.join("."),
-        };
-      }
-      if (parts.length >= 2) {
-        return {
-          table,
-          attribute: parts.slice(1).join("."),
-        };
-      }
-      return {
-        table,
-        attribute: value,
-      };
-    });
-
-  return {
-    target_table: table,
-    target_attribute: mapping.targetColumn,
-    target_data_type: mapping.targetType ?? null,
-    target_description: mapping.description ?? null,
-    source_mappings: sourceMappings.length ? sourceMappings : null,
-  };
 }
 
 function isTransformationPrompt(text: string) {
@@ -1502,20 +1479,6 @@ export const sendChatMessage = createAsyncThunk(
       .filter((table) => table.isSelected)
       .map((table) => makeTableRef(table.qualifiedName));
     const selectedMappingIds = state.selectedMappingIds;
-    const scopedAttributes =
-      state.targetAttributeGroup?.qualifiedName
-        ? state.mappings
-            .filter((mapping) =>
-              selectedMappingIds.length > 0
-                ? selectedMappingIds.includes(mapping.id)
-                : state.activeMappingId
-                  ? mapping.id === state.activeMappingId
-                  : false,
-            )
-            .map((mapping) =>
-              buildSourceAttributesForChat(mapping, state.targetAttributeGroup!.qualifiedName),
-            )
-        : null;
     const selectedDerivedSourceIds = getSelectedDerivedSourceIds(state.derivedSources);
     const relationships = buildRelationshipPayload(state.relationships);
     const surface = state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION";
@@ -1533,10 +1496,7 @@ export const sendChatMessage = createAsyncThunk(
       ...selectedDerivedSourceIds,
     ];
     const shouldUseStructuredTransformationIntent =
-      surface === "MAPPING" &&
-      !!scopedAttributes?.length &&
-      isTransformationPrompt(loweredMessage);
-    const requestInterface: STTMIntent = shouldUseStructuredTransformationIntent ? "TRANSFORM" : "CHAT";
+      surface === "MAPPING" && isTransformationPrompt(loweredMessage);
     let semanticRefresh: SemanticRefreshResult | null = null;
     let semanticBundleId = state.semanticBundleId;
     let semanticViewName = state.semanticViewName;
@@ -1578,20 +1538,21 @@ export const sendChatMessage = createAsyncThunk(
         }
       }
 
-      let response = null as Awaited<ReturnType<typeof workbenchService.invoke>> | null;
-      for await (const event of workbenchService.invokeStream({
-        interface: requestInterface,
+      let response = null as AssistantEnvelopeResponse | null;
+      for await (const event of conversationService.invokeStream({
+        operation: loweredMessage.includes("recommend") ? "conversation.recommend" : "conversation.ask",
         thread_id: threadId,
         parent_message_id: threadId ? parentMessageId : null,
         message: trimmed,
-        attributes: scopedAttributes,
         source_tables: selectedSourceTables,
         target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
         driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
         relationships,
         selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
         selected_derived_sources: selectedDerivedSourceIds,
+        requested_sources: ["relationships", "semantic", "recommendations", "feedback", "conversations"],
         semantic_context: state.semanticContextItems,
+        semantic_bundle_label: state.semanticBundleLabel,
         semantic_bundle_id: semanticBundleId,
         semantic_view_name: semanticViewName,
         derived_source_lineage: state.semanticLineage,
@@ -1619,14 +1580,14 @@ export const sendChatMessage = createAsyncThunk(
           continue;
         }
         if (event.event === "error") {
-          throw new Error(event.data.message || "Streaming agent request failed.");
+          throw new Error(event.data.message || "Streaming assistant request failed.");
         }
         if (event.event === "final") {
-          response = event.data;
+          response = event.data as AssistantEnvelopeResponse;
         }
       }
       if (!response) {
-        throw new Error("The STTM agent stream ended without a final response.");
+        throw new Error("The assistant stream ended without a final response.");
       }
       return {
         userMessage: trimmed,
@@ -1640,7 +1601,7 @@ export const sendChatMessage = createAsyncThunk(
     } catch (err) {
       const errorMessage = getErrorMessage(
         err,
-        "I could not reach the STTM agent just now. Please try again."
+        "I could not reach the assistant just now. Please try again."
       );
       dispatch(
         assistantStreamFailed({
@@ -1656,6 +1617,52 @@ export const sendChatMessage = createAsyncThunk(
       });
     }
   }
+);
+
+export const submitChatFeedback = createAsyncThunk(
+  "sttmBuilder/submitChatFeedback",
+  async (
+    payload: { messageId: string; requestId?: string | null; conversationId?: string | null; rating: number; comment?: string | null },
+    { getState, rejectWithValue },
+  ) => {
+    const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
+    try {
+      const response = await conversationService.invoke({
+        operation: "conversation.feedback",
+        message: "",
+        thread_id: payload.conversationId ?? state.agentThreadId,
+        source_tables: state.sources
+          .filter((table) => table.isSelected)
+          .map((table) => makeTableRef(table.qualifiedName)),
+        relationships: buildRelationshipPayload(state.relationships),
+        selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
+        selected_derived_sources: getSelectedDerivedSourceIds(state.derivedSources),
+        semantic_context: state.semanticContextItems,
+        semantic_bundle_id: state.semanticBundleId,
+        semantic_bundle_label: state.semanticBundleLabel,
+        semantic_view_name: state.semanticViewName,
+        derived_source_lineage: state.semanticLineage,
+        datahub_context: state.semanticDatahubContext,
+        surface: state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION",
+        semantic_level_requested: (state.semanticLevel as any) ?? "L1_CONTEXT",
+        feedback: {
+          category: "agent_quality",
+          rating: payload.rating,
+          comment: payload.comment ?? null,
+          target_request_id: payload.requestId ?? null,
+        },
+      });
+      return {
+        messageId: payload.messageId,
+        requestId: response.request_id ?? payload.requestId ?? null,
+      };
+    } catch (err) {
+      return rejectWithValue({
+        messageId: payload.messageId,
+        errorMessage: getErrorMessage(err, "Could not save feedback right now."),
+      });
+    }
+  },
 );
 
 // ─── slice ─────────────────────────────────────────────────────────
@@ -1743,6 +1750,14 @@ export const sttmBuilderSlice = createSlice({
         status: "failed",
         isStreaming: false,
       });
+    },
+    setChatMessageFeedbackStatus: (
+      state,
+      action: PayloadAction<{ messageId: string; feedbackStatus: "idle" | "sent" | "failed" }>
+    ) => {
+      const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
+      if (!message) return;
+      message.feedbackStatus = action.payload.feedbackStatus;
     },
     autoMapStreamStatus: (
       state,
@@ -2368,7 +2383,33 @@ export const sttmBuilderSlice = createSlice({
         if (action.payload.semanticRefresh) {
           applySemanticRefreshToState(state, action.payload.semanticRefresh);
         }
-        state.agentThreadId = action.payload.response.thread_id;
+        if (isConversationEnvelopeResponse(action.payload.response)) {
+          const conversationResponse = action.payload.response;
+          state.agentThreadId =
+            conversationResponse.data?.artifact?.conversation_id ??
+            (typeof conversationResponse.context?.thread_id === "string"
+              ? conversationResponse.context.thread_id
+              : state.agentThreadId);
+          state.agentParentMessageId = null;
+          if (action.payload.messageId) {
+            const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
+            if (message) {
+              message.content = (conversationResponse.data?.message ?? "").trim();
+              message.status =
+                (conversationResponse.data?.status as "completed" | "needs_input" | "failed" | undefined) ??
+                "completed";
+              message.options =
+                conversationResponse.data?.artifact?.quick_replies?.map((item) => String(item)).filter(Boolean) ??
+                [];
+              message.isStreaming = false;
+              message.requestId = conversationResponse.request_id ?? null;
+              message.conversationId = conversationResponse.data?.artifact?.conversation_id ?? null;
+              message.feedbackStatus = "idle";
+            }
+          }
+          return;
+        }
+
         state.agentParentMessageId =
           action.payload.response.parent_message_id ??
           action.payload.response.context?.parent_message_id ??
@@ -2477,6 +2518,18 @@ export const sttmBuilderSlice = createSlice({
         if (payload?.semanticRefresh) {
           applySemanticRefreshToState(state, payload.semanticRefresh);
         }
+      })
+      .addCase(submitChatFeedback.fulfilled, (state, action) => {
+        const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
+        if (!message) return;
+        message.feedbackStatus = "sent";
+      })
+      .addCase(submitChatFeedback.rejected, (state, action) => {
+        const payload = action.payload as { messageId?: string } | undefined;
+        if (!payload?.messageId) return;
+        const message = state.chatMessages.find((item) => item.id === payload.messageId);
+        if (!message) return;
+        message.feedbackStatus = "failed";
       });
   },
 });
@@ -2488,6 +2541,7 @@ export const {
   assistantStreamOptions,
   assistantStreamFinished,
   assistantStreamFailed,
+  setChatMessageFeedbackStatus,
   autoMapStreamStatus,
   applySemanticRefresh,
   toggleSource,

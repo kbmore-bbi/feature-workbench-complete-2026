@@ -49,6 +49,7 @@ AGENT_SPECS = [
 SKILL_DIRECTORIES = [
     ROOT_DIR / "infra/snowflake/skills/sttm_bundle_orchestration",
     ROOT_DIR / "infra/snowflake/skills/derived_source_analyst",
+    ROOT_DIR / "infra/snowflake/skills/live_feedback_and_recommendations",
 ]
 
 

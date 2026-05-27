@@ -5,6 +5,9 @@ import { dbService } from "@/services/dbService";
 import { workbenchService, type TableRef } from "@/services/workbenchService";
 import { authService } from "@/services/authService";
 import type {
+  AssistantInferenceRecord,
+  AssistantPreferenceState,
+  AssistantSignal,
   ConversationEnvelopeResponse,
   SemanticContextItem,
   SourceMappingResult,
@@ -922,6 +925,10 @@ type SttmBuilderState = {
 
   chatMessages: ChatMessage[];
   chatLoading: boolean;
+  assistantSignals: AssistantSignal[];
+  assistantInferences: AssistantInferenceRecord[];
+  assistantPreferences: AssistantPreferenceState;
+  assistantUnreadCount: number;
   agentThreadId: string | null;
   agentParentMessageId: number | null;
   semanticBundleId: string | null;
@@ -1083,6 +1090,13 @@ const initialState: SttmBuilderState = {
     },
   ],
   chatLoading: false,
+  assistantSignals: [],
+  assistantInferences: [],
+  assistantPreferences: {
+    feedback_enabled: true,
+    recommendations_enabled: true,
+  },
+  assistantUnreadCount: 0,
   agentThreadId: null,
   agentParentMessageId: null,
   semanticBundleId: null,
@@ -1121,6 +1135,21 @@ const initialState: SttmBuilderState = {
   pendingAiMappingReviews: [],
   autoMapStatusMessage: null,
 };
+
+function applyAssistantSignalsData(
+  state: SttmBuilderState,
+  payload: {
+    settings: AssistantPreferenceState;
+    signals: AssistantSignal[];
+    inferences: AssistantInferenceRecord[];
+    unread_count: number;
+  },
+) {
+  state.assistantPreferences = payload.settings;
+  state.assistantSignals = payload.signals;
+  state.assistantInferences = payload.inferences;
+  state.assistantUnreadCount = payload.unread_count;
+}
 
 // ─── async thunks ──────────────────────────────────────────────────
 
@@ -1540,7 +1569,7 @@ export const sendChatMessage = createAsyncThunk(
 
       let response = null as AssistantEnvelopeResponse | null;
       for await (const event of conversationService.invokeStream({
-        operation: loweredMessage.includes("recommend") ? "conversation.recommend" : "conversation.ask",
+        operation: "conversation.ask",
         thread_id: threadId,
         parent_message_id: threadId ? parentMessageId : null,
         message: trimmed,
@@ -1662,6 +1691,94 @@ export const submitChatFeedback = createAsyncThunk(
         messageId: payload.messageId,
         errorMessage: getErrorMessage(err, "Could not save feedback right now."),
       });
+    }
+  },
+);
+
+export const fetchAssistantSignals = createAsyncThunk(
+  "sttmBuilder/fetchAssistantSignals",
+  async (_, { rejectWithValue }) => {
+    try {
+      return await conversationService.listSignals();
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err, "Could not load assistant signals."));
+    }
+  },
+);
+
+export const updateAssistantPreferences = createAsyncThunk(
+  "sttmBuilder/updateAssistantPreferences",
+  async (settings: AssistantPreferenceState, { rejectWithValue }) => {
+    try {
+      return await conversationService.updateAssistantSettings(settings);
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err, "Could not update assistant settings."));
+    }
+  },
+);
+
+export const evaluateAssistantSignals = createAsyncThunk(
+  "sttmBuilder/evaluateAssistantSignals",
+  async (_, { getState, rejectWithValue }) => {
+    const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
+    try {
+      const selectedSourceTables = state.sources
+        .filter((table) => table.isSelected)
+        .map((table) => makeTableRef(table.qualifiedName));
+      const selectedDerivedSourceIds = getSelectedDerivedSourceIds(state.derivedSources);
+      const selectedTargetTable = state.targets.find((table) => table.isSelected);
+      return await conversationService.evaluateSignals({
+        activity_type: state.targetAttributeGroup ? "mapping_context_changed" : "selection_changed",
+        page: state.targetAttributeGroup ? "mapping" : "builder",
+        source_tables: selectedSourceTables,
+        target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
+        driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
+        relationships: buildRelationshipPayload(state.relationships),
+        selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
+        selected_derived_sources: selectedDerivedSourceIds,
+        semantic_bundle_id: state.semanticBundleId,
+        semantic_bundle_label: state.semanticBundleLabel,
+        semantic_view_name: state.semanticViewName,
+        surface: state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION",
+        mapping_summary: {
+          mapped_count: state.mappings.filter((item) => item.status === "MAPPED").length,
+          unmapped_count: state.mappings.filter((item) => item.status !== "MAPPED").length,
+          selected_mapping_count: state.selectedMappingIds.length,
+        },
+      });
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err, "Could not evaluate assistant signals."));
+    }
+  },
+);
+
+export const respondToAssistantSignal = createAsyncThunk(
+  "sttmBuilder/respondToAssistantSignal",
+  async (
+    payload: {
+      signalId: string;
+      status?: "acknowledged" | "responded" | "dismissed";
+      optionSelected?: string | null;
+      rating?: number | null;
+      comment?: string | null;
+    },
+    { rejectWithValue },
+  ) => {
+    try {
+      await conversationService.respondToSignal({
+        signal_id: payload.signalId,
+        status: payload.status ?? "responded",
+        option_selected: payload.optionSelected ?? null,
+        rating: payload.rating ?? null,
+        comment: payload.comment ?? null,
+        feedback_type: "business_context",
+      });
+      return {
+        signalId: payload.signalId,
+        status: payload.status ?? "responded",
+      };
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err, "Could not save assistant signal response."));
     }
   },
 );
@@ -2533,6 +2650,22 @@ export const sttmBuilderSlice = createSlice({
         const message = state.chatMessages.find((item) => item.id === payload.messageId);
         if (!message) return;
         message.feedbackStatus = "failed";
+      })
+      .addCase(fetchAssistantSignals.fulfilled, (state, action) => {
+        applyAssistantSignalsData(state, action.payload);
+      })
+      .addCase(updateAssistantPreferences.fulfilled, (state, action) => {
+        state.assistantPreferences = action.payload.settings;
+      })
+      .addCase(evaluateAssistantSignals.fulfilled, (state, action) => {
+        applyAssistantSignalsData(state, action.payload);
+      })
+      .addCase(respondToAssistantSignal.fulfilled, (state, action) => {
+        const signal = state.assistantSignals.find((item) => item.signal_id === action.payload.signalId);
+        if (signal) {
+          signal.status = action.payload.status as any;
+        }
+        state.assistantUnreadCount = state.assistantSignals.filter((item) => item.status === "new").length;
       });
   },
 });

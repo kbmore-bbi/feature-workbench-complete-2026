@@ -209,7 +209,12 @@ export type ConversationOperation =
   | "conversation.ask"
   | "conversation.recommend"
   | "conversation.feedback"
-  | "conversation.handoff.sttm";
+  | "conversation.handoff.sttm"
+  | "conversation.settings.get"
+  | "conversation.settings.update"
+  | "conversation.signals.list"
+  | "conversation.signals.evaluate"
+  | "conversation.signals.respond";
 
 export type ConversationIntentClass =
   | "quick_answer"
@@ -251,6 +256,48 @@ export type ConversationArtifact = {
   route_reason?: string | null;
   route_confidence?: number | null;
   suggested_operation?: string | null;
+  feedback_requested?: boolean;
+  signal_id?: string | null;
+};
+
+export type AssistantPreferenceState = {
+  feedback_enabled: boolean;
+  recommendations_enabled: boolean;
+};
+
+export type AssistantSignalType = "feedback" | "recommendation";
+export type AssistantSignalStatus = "new" | "acknowledged" | "responded" | "dismissed";
+
+export type AssistantSignal = {
+  signal_id: string;
+  signal_type: AssistantSignalType;
+  layer: "feedback" | "inference" | "recommendation";
+  status: AssistantSignalStatus;
+  source: string;
+  title: string;
+  message: string;
+  options: string[];
+  allow_free_text?: boolean;
+  requires_response?: boolean;
+  confidence?: number | null;
+  entity_type?: string | null;
+  entity_ids?: string[];
+  inference_id?: string | null;
+  recommendation_id?: string | null;
+  attributes?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AssistantInferenceRecord = {
+  inference_id: string;
+  inference_type: string;
+  summary: string;
+  confidence?: number | null;
+  source: string;
+  entity_type?: string | null;
+  entity_ids?: string[];
+  attributes?: Record<string, unknown>;
 };
 
 export type ConversationRequestData = {
@@ -274,6 +321,23 @@ export type ConversationResponseData = {
   approval_required?: boolean;
   artifact?: ConversationArtifact | null;
   citations?: EvidenceCitation[];
+};
+
+export type ConversationSettingsResponseData = {
+  settings: AssistantPreferenceState;
+};
+
+export type ConversationSignalsResponseData = {
+  settings: AssistantPreferenceState;
+  signals: AssistantSignal[];
+  inferences: AssistantInferenceRecord[];
+  unread_count: number;
+};
+
+export type AssistantSignalResponseData = {
+  signal_id: string;
+  status: AssistantSignalStatus;
+  feedback_recorded?: boolean;
 };
 
 export type ConversationEnvelopeRequest = ApiEnvelope<

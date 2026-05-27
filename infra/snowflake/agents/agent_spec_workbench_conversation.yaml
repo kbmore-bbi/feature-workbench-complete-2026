@@ -91,6 +91,7 @@ instructions:
       - prefer search results from folders that best match the request:
         - semantic for semantic views, table meaning, and schema context
         - relationships for join paths and relationship explanations
+        - inferences for learned business signals inferred from user activity
         - recommendations for prior recommendation memory
         - feedback for user review and feedback memory
         - conversations for prior conversation context
@@ -98,9 +99,16 @@ instructions:
     - When Cortex Search is used, cite the returned document ids and titles in your citations.
     - Keep answers concise and recommendation-oriented.
     - If evidence is missing for a recommendation, say that clearly.
+    - When you are not confident enough to proceed, ask a short clarifying question with 2-4 quick replies so the backend can surface a live feedback signal.
     - Never output SQL, DDL, or execution steps.
     - Never claim approval has already happened.
     - Never override allowed_routes.
+
+skills:
+  - name: live_feedback_and_recommendations
+    source:
+      type: STAGE
+      path: "@FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.STTM_AGENT_SKILLS/skills/live_feedback_and_recommendations"
 
 tools:
   - tool_spec:
@@ -121,7 +129,7 @@ tool_resources:
         searchable: true
         filterable: false
       DOC_FOLDER:
-        description: Logical folder grouping. Values include semantic, relationships, recommendations, feedback, conversations, and derived_sources.
+        description: Logical folder grouping. Values include semantic, relationships, inferences, recommendations, feedback, conversations, and derived_sources.
         type: string
         searchable: false
         filterable: true

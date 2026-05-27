@@ -358,6 +358,7 @@ export default function AIAgentPanel({
   onToggleExpanded?: () => void;
 }) {
   const {
+    assistantSignals,
     chatLoading,
     chatMessages,
     datahubStatus,
@@ -374,12 +375,14 @@ export default function AIAgentPanel({
     semanticStatus,
     semanticViewName,
     selectedSourceCount,
+    respondToAssistantSignal,
     sendChatMessage,
     submitChatFeedback,
   } = useSttmBuilderContext();
   const [draft, setDraft] = useState("");
   const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
   const [pendingFeedback, setPendingFeedback] = useState<Record<string, { rating: number; comment: string }>>({});
+  const [pendingSignalResponses, setPendingSignalResponses] = useState<Record<string, { optionSelected?: string | null; rating?: number | null; comment: string }>>({});
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const statsLabel = useMemo(() => {
@@ -482,6 +485,64 @@ export default function AIAgentPanel({
     setPendingFeedback((current) => {
       const next = { ...current };
       delete next[messageId];
+      return next;
+    });
+  };
+
+  const startSignalRating = (signalId: string, rating: number) => {
+    setPendingSignalResponses((current) => ({
+      ...current,
+      [signalId]: {
+        rating,
+        optionSelected: current[signalId]?.optionSelected ?? null,
+        comment: current[signalId]?.comment ?? "",
+      },
+    }));
+  };
+
+  const selectSignalOption = (signalId: string, optionSelected: string) => {
+    setPendingSignalResponses((current) => ({
+      ...current,
+      [signalId]: {
+        rating: current[signalId]?.rating ?? null,
+        optionSelected,
+        comment: current[signalId]?.comment ?? "",
+      },
+    }));
+  };
+
+  const changeSignalComment = (signalId: string, comment: string) => {
+    setPendingSignalResponses((current) => ({
+      ...current,
+      [signalId]: {
+        rating: current[signalId]?.rating ?? null,
+        optionSelected: current[signalId]?.optionSelected ?? null,
+        comment,
+      },
+    }));
+  };
+
+  const submitSignalResponse = (signalId: string) => {
+    const pending = pendingSignalResponses[signalId];
+    respondToAssistantSignal({
+      signalId,
+      status: "responded",
+      optionSelected: pending?.optionSelected ?? null,
+      rating: pending?.rating ?? null,
+      comment: pending?.comment?.trim() || null,
+    });
+    setPendingSignalResponses((current) => {
+      const next = { ...current };
+      delete next[signalId];
+      return next;
+    });
+  };
+
+  const dismissSignal = (signalId: string) => {
+    respondToAssistantSignal({ signalId, status: "dismissed" });
+    setPendingSignalResponses((current) => {
+      const next = { ...current };
+      delete next[signalId];
       return next;
     });
   };
@@ -682,6 +743,110 @@ export default function AIAgentPanel({
           backgroundColor: "#ffffff",
         }}
       >
+        {assistantSignals.length > 0 ? (
+          <Stack spacing={1.5}>
+            {assistantSignals.map((signal) => {
+              const draftResponse = pendingSignalResponses[signal.signal_id];
+              const thumbsUpSelected = draftResponse?.rating === 5;
+              const thumbsDownSelected = draftResponse?.rating === 1;
+              return (
+                <Paper
+                  key={signal.signal_id}
+                  elevation={0}
+                  sx={{
+                    p: 1.5,
+                    borderRadius: 2,
+                    border: signal.signal_type === "recommendation" ? "1px solid #bfdbfe" : "1px solid #fecaca",
+                    backgroundColor: signal.signal_type === "recommendation" ? "#eff6ff" : "#fff7f7",
+                  }}
+                >
+                  <Stack spacing={1}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                      {signal.signal_type === "recommendation" ? (
+                        <TipsAndUpdatesOutlinedIcon sx={{ fontSize: 18, color: "#2563eb" }} />
+                      ) : (
+                        <HelpOutlineOutlinedIcon sx={{ fontSize: 18, color: "#dc2626" }} />
+                      )}
+                      <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>
+                        {signal.title}
+                      </Typography>
+                    </Stack>
+                    <Typography sx={{ fontSize: 13, color: "#334155", lineHeight: 1.55 }}>
+                      {signal.message}
+                    </Typography>
+                    {signal.options?.length ? (
+                      <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+                        {signal.options.map((option) => {
+                          const selected = draftResponse?.optionSelected === option;
+                          return (
+                            <Button
+                              key={option}
+                              size="small"
+                              variant={selected ? "contained" : "outlined"}
+                              onClick={() => selectSignalOption(signal.signal_id, option)}
+                              sx={{ borderRadius: 999, textTransform: "none" }}
+                            >
+                              {option}
+                            </Button>
+                          );
+                        })}
+                      </Stack>
+                    ) : null}
+                    {signal.signal_type === "recommendation" ? (
+                      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                        <IconButton
+                          size="small"
+                          onClick={() => startSignalRating(signal.signal_id, 5)}
+                          sx={{ color: thumbsUpSelected ? "#16a34a" : "#64748b" }}
+                        >
+                          <ThumbUpAltOutlinedIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          onClick={() => startSignalRating(signal.signal_id, 1)}
+                          sx={{ color: thumbsDownSelected ? "#dc2626" : "#64748b" }}
+                        >
+                          <ThumbDownAltOutlinedIcon fontSize="small" />
+                        </IconButton>
+                        <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+                          Was this recommendation useful?
+                        </Typography>
+                      </Stack>
+                    ) : null}
+                    {(signal.allow_free_text || draftResponse?.rating || draftResponse?.optionSelected) ? (
+                      <TextField
+                        size="small"
+                        placeholder="Add a business comment or type your own answer"
+                        value={draftResponse?.comment ?? ""}
+                        onChange={(event) => changeSignalComment(signal.signal_id, event.target.value)}
+                        multiline
+                        minRows={2}
+                      />
+                    ) : null}
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => submitSignalResponse(signal.signal_id)}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Send response
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => dismissSignal(signal.signal_id)}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Dismiss
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              );
+            })}
+          </Stack>
+        ) : null}
         {chatMessages.map((message, index) => {
           const isAssistant = message.role === "assistant";
           const messageId = message.id ?? `${message.role}-${index}-${message.content.slice(0, 24)}`;

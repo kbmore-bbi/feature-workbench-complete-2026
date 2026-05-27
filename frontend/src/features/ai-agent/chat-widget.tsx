@@ -1,14 +1,18 @@
 'use client';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
-    Fab, Popover
+    Badge, Box, Fab, Paper, Popover, Typography
 } from '@mui/material';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import AIAgentPanel from '@/features/ai-agent/ai-agent-panel';
+import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 
 export default function AIAgentPopover() {
     const [anchorEl, setAnchorEl] = useState<HTMLButtonElement | null>(null);
     const [expanded, setExpanded] = useState(false);
+    const fabRef = useRef<HTMLButtonElement | null>(null);
+    const { assistantSignals, assistantUnreadCount } = useSttmBuilderContext();
+    const previewSignal = assistantSignals.find((item) => item.status === 'new') ?? assistantSignals[0] ?? null;
 
     const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
         setAnchorEl(event.currentTarget);
@@ -24,7 +28,46 @@ export default function AIAgentPopover() {
 
     return (
         <>
+            {previewSignal ? (
+                <Paper
+                    elevation={6}
+                    onClick={() => fabRef.current?.click()}
+                    sx={{
+                        position: 'fixed',
+                        right: 24,
+                        bottom: 88,
+                        zIndex: 1200,
+                        width: 320,
+                        px: 2,
+                        py: 1.5,
+                        borderRadius: '14px',
+                        border: '1px solid #fecaca',
+                        backgroundColor: '#fff7f7',
+                        cursor: 'pointer',
+                    }}
+                >
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                        <Badge
+                            color="error"
+                            variant="dot"
+                            invisible={assistantUnreadCount === 0}
+                        >
+                            <SmartToyIcon sx={{ fontSize: 18, color: '#b91c1c' }} />
+                        </Badge>
+                        <Typography sx={{ fontSize: 12, fontWeight: 800, color: '#7f1d1d' }}>
+                            AI assistant notification
+                        </Typography>
+                    </Box>
+                    <Typography sx={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
+                        {previewSignal.title}
+                    </Typography>
+                    <Typography sx={{ mt: 0.5, fontSize: 12, color: '#475569', lineHeight: 1.5 }}>
+                        {previewSignal.message}
+                    </Typography>
+                </Paper>
+            ) : null}
             <Fab
+            ref={fabRef}
             variant="extended"
                 color="primary"
                 aria-describedby={id}
@@ -38,7 +81,14 @@ export default function AIAgentPopover() {
                     '&:hover': { bgcolor: 'var(--aia-secondary-button-colorHover)' }
                 }}
             >
-                <SmartToyIcon />&nbsp;&nbsp;
+                <Badge
+                    color="error"
+                    badgeContent={assistantUnreadCount > 0 ? assistantUnreadCount : null}
+                    sx={{ '& .MuiBadge-badge': { right: -8, top: 6 } }}
+                >
+                    <SmartToyIcon />
+                </Badge>
+                &nbsp;&nbsp;
                 {'AI Assistant'}
             </Fab>
 

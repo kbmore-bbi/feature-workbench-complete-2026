@@ -140,6 +140,18 @@ class Settings(BaseSettings):
         default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RECOMMENDATIONS",
         alias="SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE",
     )
+    snowflake_assistant_inferences_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_INFERENCES",
+        alias="SNOWFLAKE_ASSISTANT_INFERENCES_TABLE",
+    )
+    snowflake_assistant_signals_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SIGNALS",
+        alias="SNOWFLAKE_ASSISTANT_SIGNALS_TABLE",
+    )
+    snowflake_assistant_settings_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SETTINGS",
+        alias="SNOWFLAKE_ASSISTANT_SETTINGS_TABLE",
+    )
     snowflake_relationship_facts_table: str = Field(
         default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RELATIONSHIP_FACTS",
         alias="SNOWFLAKE_RELATIONSHIP_FACTS_TABLE",

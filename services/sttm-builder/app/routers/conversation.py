@@ -16,8 +16,16 @@ from app.schema.conversation import (
     ConversationIndexSyncResponseData,
     ConversationIndexSyncRequestEnvelope,
     ConversationRequestEnvelope,
+    ConversationSettingsRequestEnvelope,
+    ConversationSettingsResponseData,
+    ConversationSignalsEvaluateRequestEnvelope,
+    ConversationSignalsListRequestEnvelope,
+    ConversationSignalsRespondRequestEnvelope,
+    ConversationSignalsResponseData,
     ConversationSearchResponseData,
     ConversationSearchRequestEnvelope,
+    AssistantPreferenceState,
+    AssistantSignalResponseData,
 )
 
 router = APIRouter(prefix="/workbench/conversation", tags=["Conversation"])
@@ -133,4 +141,108 @@ def sync_index(
         actor=normalized.actor,
         context=normalized.context.model_dump(mode="json", exclude_none=True),
         data=service.sync_index(normalized.data),
+    )
+
+
+@router.post("/settings")
+def settings(
+    request: Request,
+    body: ConversationSettingsRequestEnvelope,
+    service: Annotated[ConversationService, Depends(get_conversation_service)],
+) -> ApiResponseEnvelope[ConversationSettingsResponseData]:
+    normalized = body
+    if not normalized.request_id:
+        normalized = normalized.model_copy(update={"request_id": resolve_request_id(request)})
+    principal = get_current_principal(request)
+    actor = ApiActor(user_id=str(principal.user_id), role=principal.app_persona.value)
+    data = (
+        service.update_assistant_settings(
+            user_id=actor.user_id,
+            settings=AssistantPreferenceState.model_validate(
+                normalized.data.model_dump() if hasattr(normalized.data, "model_dump") else (normalized.data or {})
+            ),
+        )
+        if normalized.operation == "conversation.settings.update"
+        else service.get_assistant_settings(user_id=actor.user_id)
+    )
+    return build_response_envelope(
+        operation=normalized.operation,
+        request=request,
+        request_id=normalized.request_id,
+        actor=actor,
+        context=normalized.context.model_dump(mode="json", exclude_none=True),
+        data=data,
+    )
+
+
+@router.post("/signals")
+def list_signals(
+    request: Request,
+    body: ConversationSignalsListRequestEnvelope,
+    service: Annotated[ConversationService, Depends(get_conversation_service)],
+) -> ApiResponseEnvelope[ConversationSignalsResponseData]:
+    normalized = body
+    if not normalized.request_id:
+        normalized = normalized.model_copy(update={"request_id": resolve_request_id(request)})
+    principal = get_current_principal(request)
+    actor = ApiActor(user_id=str(principal.user_id), role=principal.app_persona.value)
+    return build_response_envelope(
+        operation=normalized.operation,
+        request=request,
+        request_id=normalized.request_id,
+        actor=actor,
+        context=normalized.context.model_dump(mode="json", exclude_none=True),
+        data=service.list_signals(user_id=actor.user_id),
+    )
+
+
+@router.post("/signals/evaluate")
+def evaluate_signals(
+    request: Request,
+    body: ConversationSignalsEvaluateRequestEnvelope,
+    service: Annotated[ConversationService, Depends(get_conversation_service)],
+) -> ApiResponseEnvelope[ConversationSignalsResponseData]:
+    normalized = body
+    if not normalized.request_id:
+        normalized = normalized.model_copy(update={"request_id": resolve_request_id(request)})
+    principal = get_current_principal(request)
+    actor = ApiActor(user_id=str(principal.user_id), role=principal.app_persona.value)
+    return build_response_envelope(
+        operation=normalized.operation,
+        request=request,
+        request_id=normalized.request_id,
+        actor=actor,
+        context=normalized.context.model_dump(mode="json", exclude_none=True),
+        data=service.evaluate_signals(
+            request_id=normalized.request_id,
+            conversation_id=normalized.context.thread_id,
+            user_id=actor.user_id,
+            data=normalized.data,
+        ),
+    )
+
+
+@router.post("/signals/respond")
+def respond_to_signal(
+    request: Request,
+    body: ConversationSignalsRespondRequestEnvelope,
+    service: Annotated[ConversationService, Depends(get_conversation_service)],
+) -> ApiResponseEnvelope[AssistantSignalResponseData]:
+    normalized = body
+    if not normalized.request_id:
+        normalized = normalized.model_copy(update={"request_id": resolve_request_id(request)})
+    principal = get_current_principal(request)
+    actor = ApiActor(user_id=str(principal.user_id), role=principal.app_persona.value)
+    return build_response_envelope(
+        operation=normalized.operation,
+        request=request,
+        request_id=normalized.request_id,
+        actor=actor,
+        context=normalized.context.model_dump(mode="json", exclude_none=True),
+        data=service.respond_to_signal(
+            request_id=normalized.request_id,
+            conversation_id=normalized.context.thread_id,
+            user_id=actor.user_id,
+            payload=normalized.data,
+        ),
     )

@@ -5,15 +5,16 @@ import Image from "next/image";
 import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
 import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
 import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
-import { Avatar, Box, IconButton, Tooltip, Typography } from "@mui/material";
+import { Avatar, Box, IconButton, Menu, MenuItem, Switch, Tooltip, Typography } from "@mui/material";
 import { useThemeMode } from "@/app/Providers";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { authService } from "@/services/authService";
 import type { UserSession } from "@/types/user";
 import { CLIENT_CONFIG as config } from "@/config/client.config";
-import { useAppSelector } from "@/store/hooks";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import BuilderContentHeader from "@/features/sttm/layout/builder-content-header";
+import { fetchAssistantSignals, updateAssistantPreferences as updateAssistantPreferencesThunk } from "@/features/sttm/store/sttm-builder-slice";
 
 type AppHeaderProps = {
   userName?: string;
@@ -26,9 +27,11 @@ export default function AppHeader({
 }: AppHeaderProps) {
   const { mode, toggleMode } = useThemeMode();
   const [session, setSession] = useState<UserSession | null>(null);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<HTMLElement | null>(null);
   const pathname = usePathname();
   const router = useRouter();
-  const { sources, targets, mappings, derivedSources } = useAppSelector((state) => state.sttmBuilder);
+  const dispatch = useAppDispatch();
+  const { sources, targets, mappings, derivedSources, assistantPreferences } = useAppSelector((state) => state.sttmBuilder);
 
   useEffect(() => {
     let cancelled = false;
@@ -80,6 +83,8 @@ export default function AppHeader({
     }
     window.dispatchEvent(new CustomEvent("sttm:proceed-to-mapping"));
   };
+
+  const menuOpen = Boolean(menuAnchorEl);
 
   return (
     <Box
@@ -158,35 +163,92 @@ export default function AppHeader({
           </IconButton>
         </Tooltip>
 
-        <Avatar
-          sx={{
-            width: 28,
-            height: 28,
-            bgcolor: "var(--aia-avatar-bg)",
-            color: "var(--aia-avatar-textColor)",
-            fontSize: 12,
-            fontWeight: 700,
-          }}
+        <Box
+          role="button"
+          onClick={(event) => setMenuAnchorEl(event.currentTarget)}
+          sx={{ display: "flex", alignItems: "center", gap: 1.25, cursor: "pointer" }}
         >
-          {initials}
-        </Avatar>
+          <Avatar
+            sx={{
+              width: 28,
+              height: 28,
+              bgcolor: "var(--aia-avatar-bg)",
+              color: "var(--aia-avatar-textColor)",
+              fontSize: 12,
+              fontWeight: 700,
+            }}
+          >
+            {initials}
+          </Avatar>
 
-        <Box className="leading-tight">
-          <Typography
-            className="text-[12px] font-semibold"
-            sx={{ fontFamily: "var(--font-body)" }}
-          >
-            {resolvedUserName}
-          </Typography>
-          <Typography
-            className="text-[11px]/70"
-            sx={{ fontFamily: "var(--font-body)" }}
-          >
-            {resolvedRole}
-          </Typography>
+          <Box className="leading-tight">
+            <Typography
+              className="text-[12px] font-semibold"
+              sx={{ fontFamily: "var(--font-body)" }}
+            >
+              {resolvedUserName}
+            </Typography>
+            <Typography
+              className="text-[11px]/70"
+              sx={{ fontFamily: "var(--font-body)" }}
+            >
+              {resolvedRole}
+            </Typography>
+          </Box>
+
+          <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#ffffff" }} />
         </Box>
 
-        <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#ffffff" }} />
+        <Menu
+          anchorEl={menuAnchorEl}
+          open={menuOpen}
+          onClose={() => setMenuAnchorEl(null)}
+          anchorOrigin={{ vertical: "bottom", horizontal: "right" }}
+          transformOrigin={{ vertical: "top", horizontal: "right" }}
+        >
+          <MenuItem disableRipple sx={{ gap: 2, minWidth: 260 }}>
+            <Box>
+              <Typography sx={{ fontSize: 13, fontWeight: 700 }}>Live feedback</Typography>
+              <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+                Ask business questions from table, join, and derived-source activity.
+              </Typography>
+            </Box>
+            <Switch
+              checked={assistantPreferences.feedback_enabled}
+              onChange={(event) =>
+                dispatch(
+                  updateAssistantPreferencesThunk({
+                    ...assistantPreferences,
+                    feedback_enabled: event.target.checked,
+                  }),
+                ).then(() => {
+                  dispatch(fetchAssistantSignals());
+                })
+              }
+            />
+          </MenuItem>
+          <MenuItem disableRipple sx={{ gap: 2, minWidth: 260 }}>
+            <Box>
+              <Typography sx={{ fontSize: 13, fontWeight: 700 }}>Live recommendations</Typography>
+              <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+                Show proactive join, semantic, and mapping suggestions above the assistant.
+              </Typography>
+            </Box>
+            <Switch
+              checked={assistantPreferences.recommendations_enabled}
+              onChange={(event) =>
+                dispatch(
+                  updateAssistantPreferencesThunk({
+                    ...assistantPreferences,
+                    recommendations_enabled: event.target.checked,
+                  }),
+                ).then(() => {
+                  dispatch(fetchAssistantSignals());
+                })
+              }
+            />
+          </MenuItem>
+        </Menu>
       </Box>
     </Box>
   );

@@ -1,6 +1,9 @@
 
 import type { UserSession } from "@/types/user";
 import type {
+  AssistantInferenceRecord,
+  AssistantPreferenceState,
+  AssistantSignal,
   SemanticContextBundleResponse,
   SemanticContextItem,
   TableRef,
@@ -209,6 +212,13 @@ export type ChatMessage = {
   feedbackRating?: number | null;
 };
 
+export type AssistantSignalDraft = {
+  signalId: string;
+  optionSelected?: string | null;
+  rating?: number | null;
+  comment?: string | null;
+};
+
 export type PendingDerivedSourceDraft = {
   sqlText: string;
   sourceNameSuggestion?: string | null;
@@ -270,6 +280,10 @@ export type SttmBuilderContextValue = {
   // Chat
   chatMessages: ChatMessage[];
   chatLoading: boolean;
+  assistantSignals: AssistantSignal[];
+  assistantInferences: AssistantInferenceRecord[];
+  assistantPreferences: AssistantPreferenceState;
+  assistantUnreadCount: number;
   semanticBundleId: string | null;
   semanticBundleLabel: string | null;
   semanticLevel: string | null;
@@ -305,6 +319,15 @@ export type SttmBuilderContextValue = {
   runAutoMap: () => void;
   sendChatMessage: (message: string) => void;
   submitChatFeedback: (payload: { messageId: string; rating: number; comment?: string | null }) => void;
+  refreshAssistantSignals: () => void;
+  respondToAssistantSignal: (payload: {
+    signalId: string;
+    status?: "acknowledged" | "responded" | "dismissed";
+    optionSelected?: string | null;
+    rating?: number | null;
+    comment?: string | null;
+  }) => void;
+  updateAssistantPreferences: (settings: AssistantPreferenceState) => void;
   openPendingDerivedSourceDraft: () => void;
   acknowledgePendingDerivedSourceDraft: () => void;
   dismissPendingDerivedSourceDraft: () => void;

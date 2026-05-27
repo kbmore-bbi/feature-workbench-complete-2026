@@ -4,9 +4,13 @@ import {
 } from "@/api/axiosInstance";
 import api from "@/api/axiosInstance";
 import type {
+  AssistantPreferenceState,
+  AssistantSignalResponseData,
   ConversationEnvelopeRequest,
   ConversationEnvelopeResponse,
   ConversationOperation,
+  ConversationSettingsResponseData,
+  ConversationSignalsResponseData,
   EvidenceCitation,
   RelationshipContextItem,
   SemanticContextItem,
@@ -198,6 +202,38 @@ export const conversationService = {
         yield parsed as ConversationStreamEvent;
       }
     }
+  },
+  getAssistantSettings: async (): Promise<ConversationSettingsResponseData> => {
+    const envelope = buildApiEnvelope("conversation.settings.get", {}, {}) as ConversationEnvelopeRequest;
+    const response = await api.post("/v1/workbench/conversation/settings", envelope, { timeout: 30000 });
+    return response.data.data as ConversationSettingsResponseData;
+  },
+  updateAssistantSettings: async (settings: AssistantPreferenceState): Promise<ConversationSettingsResponseData> => {
+    const envelope = buildApiEnvelope("conversation.settings.update", settings, {}) as ConversationEnvelopeRequest;
+    const response = await api.post("/v1/workbench/conversation/settings", envelope, { timeout: 30000 });
+    return response.data.data as ConversationSettingsResponseData;
+  },
+  listSignals: async (): Promise<ConversationSignalsResponseData> => {
+    const envelope = buildApiEnvelope("conversation.signals.list", {}, {}) as ConversationEnvelopeRequest;
+    const response = await api.post("/v1/workbench/conversation/signals", envelope, { timeout: 30000 });
+    return response.data.data as ConversationSignalsResponseData;
+  },
+  evaluateSignals: async (payload: Record<string, unknown>): Promise<ConversationSignalsResponseData> => {
+    const envelope = buildApiEnvelope("conversation.signals.evaluate", payload, {}) as ConversationEnvelopeRequest;
+    const response = await api.post("/v1/workbench/conversation/signals/evaluate", envelope, { timeout: 45000 });
+    return response.data.data as ConversationSignalsResponseData;
+  },
+  respondToSignal: async (payload: {
+    signal_id: string;
+    status?: "acknowledged" | "responded" | "dismissed";
+    option_selected?: string | null;
+    rating?: number | null;
+    comment?: string | null;
+    feedback_type?: string;
+  }): Promise<AssistantSignalResponseData> => {
+    const envelope = buildApiEnvelope("conversation.signals.respond", payload, {}) as ConversationEnvelopeRequest;
+    const response = await api.post("/v1/workbench/conversation/signals/respond", envelope, { timeout: 30000 });
+    return response.data.data as AssistantSignalResponseData;
   },
 };
 

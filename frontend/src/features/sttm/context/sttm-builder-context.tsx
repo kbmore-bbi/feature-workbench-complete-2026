@@ -3,6 +3,8 @@
 import { createContext, useContext, useEffect, useMemo } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
+  evaluateAssistantSignals,
+  fetchAssistantSignals,
   fetchDatabases,
   fetchSchemas,
   fetchTables,
@@ -12,6 +14,7 @@ import {
   runAutoMap as runAutoMapThunk,
   sendChatMessage as sendChatMessageThunk,
   submitChatFeedback as submitChatFeedbackThunk,
+  respondToAssistantSignal as respondToAssistantSignalThunk,
   toggleSource as toggleSourceAction,
   selectTarget as selectTargetAction,
   clearSources as clearSourcesAction,
@@ -37,6 +40,7 @@ import {
   bulkSetDirect as bulkSetDirectAction,
   setPreProcessModalOpen as setPreProcessModalOpenAction,
   setMappingSql as setMappingSqlAction,
+  updateAssistantPreferences as updateAssistantPreferencesThunk,
 } from "@/features/sttm/store/sttm-builder-slice";
 import type {
   DerivedSource,
@@ -59,7 +63,35 @@ export function SttmBuilderProvider({
   useEffect(() => {
     dispatch(fetchDatabases());
     dispatch(fetchDerivedSources());
+    dispatch(fetchAssistantSignals());
   }, [dispatch]);
+
+  useEffect(() => {
+    if (!state.loadState.initial || state.loadState.initial === "loading") {
+      return;
+    }
+    if (!state.assistantPreferences.feedback_enabled && !state.assistantPreferences.recommendations_enabled) {
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      dispatch(evaluateAssistantSignals());
+    }, 900);
+    return () => window.clearTimeout(timeoutId);
+  }, [
+    dispatch,
+    state.assistantPreferences.feedback_enabled,
+    state.assistantPreferences.recommendations_enabled,
+    state.chatMessages.length,
+    state.semanticBundleId,
+    state.semanticViewName,
+    state.drivingTableId,
+    state.targetAttributeGroup,
+    state.selectedMappingIds,
+    state.relationships,
+    state.derivedSources,
+    state.sources,
+    state.targets,
+  ]);
 
   const value = useMemo<ContextValue>(() => {
     // Compose fullData from the two branches in Redux
@@ -90,6 +122,10 @@ export function SttmBuilderProvider({
       // Chat
       chatMessages: state.chatMessages,
       chatLoading: state.chatLoading,
+      assistantSignals: state.assistantSignals,
+      assistantInferences: state.assistantInferences,
+      assistantPreferences: state.assistantPreferences,
+      assistantUnreadCount: state.assistantUnreadCount,
       semanticBundleId: state.semanticBundleId,
       semanticBundleLabel: state.semanticBundleLabel,
       semanticLevel: state.semanticLevel,
@@ -170,6 +206,27 @@ export function SttmBuilderProvider({
             conversationId: targetMessage?.conversationId ?? state.agentThreadId,
           }),
         );
+      },
+      refreshAssistantSignals: () => {
+        dispatch(fetchAssistantSignals());
+      },
+      respondToAssistantSignal: ({ signalId, status, optionSelected, rating, comment }) => {
+        dispatch(
+          respondToAssistantSignalThunk({
+            signalId,
+            status,
+            optionSelected: optionSelected ?? null,
+            rating: rating ?? null,
+            comment: comment ?? null,
+          }),
+        ).then(() => {
+          dispatch(fetchAssistantSignals());
+        });
+      },
+      updateAssistantPreferences: (settings) => {
+        dispatch(updateAssistantPreferencesThunk(settings)).then(() => {
+          dispatch(fetchAssistantSignals());
+        });
       },
       openPendingDerivedSourceDraft: () => {
         dispatch(openPendingDerivedSourceDraftAction());

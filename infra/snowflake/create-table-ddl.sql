@@ -437,9 +437,15 @@ CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENC
     REQUEST_ID          STRING,
     TARGET_REQUEST_ID   STRING,
     CONVERSATION_ID     STRING          NOT NULL,
+    SIGNAL_ID           STRING,
+    FEEDBACK_TYPE       STRING          DEFAULT 'agent_quality',
     CATEGORY            STRING          NOT NULL,
+    OPTION_SELECTED     STRING,
     RATING              NUMBER,
     COMMENT             STRING,
+    ENTITY_TYPE         STRING,
+    ENTITY_ID           STRING,
+    SELECTION_CONTEXT   VARIANT,
     USER_ID             STRING,
     CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
 )
@@ -449,15 +455,78 @@ CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENC
     RECOMMENDATION_ID   STRING          NOT NULL,
     REQUEST_ID          STRING,
     CONVERSATION_ID     STRING          NOT NULL,
+    SIGNAL_ID           STRING,
+    RECOMMENDATION_TYPE STRING          DEFAULT 'conversation',
     MESSAGE             STRING,
     CITATIONS           VARIANT,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    CONFIDENCE          FLOAT,
+    ATTRIBUTES          VARIANT,
     APPROVAL_REQUIRED   BOOLEAN         DEFAULT FALSE,
     STATUS              STRING          NOT NULL,
+    REVIEW_RATING       NUMBER,
+    REVIEW_COMMENT      STRING,
+    REVIEW_STATUS       STRING,
     USER_ID             STRING,
     CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
     UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
 )
 COMMENT = 'Structured recommendation records emitted by the conversation workflow.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_INFERENCES (
+    INFERENCE_ID        STRING          NOT NULL,
+    INFERENCE_KEY       STRING          NOT NULL,
+    REQUEST_ID          STRING,
+    CONVERSATION_ID     STRING,
+    SOURCE              STRING          NOT NULL,
+    INFERENCE_TYPE      STRING          NOT NULL,
+    SUMMARY             STRING          NOT NULL,
+    CONFIDENCE          FLOAT,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    ATTRIBUTES          VARIANT,
+    STATUS              STRING          NOT NULL,
+    USER_ID             STRING,
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Structured inference layer bridging activity, feedback, and recommendation generation for the governed assistant.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SIGNALS (
+    SIGNAL_ID           STRING          NOT NULL,
+    SIGNAL_KEY          STRING          NOT NULL,
+    REQUEST_ID          STRING,
+    CONVERSATION_ID     STRING,
+    INFERENCE_ID        STRING,
+    SIGNAL_TYPE         STRING          NOT NULL,
+    LAYER               STRING          NOT NULL,
+    SOURCE              STRING          NOT NULL,
+    STATUS              STRING          NOT NULL,
+    TITLE               STRING          NOT NULL,
+    MESSAGE             STRING          NOT NULL,
+    OPTIONS             VARIANT,
+    ALLOW_FREE_TEXT     BOOLEAN         DEFAULT FALSE,
+    REQUIRES_RESPONSE   BOOLEAN         DEFAULT FALSE,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    CONFIDENCE          FLOAT,
+    ATTRIBUTES          VARIANT,
+    USER_ID             STRING,
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    RESPONDED_AT        TIMESTAMP_NTZ,
+    DISMISSED_AT        TIMESTAMP_NTZ
+)
+COMMENT = 'Live feedback and recommendation notifications surfaced above the AI assistant and linked to user activity or agent uncertainty.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SETTINGS (
+    USER_ID                     STRING          NOT NULL,
+    FEEDBACK_ENABLED            BOOLEAN         DEFAULT TRUE,
+    RECOMMENDATIONS_ENABLED     BOOLEAN         DEFAULT TRUE,
+    UPDATED_AT                  TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Per-user toggles controlling live feedback and recommendation prompts in the workbench UI.';
 
 CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RELATIONSHIP_FACTS (
     RELATIONSHIP_DOC_ID STRING          NOT NULL,

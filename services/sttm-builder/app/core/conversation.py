@@ -28,6 +28,13 @@ from app.guardrails.runtime.postflight import PostflightGuard
 from app.guardrails.runtime.router import DeterministicRouter
 from app.schema.contracts import ApiResponseEnvelope, build_response_envelope
 from app.schema.conversation import (
+    AssistantInferenceRecord,
+    AssistantPreferenceState,
+    AssistantSignal,
+    AssistantSignalResponseData,
+    AssistantSignalResponseInput,
+    AssistantSignalStatus,
+    AssistantSignalType,
     ConversationArtifact,
     ConversationIndexSyncRequestData,
     ConversationIndexSyncResponseData,
@@ -36,10 +43,14 @@ from app.schema.conversation import (
     ConversationRequestEnvelope,
     ConversationResponseData,
     ConversationRoute,
+    ConversationSignalEvaluationData,
+    ConversationSignalsResponseData,
     ConversationSearchRequestData,
     ConversationSearchResponseData,
+    ConversationSettingsResponseData,
     ConversationStatus,
     EvidenceCitation,
+    FeedbackInput,
 )
 from app.schema.sttm_builder import Interface, STTMBuilderEnvelopeRequest, STTMOperation
 
@@ -465,11 +476,109 @@ class ConversationService:
             rebuild_search_service=data.rebuild_search_service,
             include_conversation_docs=data.include_conversation_docs,
             include_feedback_docs=data.include_feedback_docs,
+            include_inference_docs=data.include_inference_docs,
             include_recommendation_docs=data.include_recommendation_docs,
             include_semantic_docs=data.include_semantic_docs,
             include_relationship_docs=data.include_relationship_docs,
         )
+        counts.setdefault("inference_count", 0)
         return ConversationIndexSyncResponseData(**counts)
+
+    def get_assistant_settings(self, *, user_id: str | None) -> ConversationSettingsResponseData:
+        settings = self._memory.get_assistant_settings(user_id=user_id)
+        return ConversationSettingsResponseData(settings=settings)
+
+    def update_assistant_settings(
+        self,
+        *,
+        user_id: str | None,
+        settings: AssistantPreferenceState,
+    ) -> ConversationSettingsResponseData:
+        saved = self._memory.save_assistant_settings(user_id=user_id, settings=settings)
+        return ConversationSettingsResponseData(settings=saved)
+
+    def list_signals(self, *, user_id: str | None) -> ConversationSignalsResponseData:
+        settings = self._memory.get_assistant_settings(user_id=user_id)
+        signals = self._memory.list_signals(user_id=user_id)
+        inferences = self._memory.list_inferences(user_id=user_id)
+        unread_count = sum(1 for item in signals if item.status == AssistantSignalStatus.NEW)
+        return ConversationSignalsResponseData(
+            settings=settings,
+            signals=signals,
+            inferences=inferences,
+            unread_count=unread_count,
+        )
+
+    def evaluate_signals(
+        self,
+        *,
+        request_id: str | None,
+        conversation_id: str | None,
+        user_id: str | None,
+        data: ConversationSignalEvaluationData,
+    ) -> ConversationSignalsResponseData:
+        settings = self._memory.get_assistant_settings(user_id=user_id)
+        self._evaluate_signal_candidates(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            user_id=user_id,
+            settings=settings,
+            data=data,
+        )
+        self._memory.sync_rag_documents(
+            include_conversation_docs=False,
+            include_feedback_docs=True,
+            include_inference_docs=True,
+            include_recommendation_docs=True,
+            include_semantic_docs=False,
+            include_relationship_docs=False,
+        )
+        return self.list_signals(user_id=user_id)
+
+    def respond_to_signal(
+        self,
+        *,
+        request_id: str | None,
+        conversation_id: str | None,
+        user_id: str | None,
+        payload: AssistantSignalResponseInput,
+    ) -> AssistantSignalResponseData:
+        signals = self._memory.list_signals(user_id=user_id, include_resolved=True, limit=50)
+        target = next((item for item in signals if item.signal_id == payload.signal_id), None)
+        if target is None:
+            raise SnowflakeQueryError(f"Signal '{payload.signal_id}' was not found.")
+
+        next_status = AssistantSignalStatus(payload.status)
+        feedback_recorded = False
+        if next_status == AssistantSignalStatus.RESPONDED:
+            self._memory.record_feedback(
+                request_id=request_id,
+                conversation_id=conversation_id or "",
+                feedback=self._build_signal_feedback(target, payload),
+                user_id=user_id,
+            )
+            if target.signal_type == AssistantSignalType.RECOMMENDATION and target.recommendation_id:
+                self._memory.update_recommendation_review(
+                    recommendation_id=target.recommendation_id,
+                    rating=payload.rating,
+                    comment=payload.comment,
+                    status="reviewed",
+                )
+            feedback_recorded = True
+            self._memory.sync_rag_documents(
+                include_conversation_docs=False,
+                include_feedback_docs=True,
+                include_inference_docs=True,
+                include_recommendation_docs=True,
+                include_semantic_docs=False,
+                include_relationship_docs=False,
+            )
+        self._memory.update_signal_status(signal_id=payload.signal_id, status=next_status)
+        return AssistantSignalResponseData(
+            signal_id=payload.signal_id,
+            status=next_status,
+            feedback_recorded=feedback_recorded,
+        )
 
     def _build_handoff_request(
         self,
@@ -1048,11 +1157,17 @@ class ConversationService:
             user_id=user_id,
         )
         if intent_class == ConversationIntentClass.RECOMMENDATION:
-            self._memory.record_recommendation(
+            recommendation_id = self._memory.record_recommendation(
                 request_id=req.request_id,
                 conversation_id=conversation_id,
+                signal_id=artifact.signal_id,
+                recommendation_type="conversation",
                 message=message,
                 citations=citations,
+                entity_type="table_selection" if req.context.source_tables else None,
+                entity_ids=self._selected_table_names(req),
+                confidence=artifact.route_confidence,
+                attributes={"route_reason": artifact.route_reason} if artifact.route_reason else {},
                 approval_required=decision.approval_required,
                 status=status.value,
                 user_id=user_id,
@@ -1060,18 +1175,33 @@ class ConversationService:
             self._memory.sync_rag_documents(
                 include_conversation_docs=False,
                 include_feedback_docs=False,
+                include_inference_docs=False,
                 include_recommendation_docs=True,
                 include_semantic_docs=False,
                 include_relationship_docs=False,
             )
         else:
+            recommendation_id = None
             self._memory.sync_rag_documents(
                 include_conversation_docs=True,
                 include_feedback_docs=False,
+                include_inference_docs=False,
                 include_recommendation_docs=False,
                 include_semantic_docs=False,
                 include_relationship_docs=False,
             )
+        if status == ConversationStatus.NEEDS_INPUT and message:
+            signal_id = self._emit_agent_feedback_signal(
+                request_id=req.request_id,
+                conversation_id=conversation_id,
+                user_id=user_id,
+                message=message,
+                quick_replies=artifact.quick_replies,
+                selected_tables=self._selected_table_names(req),
+            )
+            artifact = artifact.model_copy(update={"feedback_requested": True, "signal_id": signal_id})
+        elif recommendation_id and not artifact.signal_id:
+            artifact = artifact.model_copy(update={"signal_id": recommendation_id})
         response_context = req.context.model_dump(mode="json", exclude_none=True)
         if not response_context.get("thread_id"):
             response_context["thread_id"] = conversation_id
@@ -1174,6 +1304,256 @@ class ConversationService:
             f"{item.database}.{item.schema}.{item.table}".upper()
             for item in (req.context.source_tables or [])
         ]
+
+    def _emit_agent_feedback_signal(
+        self,
+        *,
+        request_id: str | None,
+        conversation_id: str,
+        user_id: str | None,
+        message: str,
+        quick_replies: list[str],
+        selected_tables: list[str],
+    ) -> str:
+        inference_key = f"agent-uncertainty|{conversation_id}|{request_id or ''}|{message.strip().lower()}"
+        inference_id = self._memory.record_inference(
+            inference_key=inference_key,
+            request_id=request_id,
+            conversation_id=conversation_id,
+            source="conversation_agent",
+            inference_type="agent_uncertainty",
+            summary=message,
+            confidence=0.52,
+            entity_type="table_selection" if selected_tables else None,
+            entity_ids=selected_tables,
+            attributes={"quick_replies": quick_replies},
+            status="open",
+            user_id=user_id,
+        )
+        return self._memory.upsert_signal(
+            signal_key=f"signal|{inference_key}",
+            request_id=request_id,
+            conversation_id=conversation_id,
+            inference_id=inference_id,
+            signal_type=AssistantSignalType.FEEDBACK,
+            layer="feedback",
+            source="conversation_agent",
+            title="AI assistant needs business input",
+            message=message,
+            options=quick_replies,
+            allow_free_text=True,
+            requires_response=True,
+            entity_type="table_selection" if selected_tables else None,
+            entity_ids=selected_tables,
+            confidence=0.52,
+            attributes={"origin": "conversation_agent"},
+            recommendation_id=None,
+            user_id=user_id,
+        )
+
+    def _build_signal_feedback(
+        self,
+        signal: AssistantSignal,
+        payload: AssistantSignalResponseInput,
+    ) -> FeedbackInput:
+        entity_id = signal.entity_ids[0] if signal.entity_ids else None
+        return FeedbackInput(
+            category="recommendation" if signal.signal_type == AssistantSignalType.RECOMMENDATION else "general",
+            rating=payload.rating,
+            comment=payload.comment,
+            target_request_id=None,
+            signal_id=signal.signal_id,
+            feedback_type=payload.feedback_type,
+            option_selected=payload.option_selected,
+            entity_type=signal.entity_type,
+            entity_id=entity_id,
+            selection_context={"entity_ids": signal.entity_ids, "source": signal.source},
+        )
+
+    def _evaluate_signal_candidates(
+        self,
+        *,
+        request_id: str | None,
+        conversation_id: str | None,
+        user_id: str | None,
+        settings: AssistantPreferenceState,
+        data: ConversationSignalEvaluationData,
+    ) -> None:
+        selected_tables = [
+            f"{item.database}.{item.schema}.{item.table}".upper()
+            for item in (data.source_tables or [])
+        ]
+        selected_pair = selected_tables[:2]
+        relationship_count = len(data.relationships or [])
+        semantic_ready = bool(data.semantic_bundle_id and data.semantic_view_name)
+        relationship_hits = (
+            self._memory.find_relationships_for_tables(
+                table_names=selected_pair,
+                semantic_bundle_id=data.semantic_bundle_id,
+                limit=1,
+            )
+            if len(selected_pair) >= 2
+            else []
+        )
+
+        if settings.recommendations_enabled and len(selected_pair) >= 2 and relationship_hits:
+            hit = relationship_hits[0]
+            snippet = (hit.snippet or "").strip()
+            inference_key = f"relationship|{hit.doc_id}|{data.activity_type}"
+            inference_id = self._memory.record_inference(
+                inference_key=inference_key,
+                request_id=request_id,
+                conversation_id=conversation_id,
+                source="rule_engine",
+                inference_type="selected_table_relationship",
+                summary=snippet[:400] or f"Known relationship between {selected_pair[0]} and {selected_pair[1]}",
+                confidence=hit.score if hit.score is not None else 0.86,
+                entity_type="table_pair",
+                entity_ids=selected_pair,
+                attributes={
+                    "semantic_bundle_id": data.semantic_bundle_id,
+                    "semantic_view_name": data.semantic_view_name,
+                    "doc_id": hit.doc_id,
+                },
+                status="open",
+                user_id=user_id,
+            )
+            recommendation_message = (
+                f"I found an existing relationship for `{selected_pair[0]}` and `{selected_pair[1]}`. "
+                "Validate this join before mapping and confirm whether the business meaning looks right."
+            )
+            recommendation_id = self._memory.record_recommendation(
+                request_id=request_id,
+                conversation_id=conversation_id or "",
+                signal_id=None,
+                recommendation_type="relationship_validation",
+                message=recommendation_message,
+                citations=[
+                    EvidenceCitation(
+                        source_id=hit.doc_id,
+                        source_type=hit.doc_folder,
+                        snippet=hit.snippet,
+                        score=hit.score,
+                    )
+                ],
+                entity_type="table_pair",
+                entity_ids=selected_pair,
+                confidence=hit.score if hit.score is not None else 0.86,
+                attributes={"doc_type": hit.doc_type},
+                approval_required=False,
+                status="completed",
+                user_id=user_id,
+            )
+            self._memory.upsert_signal(
+                signal_key=f"recommendation|{hit.doc_id}|{data.activity_type}",
+                request_id=request_id,
+                conversation_id=conversation_id,
+                inference_id=inference_id,
+                signal_type=AssistantSignalType.RECOMMENDATION,
+                layer="recommendation",
+                source="rule_engine",
+                title="Recommended next validation step",
+                message=recommendation_message,
+                options=["Explain this relationship", "Looks right", "Needs correction", "I will type it manually"],
+                allow_free_text=True,
+                requires_response=False,
+                entity_type="table_pair",
+                entity_ids=selected_pair,
+                confidence=hit.score if hit.score is not None else 0.86,
+                attributes={"doc_id": hit.doc_id},
+                recommendation_id=recommendation_id,
+                user_id=user_id,
+            )
+
+        if settings.feedback_enabled and len(selected_pair) >= 2:
+            suspicious_join = any(
+                any(str(condition.get("operator") or "=").strip() != "=" for condition in join.get("conditions", []))
+                for join in (data.relationships or [])
+            )
+            if suspicious_join or (relationship_count == 0 and not relationship_hits):
+                summary = (
+                    "The current table pairing either has no confirmed join yet or uses a non-equality condition. "
+                    "Business confirmation will help mature the semantic view."
+                )
+                inference_key = f"feedback|{'|'.join(selected_pair)}|{relationship_count}|{int(suspicious_join)}"
+                inference_id = self._memory.record_inference(
+                    inference_key=inference_key,
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    source="rule_engine",
+                    inference_type="business_relationship_confirmation",
+                    summary=summary,
+                    confidence=0.64 if suspicious_join else 0.58,
+                    entity_type="table_pair",
+                    entity_ids=selected_pair,
+                    attributes={"activity_type": data.activity_type, "surface": data.surface},
+                    status="open",
+                    user_id=user_id,
+                )
+                self._memory.upsert_signal(
+                    signal_key=f"feedback-signal|{inference_key}",
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    inference_id=inference_id,
+                    signal_type=AssistantSignalType.FEEDBACK,
+                    layer="feedback",
+                    source="rule_engine",
+                    title="Help improve these table semantics",
+                    message=(
+                        "Are these selected tables truly related for business mapping, or should the join logic be adjusted?"
+                    ),
+                    options=[
+                        "These tables are related",
+                        "The join should be equality-based",
+                        "These tables are not directly related",
+                        "I will type the correct relationship",
+                    ],
+                    allow_free_text=True,
+                    requires_response=True,
+                    entity_type="table_pair",
+                    entity_ids=selected_pair,
+                    confidence=0.64 if suspicious_join else 0.58,
+                    attributes={"surface": data.surface or "SOURCE_SELECTION"},
+                    recommendation_id=None,
+                    user_id=user_id,
+                )
+
+        if settings.recommendations_enabled and selected_tables and not semantic_ready:
+            inference_key = f"semantic-ready|{'|'.join(selected_tables[:3])}|{data.surface or ''}"
+            inference_id = self._memory.record_inference(
+                inference_key=inference_key,
+                request_id=request_id,
+                conversation_id=conversation_id,
+                source="rule_engine",
+                inference_type="semantic_refresh_recommended",
+                summary="The current selection does not yet have an analyst-ready semantic bundle.",
+                confidence=0.81,
+                entity_type="table_selection",
+                entity_ids=selected_tables[:3],
+                attributes={"surface": data.surface or "SOURCE_SELECTION"},
+                status="open",
+                user_id=user_id,
+            )
+            self._memory.upsert_signal(
+                signal_key=f"recommend-semantic|{inference_key}",
+                request_id=request_id,
+                conversation_id=conversation_id,
+                inference_id=inference_id,
+                signal_type=AssistantSignalType.RECOMMENDATION,
+                layer="recommendation",
+                source="rule_engine",
+                title="Refresh semantic context",
+                message="Generate an analyst-ready semantic bundle now so recommendations, joins, and mapping guidance stay grounded in the current selection.",
+                options=["Refresh semantic context", "Ask AI to explain first", "Dismiss"],
+                allow_free_text=False,
+                requires_response=False,
+                entity_type="table_selection",
+                entity_ids=selected_tables[:3],
+                confidence=0.81,
+                attributes={"surface": data.surface or "SOURCE_SELECTION"},
+                recommendation_id=None,
+                user_id=user_id,
+            )
 
     @staticmethod
     def _is_relationship_question(message: str) -> bool:

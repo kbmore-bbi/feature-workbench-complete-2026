@@ -315,6 +315,31 @@ class DerivedSourceService:
             is_active=True,
         )
 
+    def update_semantic_metadata(
+        self,
+        *,
+        source_ids: list[str],
+        semantic_bundle_id: str | None,
+        semantic_view_name: str | None,
+        semantic_level: str | None,
+    ) -> None:
+        if not source_ids:
+            return
+        self.ensure_table_exists()
+        ids_sql = ", ".join(self._quote_literal(source_id) for source_id in source_ids if source_id)
+        if not ids_sql:
+            return
+        self._session.sql(
+            f"""
+            UPDATE {self._table_name}
+            SET SEMANTIC_BUNDLE_ID = {self._quote_literal(semantic_bundle_id or "")},
+                SEMANTIC_VIEW_NAME = {self._quote_literal(semantic_view_name or "")},
+                SEMANTIC_LEVEL = {self._quote_literal(semantic_level or "")},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE DERIVED_SOURCE_ID IN ({ids_sql})
+            """
+        ).collect()
+
     def _current_user(self) -> str:
         try:
             row = self._session.sql("SELECT CURRENT_USER() AS CURRENT_USER").collect()[0]

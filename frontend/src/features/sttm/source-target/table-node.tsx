@@ -183,8 +183,8 @@ function TableNodeComponent({ data, selected }: NodeProps) {
           ) : null}
 
           <div className="tnode__cols">
-            {visibleCols.map((col, index) => {
-              const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}-${index}`;
+            {visibleCols.map((col) => {
+              const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}`;
               const isHighlighted = highlightedColumns.has(String(col.name ?? "").toLowerCase());
               const isActiveColumn = d.activeColumnName === col.name;
               return (

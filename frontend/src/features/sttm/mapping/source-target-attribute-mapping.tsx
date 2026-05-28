@@ -338,28 +338,27 @@ const SourceTargetAttributeMapping = () => {
               const descriptionValue = row.description ?? autoDescription ?? '';
               const descriptionPlaceholder =
                 autoDescription || 'Add description...';
+              const needsAttention =
+                row.status !== 'MAPPED' ||
+                !!row.unmatchedReason ||
+                ((row.confidenceScore ?? 1) < 0.55 && !!row.sourceColumn);
+              const rowTone =
+                row.status === 'MAPPED'
+                  ? needsAttention
+                    ? 'warning'
+                    : 'mapped'
+                  : needsAttention
+                    ? 'unmapped'
+                    : 'neutral';
 
               return (
                 <TableRow
                   key={row.id}
                   hover
                   sx={{
-                    bgcolor: (() => {
-                      if (isSelected) return 'rgba(59, 130, 246, 0.04)';
-                      const needsAttention =
-                        row.status !== 'MAPPED' ||
-                        !!row.unmatchedReason ||
-                        ((row.confidenceScore ?? 1) < 0.55 && !!row.sourceColumn);
-                      return needsAttention ? 'rgba(254, 226, 226, 0.45)' : '#fff';
-                    })(),
+                    bgcolor: isSelected ? 'rgba(59, 130, 246, 0.04)' : '#fff',
                     '&:hover': {
-                      bgcolor: isSelected
-                        ? 'rgba(59, 130, 246, 0.07)'
-                        : row.status !== 'MAPPED' ||
-                            !!row.unmatchedReason ||
-                            ((row.confidenceScore ?? 1) < 0.55 && !!row.sourceColumn)
-                          ? 'rgba(254, 202, 202, 0.55)'
-                          : '#fafafa',
+                      bgcolor: isSelected ? 'rgba(59, 130, 246, 0.07)' : '#fafafa',
                     },
                   }}
                 >
@@ -368,7 +367,7 @@ const SourceTargetAttributeMapping = () => {
                     onChange={() => toggleMappingSelection(row.id)}
                   />
 
-                  <MappingRowIndexCell index={index + 1} />
+                  <MappingRowIndexCell index={index + 1} tone={rowTone} />
 
                   <MappingTargetColumnCell
                     name={row.targetColumn}

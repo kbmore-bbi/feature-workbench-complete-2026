@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   evaluateAssistantSignals,
@@ -58,6 +58,7 @@ export function SttmBuilderProvider({
 }) {
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.sttmBuilder);
+  const lastAssistantSignalSignature = useRef<string | null>(null);
 
   // Load databases on mount
   useEffect(() => {
@@ -66,6 +67,55 @@ export function SttmBuilderProvider({
     dispatch(fetchAssistantSignals());
   }, [dispatch]);
 
+  const assistantSignalSignature = useMemo(() => {
+    const selectedSources = state.sources
+      .filter((table) => table.isSelected)
+      .map((table) => table.qualifiedName)
+      .sort();
+    const selectedDerived = state.derivedSources
+      .filter((source) => source.isSelected)
+      .map((source) => source.id)
+      .sort();
+    const selectedTarget = state.targets.find((table) => table.isSelected)?.qualifiedName ?? null;
+    const relationshipSignature = state.relationships
+      .map((join) =>
+        [
+          join.leftTableId ?? "",
+          join.rightTableId ?? "",
+          join.joinType ?? "INNER",
+          (join.conditions ?? [])
+            .map((condition) => `${condition.leftColumn ?? ""}${condition.operator ?? "="}${condition.rightColumn ?? ""}`)
+            .join("&"),
+        ].join("|"),
+      )
+      .sort();
+
+    return JSON.stringify({
+      page: state.targetAttributeGroup ? "mapping" : "builder",
+      selectedSources,
+      selectedDerived,
+      selectedTarget,
+      drivingTableId: state.drivingTableId,
+      semanticBundleId: state.semanticBundleId,
+      semanticViewName: state.semanticViewName,
+      relationshipSignature,
+      mappedCount: state.mappings.filter((item) => item.status === "MAPPED").length,
+      unmappedCount: state.mappings.filter((item) => item.status !== "MAPPED").length,
+      selectedMappingCount: state.selectedMappingIds.length,
+    });
+  }, [
+    state.sources,
+    state.derivedSources,
+    state.targets,
+    state.drivingTableId,
+    state.semanticBundleId,
+    state.semanticViewName,
+    state.relationships,
+    state.mappings,
+    state.selectedMappingIds,
+    state.targetAttributeGroup,
+  ]);
+
   useEffect(() => {
     if (!state.loadState.initial || state.loadState.initial === "loading") {
       return;
@@ -73,24 +123,20 @@ export function SttmBuilderProvider({
     if (!state.assistantPreferences.feedback_enabled && !state.assistantPreferences.recommendations_enabled) {
       return;
     }
+    if (assistantSignalSignature === lastAssistantSignalSignature.current) {
+      return;
+    }
+    lastAssistantSignalSignature.current = assistantSignalSignature;
     const timeoutId = window.setTimeout(() => {
       dispatch(evaluateAssistantSignals());
-    }, 900);
+    }, 1400);
     return () => window.clearTimeout(timeoutId);
   }, [
+    assistantSignalSignature,
     dispatch,
     state.assistantPreferences.feedback_enabled,
     state.assistantPreferences.recommendations_enabled,
-    state.chatMessages.length,
-    state.semanticBundleId,
-    state.semanticViewName,
-    state.drivingTableId,
-    state.targetAttributeGroup,
-    state.selectedMappingIds,
-    state.relationships,
-    state.derivedSources,
-    state.sources,
-    state.targets,
+    state.loadState.initial,
   ]);
 
   const value = useMemo<ContextValue>(() => {

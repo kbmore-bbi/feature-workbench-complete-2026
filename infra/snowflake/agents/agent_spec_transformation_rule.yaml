@@ -27,6 +27,8 @@ instructions:
     5. If the request is not about transformation rule creation, set rules: [] and respond in message.
     6. Keep the rule scoped to the requested target attribute. Do not rename the target column
        or invent a new output column unless the user explicitly asks for a new output field.
+    7. Do not generate full query SQL. The mapping page already has the Step 1 source SQL and joins.
+       Your output must be the attribute-level expression only.
 
     ## Tool use rules
     - Call GET_SEMANTIC_MODEL first (scope ATTRIBUTE) for each source column.
@@ -66,6 +68,7 @@ instructions:
     Rules:
     - One object per target attribute.
     - rule is a valid SQL expression (e.g. CAST, COALESCE, CONCAT, CASE WHEN).
+    - rule must not contain SELECT, FROM, JOIN, WHERE, GROUP BY, or ORDER BY.
     - description is concise — one sentence maximum.
     - target_attribute must remain the requested target attribute from the input payload.
       Do not substitute a renamed output field unless the user explicitly asked for one.

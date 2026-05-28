@@ -136,7 +136,7 @@ class SemanticContextService:
             SemanticLevel.L3_MAPPING_ENRICHED,
         }
         ):
-            semantic_refresh_tables = self._analyst_source_tables(selected_source_tables)
+            semantic_refresh_tables = self._analyst_source_tables(selected_source_tables, derived_records)
             if agent_client is not None and semantic_refresh_tables:
                 try:
                     self._semantic_model_service.ensure_tables(
@@ -190,7 +190,7 @@ class SemanticContextService:
                 semantic_view_name = existing["semantic_view_name"]
             else:
                 try:
-                    analyst_source_tables = self._analyst_source_tables(selected_source_tables)
+                    analyst_source_tables = self._analyst_source_tables(selected_source_tables, derived_records)
                     if not analyst_source_tables:
                         raise ValueError("analyst-ready promotion requires at least one raw source table")
                     semantic_view_name, analyst_tool_name = self._promote_semantic_view(
@@ -226,6 +226,9 @@ class SemanticContextService:
                 synced_tool_name = self._sync_builder_agent_analyst_tool(
                     bundle_id=bundle_id,
                     semantic_view_name=semantic_view_name,
+                    selected_source_tables=selected_source_tables,
+                    derived_records=derived_records,
+                    target_table=request.target_table,
                 )
                 analyst_tool_name = synced_tool_name or analyst_tool_name
                 if storage_available and analyst_tool_name:
@@ -286,6 +289,17 @@ class SemanticContextService:
                 stale_reason="; ".join(notes) or None,
                 datahub_context=datahub_context,
             )
+            if selected_derived_ids:
+                try:
+                    self._derived_source_service.update_semantic_metadata(
+                        source_ids=selected_derived_ids,
+                        semantic_bundle_id=bundle_id,
+                        semantic_view_name=semantic_view_name,
+                        semantic_level=achieved_level.value,
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning("Failed to update derived-source semantic metadata for %s: %s", bundle_id, exc)
+                    notes.append("derived-source semantic metadata update failed")
 
         return SemanticContextBundleResponse(
             bundle_id=bundle_id,
@@ -586,9 +600,9 @@ class SemanticContextService:
         target_table: TableRef | None,
         semantic_level: SemanticLevel,
     ) -> str:
-        analyst_source_tables = self._analyst_source_tables(selected_source_tables)
+        analyst_source_tables = self._analyst_source_tables(selected_source_tables, derived_records)
         if not analyst_source_tables:
-            raise ValueError("semantic view promotion requires at least one raw source table")
+            raise ValueError("semantic view promotion requires at least one raw or derived-backed source table")
         table_records = self._semantic_model_service.get_table_records(self._session, analyst_source_tables)
         table_records_by_name = {
             f"{record['database']}.{record['schema_name']}.{record['table_name']}": record
@@ -665,6 +679,18 @@ class SemanticContextService:
                     }
                     for item in relationship_columns
                 ]
+                left_unique, right_unique = right_unique, left_unique
+                left_cols = {item["left_column"] for item in relationship_columns}
+                right_cols = {item["right_column"] for item in relationship_columns}
+
+            if right_cols and not right_cols.issubset(right_unique):
+                logger.info(
+                    "Skipping semantic-view relationship %s -> %s because referenced columns are not unique: %s",
+                    left_ref.qualified_name,
+                    right_ref.qualified_name,
+                    sorted(right_cols),
+                )
+                continue
             yaml_relationships.append(
                 {
                     "name": f"rel_{index}_{left_name.lower()}_{right_name.lower()}",
@@ -1209,15 +1235,30 @@ class SemanticContextService:
         )
 
     def _derived_source_tables(self, derived_records: list[Any]) -> list[TableRef]:
-        return []
+        tables: dict[str, TableRef] = {}
+        for record in derived_records:
+            for table in record.base_source_tables or []:
+                if isinstance(table, TableRef):
+                    tables[table.qualified_name.upper()] = table
+        return [tables[key] for key in sorted(tables)]
 
     @staticmethod
     def _derived_table_ref(record: Any) -> TableRef:
         return TableRef(database="DERIVED", schema="DERIVED", table=record.derived_source_id)
 
     @staticmethod
-    def _analyst_source_tables(selected_source_tables: list[TableRef]) -> list[TableRef]:
-        return list(selected_source_tables)
+    def _analyst_source_tables(
+        selected_source_tables: list[TableRef],
+        derived_records: list[Any],
+    ) -> list[TableRef]:
+        tables: dict[str, TableRef] = {
+            table.qualified_name.upper(): table for table in selected_source_tables
+        }
+        for record in derived_records:
+            for table in getattr(record, "base_source_tables", []) or []:
+                if isinstance(table, TableRef):
+                    tables[table.qualified_name.upper()] = table
+        return [tables[key] for key in sorted(tables)]
 
     def _semantic_view_name(
         self,

@@ -210,6 +210,55 @@ def test_conversation_service_hands_off_mapping_requests_to_sttm() -> None:
     assert sttm_service.captured_request.operation.value == "sttm.chat"
 
 
+def test_conversation_service_keeps_free_text_handoffs_chat_shaped_even_for_transform_suggestion() -> None:
+    sttm_service = _FakeSTTMService()
+    memory = _FakeMemoryService()
+    agent = _FakeAgentClient()
+    agent.route_payload = {
+        "data": {
+            "status": "completed",
+            "route": "sttm_builder",
+            "intent_class": "sttm_handoff",
+            "route_reason": "llm_route",
+            "route_confidence": 0.94,
+            "suggested_operation": "sttm.transform",
+        }
+    }
+    service = ConversationService(
+        agent,
+        sttm_builder_service=sttm_service,
+        memory_service=memory,
+        settings=_settings(),
+    )
+    req = ConversationRequestEnvelope.model_validate(
+        {
+            "contract_version": "1.0",
+            "request_id": "req-transform-handoff",
+            "operation": "conversation.ask",
+            "context": {
+                "trace_id": "trace-transform-handoff",
+                "surface": "SOURCE_SELECTION",
+            },
+            "data": {"message": "Create a derived source for these selected tables"},
+        }
+    )
+
+    response = service.invoke(
+        req,
+        governance_decision=GovernanceDecision(
+            trace_id="trace-transform-handoff",
+            request_id="req-transform-handoff",
+            operation="conversation.ask",
+            persona="PUBLISHER",
+        ),
+    )
+
+    assert response["ok"] is True
+    assert sttm_service.captured_request is not None
+    assert sttm_service.captured_request.operation.value == "sttm.chat"
+    assert sttm_service.captured_request.data.intent.value == "CHAT"
+
+
 def test_conversation_service_keeps_relationship_questions_in_conversation_path() -> None:
     sttm_service = _FakeSTTMService()
     memory = _FakeMemoryService()

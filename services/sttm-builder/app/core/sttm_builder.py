@@ -1986,8 +1986,11 @@ def _normalize_source_mappings(raw_result: dict[str, Any]) -> dict[str, Attribut
             confidence_reason=item.get("confidence_reason") or item.get("reason") or item.get("explanation"),
             candidate_source_attributes=candidate_source_attributes,
             unmatched_reason=item.get("unmatched_reason"),
-            preprocessing_rule=item.get("preprocessing_rule") or item.get("rule"),
-            preprocessing_rule_type=item.get("preprocessing_rule_type") or item.get("rule_type"),
+            preprocessing_rule=_sanitize_attribute_level_rule(item.get("preprocessing_rule") or item.get("rule")),
+            preprocessing_rule_type=_sanitize_preprocessing_rule_type(
+                item.get("preprocessing_rule") or item.get("rule"),
+                item.get("preprocessing_rule_type") or item.get("rule_type"),
+            ),
             preprocessing_nl_rule=item.get("preprocessing_nl_rule") or item.get("nl_rule"),
             processing_order=processing_order,
             description=item.get("description"),
@@ -2007,11 +2010,36 @@ def _normalize_transformation_result(raw_result: dict[str, Any]) -> Transformati
         rules.append(
             TransformationRule(
                 target_attribute=str(item.get("target_attribute") or item.get("target_id") or ""),
-                rule=str(item.get("rule") or item.get("transformation_rule") or ""),
+                rule=_sanitize_attribute_level_rule(
+                    str(item.get("rule") or item.get("transformation_rule") or "")
+                ),
                 description=item.get("description"),
             )
         )
     return TransformationResult(rules=rules)
+
+
+def _sanitize_attribute_level_rule(value: Any) -> str:
+    rule = str(value or "").strip()
+    if not rule:
+        return ""
+
+    # Mapping and preprocessing rules must be attribute-level expressions. Step 1 already
+    # owns FROM/JOIN/WHERE construction, so we reject query-shaped SQL here instead of
+    # applying misleading transformations in the mapping grid.
+    if re.search(r"(?i)\b(from|join|where|group\s+by|order\s+by)\b", rule):
+        return ""
+    if re.match(r"(?is)^\s*select\b", rule):
+        return ""
+    return rule
+
+
+def _sanitize_preprocessing_rule_type(rule_value: Any, rule_type: Any) -> str | None:
+    sanitized_rule = _sanitize_attribute_level_rule(rule_value)
+    normalized_type = str(rule_type or "").strip() or None
+    if not sanitized_rule:
+        return None
+    return normalized_type
 
 
 def _confidence_to_score(value: Any) -> float:

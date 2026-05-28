@@ -525,14 +525,6 @@ class ConversationService:
             settings=settings,
             data=data,
         )
-        self._memory.sync_rag_documents(
-            include_conversation_docs=False,
-            include_feedback_docs=True,
-            include_inference_docs=True,
-            include_recommendation_docs=True,
-            include_semantic_docs=False,
-            include_relationship_docs=False,
-        )
         return self.list_signals(user_id=user_id)
 
     def respond_to_signal(
@@ -565,14 +557,6 @@ class ConversationService:
                     status="reviewed",
                 )
             feedback_recorded = True
-            self._memory.sync_rag_documents(
-                include_conversation_docs=False,
-                include_feedback_docs=True,
-                include_inference_docs=True,
-                include_recommendation_docs=True,
-                include_semantic_docs=False,
-                include_relationship_docs=False,
-            )
         self._memory.update_signal_status(signal_id=payload.signal_id, status=next_status)
         return AssistantSignalResponseData(
             signal_id=payload.signal_id,
@@ -589,18 +573,13 @@ class ConversationService:
             self._business_rules.validate_handoff_payload(req.data.model_dump(mode="json", exclude_none=True))
             return req.data.handoff_request
 
-        handoff_operation = STTMOperation.CHAT
-        if route_plan.suggested_operation:
-            try:
-                handoff_operation = STTMOperation(route_plan.suggested_operation)
-            except ValueError:
-                handoff_operation = STTMOperation.CHAT
-
         return STTMBuilderEnvelopeRequest.model_validate(
             {
                 "contract_version": "1.0",
                 "request_id": req.request_id,
-                "operation": handoff_operation.value,
+                # Free-text conversation handoffs must remain chat-shaped. The STTM builder
+                # can then decide how to branch internally with the existing context.
+                "operation": STTMOperation.CHAT.value,
                 "context": {
                     "thread_id": None,
                     "parent_message_id": None,
@@ -636,7 +615,7 @@ class ConversationService:
                     "guardrails": {
                         "conversation_handoff": True,
                         "intent_class": route_plan.intent_class.value,
-                        "suggested_operation": route_plan.suggested_operation,
+                        "suggested_operation": route_plan.suggested_operation or STTMOperation.CHAT.value,
                     }
                 },
             }

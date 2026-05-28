@@ -30,6 +30,9 @@ const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (axios.isCancel(error) || error?.code === "ERR_CANCELED" || error?.name === "CanceledError") {
+      return Promise.reject(error);
+    }
     console.error('Global API Error:', error.response?.data || error.message);
     return Promise.reject(error);
   }

@@ -123,6 +123,17 @@ export function SttmBuilderProvider({
     if (!state.assistantPreferences.feedback_enabled && !state.assistantPreferences.recommendations_enabled) {
       return;
     }
+    const hasSignalContext =
+      state.sources.some((table) => table.isSelected) ||
+      state.derivedSources.some((source) => source.isSelected) ||
+      state.relationships.length > 0 ||
+      !!state.targets.find((table) => table.isSelected) ||
+      !!state.targetAttributeGroup ||
+      state.selectedMappingIds.length > 0 ||
+      state.mappings.length > 0;
+    if (!hasSignalContext) {
+      return;
+    }
     if (assistantSignalSignature === lastAssistantSignalSignature.current) {
       return;
     }

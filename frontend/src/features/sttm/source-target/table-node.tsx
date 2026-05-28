@@ -78,6 +78,14 @@ function TableNodeComponent({ data, selected }: NodeProps) {
   }, [columnSearch, d.columns, d.globalColumnSearch]);
   const visibleCols = expanded ? filteredColumns : filteredColumns.slice(0, MAX_VISIBLE_COLS);
   const hiddenCount = Math.max(filteredColumns.length - MAX_VISIBLE_COLS, 0);
+  const visibleColumnNames = useMemo(
+    () => new Set(visibleCols.map((column) => column.name ?? "")),
+    [visibleCols],
+  );
+  const hiddenHandleColumns = useMemo(
+    () => d.columns.filter((column) => !visibleColumnNames.has(column.name ?? "")),
+    [d.columns, visibleColumnNames],
+  );
 
   return (
     <div 
@@ -168,6 +176,34 @@ function TableNodeComponent({ data, selected }: NodeProps) {
 
       {!columnsCollapsed ? (
         <>
+          {hiddenHandleColumns.length ? (
+            <div
+              aria-hidden
+              style={{ position: "absolute", width: 0, height: 0, overflow: "hidden", opacity: 0, pointerEvents: "none" }}
+            >
+              {hiddenHandleColumns.map((col) => {
+                const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}`;
+                return (
+                  <React.Fragment key={`${columnKey}-hidden`}>
+                    <Handle
+                      type="target"
+                      position={Position.Left}
+                      id={`${columnKey}-target`}
+                      className="tnode__handle tnode__handle--left"
+                      style={{ top: 0 }}
+                    />
+                    <Handle
+                      type="source"
+                      position={Position.Right}
+                      id={`${columnKey}-source`}
+                      className="tnode__handle tnode__handle--right"
+                      style={{ top: 0 }}
+                    />
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          ) : null}
           {d.showColumnSearch ? (
             <div className="tnode__search-wrap" onClick={(event) => event.stopPropagation()}>
               <div className="tnode__search">

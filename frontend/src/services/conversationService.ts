@@ -21,6 +21,8 @@ import type {
 import { mockInvokeStream } from "@/services/mock/workbenchMockData";
 import { throwMockError, useMockDb } from "@/services/mock/mockConfig";
 
+let activeSignalEvaluationController: AbortController | null = null;
+
 export type ConversationRequestPayload = {
   operation?: Extract<ConversationOperation, "conversation.ask" | "conversation.recommend" | "conversation.feedback">;
   thread_id?: string | null;
@@ -219,9 +221,21 @@ export const conversationService = {
     return response.data.data as ConversationSignalsResponseData;
   },
   evaluateSignals: async (payload: Record<string, unknown>): Promise<ConversationSignalsResponseData> => {
+    activeSignalEvaluationController?.abort();
+    const controller = new AbortController();
+    activeSignalEvaluationController = controller;
     const envelope = buildApiEnvelope("conversation.signals.evaluate", payload, {}) as ConversationEnvelopeRequest;
-    const response = await api.post("/v1/workbench/conversation/signals/evaluate", envelope, { timeout: 45000 });
-    return response.data.data as ConversationSignalsResponseData;
+    try {
+      const response = await api.post("/v1/workbench/conversation/signals/evaluate", envelope, {
+        timeout: 12000,
+        signal: controller.signal,
+      });
+      return response.data.data as ConversationSignalsResponseData;
+    } finally {
+      if (activeSignalEvaluationController === controller) {
+        activeSignalEvaluationController = null;
+      }
+    }
   },
   respondToSignal: async (payload: {
     signal_id: string;

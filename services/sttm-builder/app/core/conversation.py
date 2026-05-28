@@ -518,6 +518,8 @@ class ConversationService:
         data: ConversationSignalEvaluationData,
     ) -> ConversationSignalsResponseData:
         settings = self._memory.get_assistant_settings(user_id=user_id)
+        if not self._has_signal_context(data):
+            return self.list_signals(user_id=user_id)
         self._evaluate_signal_candidates(
             request_id=request_id,
             conversation_id=conversation_id,
@@ -526,6 +528,25 @@ class ConversationService:
             data=data,
         )
         return self.list_signals(user_id=user_id)
+
+    @staticmethod
+    def _has_signal_context(data: ConversationSignalEvaluationData) -> bool:
+        if data.source_tables:
+            return True
+        if data.selected_derived_sources:
+            return True
+        if data.target_table is not None:
+            return True
+        if data.relationships:
+            return True
+        mapping_summary = data.mapping_summary or {}
+        try:
+            selected_mapping_count = int(mapping_summary.get("selected_mapping_count") or 0)
+            mapped_count = int(mapping_summary.get("mapped_count") or 0)
+            unmapped_count = int(mapping_summary.get("unmapped_count") or 0)
+        except (TypeError, ValueError):
+            selected_mapping_count = mapped_count = unmapped_count = 0
+        return any((selected_mapping_count, mapped_count, unmapped_count))
 
     def respond_to_signal(
         self,

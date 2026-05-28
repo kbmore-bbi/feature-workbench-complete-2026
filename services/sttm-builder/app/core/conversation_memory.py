@@ -22,6 +22,8 @@ from app.schema.conversation import (
 
 
 class ConversationMemoryService:
+    _ensured_storage_keys: set[str] = set()
+
     def __init__(self, session: Session, settings: Settings) -> None:
         self._session = session
         self._settings = settings
@@ -116,6 +118,20 @@ class ConversationMemoryService:
         return self._qualified_name(self._settings.snowflake_derived_sources_table)
 
     def ensure_storage_exists(self) -> None:
+        storage_key = "|".join(
+            [
+                self._settings.snowflake_conversation_turns_table,
+                self._settings.snowflake_conversation_feedback_table,
+                self._settings.snowflake_conversation_recommendations_table,
+                self._settings.snowflake_assistant_inferences_table,
+                self._settings.snowflake_assistant_signals_table,
+                self._settings.snowflake_assistant_settings_table,
+                self._settings.snowflake_relationship_facts_table,
+                self._settings.snowflake_rag_documents_table,
+            ]
+        )
+        if storage_key in self._ensured_storage_keys:
+            return
         statements = [
             f"""
             CREATE TABLE IF NOT EXISTS {self._turns_table} (
@@ -265,6 +281,7 @@ class ConversationMemoryService:
         ]
         for statement in statements:
             self._session.sql(statement).collect()
+        self._ensured_storage_keys.add(storage_key)
         for statement in (
             f"ALTER TABLE {self._feedback_table} ADD COLUMN IF NOT EXISTS SIGNAL_ID STRING",
             f"ALTER TABLE {self._feedback_table} ADD COLUMN IF NOT EXISTS FEEDBACK_TYPE STRING",

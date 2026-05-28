@@ -1747,6 +1747,18 @@ export const evaluateAssistantSignals = createAsyncThunk(
         },
       });
     } catch (err) {
+      const errorCode =
+        typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
+      const errorName =
+        typeof err === "object" && err !== null && "name" in err ? String((err as { name?: unknown }).name ?? "") : "";
+      if (errorCode === "ERR_CANCELED" || errorName === "CanceledError" || errorName === "AbortError") {
+        return {
+          settings: state.assistantPreferences,
+          signals: state.assistantSignals,
+          inferences: state.assistantInferences,
+          unread_count: state.assistantUnreadCount,
+        };
+      }
       return rejectWithValue(getErrorMessage(err, "Could not evaluate assistant signals."));
     }
   },

@@ -1,10 +1,10 @@
 import type { ClientConfig } from "@/types/client-config";
 
 export const FOCUS_CONFIG: ClientConfig = {
-  clientId: "acme",
+  clientId: "focus",
 
   app: {
-    name: "Acme STTM",
+    name: "Focus STTM",
     title: "Focus AI Migration Workbench",
     description: "Enterprise mapping, transformation and validation suite",
     clientTitle: "FOCUS FINANCIAL PARTNERS"
@@ -12,10 +12,10 @@ export const FOCUS_CONFIG: ClientConfig = {
 
   branding: {
     logo: {
-      light: "/images/focus/focus_home_logo.svg",
+      light: "/images/focus/focus_home_logo2_bg.png",
       dark: "/images/focus/focus_home_logo.svg",
       favicon: "/images/focus/favicon.ico",
-      appIcon: "/clients/acme/app-icon.png", // for PWA or header
+      appIcon: "", // for PWA or header
     },
 
     font: {

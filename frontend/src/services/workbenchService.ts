@@ -12,6 +12,8 @@ import {
   type TargetAttributeItem,
 } from '@/types/api-contract';
 import { buildApiEnvelope, getApiData, resolveApiBaseUrl } from '@/api/axiosInstance';
+import { API_ROUTES } from '@/api/routes';
+import { handleApiClientError } from '@/api/errors/error-bus';
 import {
   buildMockWorkbenchInvokeResponse,
   mockInvokeStream,
@@ -87,7 +89,7 @@ export const workbenchService = {
       return mockDelay(buildMockWorkbenchInvokeResponse(payload));
     }
 
-    const response = await api.post<STTMBuilderEnvelopeResponse>('/v1/workbench/invoke', toEnvelope(payload), {
+    const response = await api.post<STTMBuilderEnvelopeResponse>(API_ROUTES.workbench.invoke, toEnvelope(payload), {
       timeout: 300000,
     });
     return response.data;
@@ -98,7 +100,7 @@ export const workbenchService = {
       throwMockError();
       return mockDelay(mockWorkbenchInfo);
     }
-    return getApiData('/v1/workbench/info');
+    return getApiData(API_ROUTES.workbench.info);
   },
 
   invokeStream: async function* (payload: WorkbenchRequest): AsyncGenerator<
@@ -114,7 +116,7 @@ export const workbenchService = {
       return;
     }
 
-    const response = await fetch(`${resolveApiBaseUrl()}/v1/workbench/invoke/stream`, {
+    const response = await fetch(`${resolveApiBaseUrl()}${API_ROUTES.workbench.invokeStream}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(toEnvelope(payload)),
@@ -122,11 +124,17 @@ export const workbenchService = {
 
     if (!response.ok || !response.body) {
       const errorText = await response.text().catch(() => "");
-      throw new Error(
+      const streamError = new Error(
         errorText
           ? `Streaming request failed with HTTP ${response.status}: ${errorText}`
           : `Streaming request failed with HTTP ${response.status}`
       );
+      handleApiClientError(streamError, {
+        title: 'Streaming request failed',
+        subHeader: 'Workbench invoke stream',
+        fallbackMessage: 'Unable to stream the workbench response.',
+      });
+      throw streamError;
     }
 
     const decoder = new TextDecoder();

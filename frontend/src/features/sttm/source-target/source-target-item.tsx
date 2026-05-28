@@ -54,7 +54,7 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
     setAnchorEl(null);
   };
 
-  const isDrivingTable = drivingTableId === item.tableId;
+  const isDrivingTable = type === 'source' && drivingTableId === item.tableId;
 
   const metaLeft = type === 'source' ? sourceInfo : targetInfo;
   return (

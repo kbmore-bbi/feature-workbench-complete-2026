@@ -93,8 +93,8 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
     return { database, schema, table };
   };
 
-  const isMappingPage = pathname.includes('/mapping');
-  const showSidebarHost = isMappingPage || content !== null;
+  const isWorkspacePage = pathname.includes('/mapping') || pathname.includes('/summary');
+  const showSidebarHost = !isWorkspacePage && content !== null;
 
   const canProceedToMapping = useMemo(
     () =>
@@ -213,7 +213,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const handleProceedToMapping = () => {
-      if (pathname.includes('/mapping')) {
+      if (pathname.includes('/mapping') || pathname.includes('/summary')) {
         return;
       }
       proceedToMappingRef.current();
@@ -288,7 +288,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
           <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <main
               className={
-                isMappingPage
+                isWorkspacePage
                   ? 'flex min-h-0 flex-1 overflow-hidden bg-white'
                   : 'flex min-h-0 flex-1 overflow-auto bg-white'
               }

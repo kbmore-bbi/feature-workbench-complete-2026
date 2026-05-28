@@ -28,7 +28,9 @@ export default function AppHeader({
   const [session, setSession] = useState<UserSession | null>(null);
   const pathname = usePathname();
   const router = useRouter();
-  const { sources, targets, mappings, derivedSources } = useAppSelector((state) => state.sttmBuilder);
+  const { sources, targets, mappings, derivedSources, relationships } = useAppSelector(
+    (state) => state.sttmBuilder,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -64,18 +66,25 @@ export default function AppHeader({
     .toUpperCase();
 
   const isMappingPage = pathname.includes("/mapping");
-  const isSttmBuilderHeader = pathname === "/sttm/builder/new" || isMappingPage;
-  const currentStep: 1 | 2 = isMappingPage ? 2 : 1;
-  const tableCount =
+  const isSummaryPage = pathname.includes("/summary");
+  const isSttmBuilderHeader =
+    pathname === "/sttm/builder/new" || isMappingPage || isSummaryPage;
+  const currentStep: 1 | 2 | 3 = isSummaryPage ? 3 : isMappingPage ? 2 : 1;
+  const sourceTableCount =
     sources.filter((table) => table.isSelected).length +
-    (targets.some((table) => table.isSelected) ? 1 : 0);
+    derivedSources.filter((source) => source.isSelected).length;
+  const joinCount = relationships.filter(
+    (join) => join.leftTableId && join.rightTableId && join.conditions?.length,
+  ).length;
+  const tableCount =
+    sourceTableCount + (targets.some((table) => table.isSelected) ? 1 : 0);
   const mappedCount = mappings.filter((mapping) => mapping.status === "MAPPED").length;
   const canProceedToMapping =
     (sources.some((table) => table.isSelected) || derivedSources.some((source) => source.isSelected)) &&
     targets.some((table) => table.isSelected);
 
   const requestProceedToMapping = () => {
-    if (!canProceedToMapping || isMappingPage) {
+    if (!canProceedToMapping || isMappingPage || isSummaryPage) {
       return;
     }
     window.dispatchEvent(new CustomEvent("sttm:proceed-to-mapping"));
@@ -116,11 +125,18 @@ export default function AppHeader({
           <BuilderContentHeader
             embedded
             currentStep={currentStep}
+            sourceTableCount={sourceTableCount}
+            joinCount={joinCount}
             tableCount={tableCount}
             mappingCount={mappedCount}
-            onProceed={requestProceedToMapping}
-            onRunValidation={() => {
-              window.dispatchEvent(new CustomEvent("sttm:run-validation"));
+            onNext={() => {
+              if (currentStep === 1) {
+                requestProceedToMapping();
+                return;
+              }
+              if (currentStep === 2) {
+                router.push("/sttm/builder/new/summary");
+              }
             }}
             onPublish={() => console.log("publish mapping")}
             onStepChange={(step) => {
@@ -128,35 +144,51 @@ export default function AppHeader({
                 router.push("/sttm/builder/new");
                 return;
               }
-              requestProceedToMapping();
+              if (step === 2) {
+                if (isMappingPage) {
+                  return;
+                }
+                if (isSummaryPage) {
+                  router.push("/sttm/builder/new/mapping");
+                  return;
+                }
+                requestProceedToMapping();
+                return;
+              }
+              if (!canProceedToMapping) {
+                return;
+              }
+              router.push("/sttm/builder/new/summary");
             }}
-            proceedDisabled={!canProceedToMapping}
+            nextDisabled={currentStep === 1 ? !canProceedToMapping : false}
           />
         </Box>
       ) : null}
 
       <Box className="flex shrink-0 items-center gap-3">
-        <Tooltip title={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}>
-          <IconButton
-            onClick={toggleMode}
-            aria-label="Toggle light and dark theme"
-            sx={{
-              width: 32,
-              height: 32,
-              borderRadius: "4px",
-              border: "1px solid rgba(255,255,255,0.28)",
-              "&:hover": {
-                backgroundColor: "rgba(115, 109, 109, 0.08)",
-              },
-            }}
-          >
-            {mode === "light" ? (
-              <DarkModeRoundedIcon sx={{ fontSize: 18 }} />
-            ) : (
-              <LightModeRoundedIcon sx={{ fontSize: 18 }} />
-            )}
-          </IconButton>
-        </Tooltip>
+        <Box sx={{ display: "none" }}>
+          <Tooltip title={mode === "light" ? "Switch to dark mode" : "Switch to light mode"}>
+            <IconButton
+              onClick={toggleMode}
+              aria-label="Toggle light and dark theme"
+              sx={{
+                width: 32,
+                height: 32,
+                borderRadius: "4px",
+                border: "1px solid rgba(255,255,255,0.28)",
+                "&:hover": {
+                  backgroundColor: "rgba(115, 109, 109, 0.08)",
+                },
+              }}
+            >
+              {mode === "light" ? (
+                <DarkModeRoundedIcon sx={{ fontSize: 18 }} />
+              ) : (
+                <LightModeRoundedIcon sx={{ fontSize: 18 }} />
+              )}
+            </IconButton>
+          </Tooltip>
+        </Box>
 
         <Avatar
           sx={{

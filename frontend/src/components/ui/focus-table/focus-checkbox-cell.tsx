@@ -1,4 +1,4 @@
-import { TableCell } from '@mui/material';
+import { Box, TableCell } from '@mui/material';
 import { FocusCheckbox } from '../focus-checkbox';
 import type { FocusTableCellProps } from './focus-table-cell.types';
 import { focusTableCellSx } from './focus-table-cell.types';
@@ -18,13 +18,33 @@ export const FocusCheckboxCell = ({
   sx,
 }: FocusCheckboxCellProps) => (
   <TableCell
-    padding="checkbox"
-    sx={focusTableCellSx({ width: width ?? 44, minWidth, sx })}
+    padding="none"
+    sx={focusTableCellSx({
+      width: width ?? 64,
+      minWidth,
+      sx: [
+        {
+          px: 0,
+          textAlign: 'center',
+          verticalAlign: 'middle',
+        },
+        ...(sx ? (Array.isArray(sx) ? sx : [sx]) : []),
+      ],
+    })}
   >
-    <FocusCheckbox
-      checked={checked}
-      indeterminate={indeterminate}
-      checkHandler={(nextChecked: boolean) => onChange?.(nextChecked)}
-    />
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+      }}
+    >
+      <FocusCheckbox
+        checked={checked}
+        indeterminate={indeterminate}
+        checkHandler={(nextChecked: boolean) => onChange?.(nextChecked)}
+      />
+    </Box>
   </TableCell>
 );

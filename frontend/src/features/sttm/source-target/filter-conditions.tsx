@@ -13,6 +13,7 @@ import type {
 import { FocusButton } from "@/components/ui/focus-button";
 import { FocusSelect } from "@/components/ui/focus-select";
 import { FocusInput } from "@/components/ui/focus-input";
+import { SqlEditor, SQL_EDITOR_PREVIEW_HEIGHT } from "@/components/sql";
 
 export type { RuleLogic, RuleCondition, RuleGroup, RuleNode };
 
@@ -872,7 +873,13 @@ export function FilterConditions({
   });
 
   return (
-    <Box className="filter-section" sx={{ backgroundColor: "#ffffff" }}>
+    <Box
+      className="filter-section"
+      sx={{
+        backgroundColor: "#ffffff",
+        pb: showPreview && tables.length > 0 ? 3 : 0,
+      }}
+    >
       <Box
         className="filter-header"
         sx={{
@@ -1100,11 +1107,26 @@ export function FilterConditions({
       </Box>
 
       {showPreview && tables.length > 0 && (
-        <Box className="filter-preview">
-          <div className="filter-preview__title">{previewLabel}</div>
-          <pre className="filter-preview__code">
-            {resolvedPreviewSql || "-- No query clauses defined"}
-          </pre>
+        <Box
+          sx={{
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            borderTop: '1px solid #e2e8f0',
+            flexShrink: 0,
+          }}
+        >
+          <SqlEditor
+            value={resolvedPreviewSql}
+            readOnly
+            title={previewLabel}
+            emptyText="-- No query clauses defined"
+            showCopy
+            minHeight={SQL_EDITOR_PREVIEW_HEIGHT}
+            maxHeight={SQL_EDITOR_PREVIEW_HEIGHT}
+            showLineNumbers={false}
+            sx={{ width: '100%' }}
+          />
         </Box>
       )}
     </Box>

@@ -8,6 +8,7 @@ import RemoveCircleOutlineRoundedIcon from "@mui/icons-material/RemoveCircleOutl
 import type { JoinConfig, TableMeta } from "@/features/sttm/types/sttm.types";
 import { FocusButton } from "@/components/ui/focus-button";
 import { FocusSelect } from "@/components/ui/focus-select";
+import { SqlEditor, SQL_EDITOR_FRAME_SX, SQL_EDITOR_PREVIEW_HEIGHT } from "@/components/sql";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 
 interface JoinModalProps {
@@ -405,30 +406,21 @@ export function JoinModal({
           <Box
             sx={{
               mt: 3,
-              backgroundColor: "#0b1220",
-              borderRadius: "14px",
-              p: 2.5,
-              border: "1px solid rgba(255,255,255,0.06)",
-              position: "relative",
-              overflow: "hidden",
+              height: SQL_EDITOR_PREVIEW_HEIGHT,
+              flexShrink: 0,
+              ...SQL_EDITOR_FRAME_SX,
             }}
           >
-            <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#64748b", letterSpacing: "0.08em", mb: 1 }}>
-              SQL PREVIEW
-            </Typography>
-            <Box
-              component="pre"
-              sx={{
-                m: 0,
-                fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                fontSize: 13,
-                lineHeight: 1.6,
-                color: "#22c55e",
-                whiteSpace: "pre-wrap",
-              }}
-            >
-              {sqlPreview || "Select tables and columns to preview SQL join..."}
-            </Box>
+            <SqlEditor
+              value={sqlPreview || "Select tables and columns to preview SQL join..."}
+              readOnly
+              title="SQL PREVIEW"
+              emptyText="Select tables and columns to preview SQL join..."
+              showCopy
+              minHeight={SQL_EDITOR_PREVIEW_HEIGHT}
+              maxHeight={SQL_EDITOR_PREVIEW_HEIGHT}
+              showLineNumbers={false}
+            />
           </Box>
         </Box>
 

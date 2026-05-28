@@ -12,6 +12,7 @@ import { CssBaseline, ThemeProvider } from "@mui/material";
 import { getAppTheme, type AppThemeMode } from "@/theme/theme";
 import { Provider as ReduxProvider } from "react-redux";
 import { store } from "@/store/store";
+import { GlobalErrorProvider } from "@/components/error/global-error-provider";
 
 type ThemeModeContextValue = {
   mode: AppThemeMode;
@@ -65,7 +66,7 @@ export default function Providers({ children }: { children: ReactNode }) {
       <ReduxProvider store={store}>
         <ThemeProvider theme={theme}>
           <CssBaseline />
-          {children}
+          <GlobalErrorProvider>{children}</GlobalErrorProvider>
         </ThemeProvider>
       </ReduxProvider>
     </ThemeModeContext.Provider>

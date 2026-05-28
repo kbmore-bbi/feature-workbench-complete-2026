@@ -1,6 +1,10 @@
 import axios from 'axios';
+import type { AxiosRequestConfig } from 'axios';
 import type { ApiEnvelope } from '@/types/api-contract';
 import { API_CONTRACT_VERSION } from '@/types/api-contract';
+import './axios.types';
+import { extractApiErrorMessage } from './errors/app-error';
+import { handleApiClientError } from './errors/error-bus';
 
 export function resolveApiBaseUrl() {
   if (typeof window !== "undefined") {
@@ -30,9 +34,22 @@ const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
-    console.error('Global API Error:', error.response?.data || error.message);
-    return Promise.reject(error);
-  }
+    if (process.env.NODE_ENV === 'development') {
+      console.error('Global API Error:', error.response?.data || error.message);
+    }
+
+    const appError = handleApiClientError(
+      error,
+      {
+        title: error.config?.errorTitle,
+        subHeader: error.config?.errorSubHeader,
+        fallbackMessage: error.config?.fallbackErrorMessage,
+      },
+      { silent: Boolean(error.config?.skipGlobalError) },
+    );
+
+    return Promise.reject(appError);
+  },
 );
 
 export default api;
@@ -75,7 +92,7 @@ export function buildApiEnvelope<TData, TContext = Record<string, unknown>>(
   };
 }
 
-export async function getApiData<T>(url: string, config?: object): Promise<T> {
+export async function getApiData<T>(url: string, config?: AxiosRequestConfig): Promise<T> {
   const response = await api.get<T | ApiEnvelope<unknown, T>>(url, config);
   return unwrapApiResponse(response.data);
 }
@@ -83,7 +100,7 @@ export async function getApiData<T>(url: string, config?: object): Promise<T> {
 export async function postApiData<TRequest, TResponse>(
   url: string,
   body: TRequest,
-  config?: object,
+  config?: AxiosRequestConfig,
 ): Promise<TResponse> {
   const response = await api.post<TResponse | ApiEnvelope<unknown, TResponse>>(url, body, config);
   return unwrapApiResponse(response.data);
@@ -92,33 +109,12 @@ export async function postApiData<TRequest, TResponse>(
 export async function postEnvelopeData<TResponse>(
   url: string,
   body: ApiEnvelope<unknown, unknown>,
-  config?: object,
+  config?: AxiosRequestConfig,
 ): Promise<TResponse> {
   const response = await api.post<TResponse | ApiEnvelope<unknown, TResponse>>(url, body, config);
   return unwrapApiResponse(response.data);
 }
 
 export function getApiErrorMessage(error: unknown, fallback: string): string {
-  if (typeof error === "object" && error !== null && "response" in error) {
-    const response = (error as { response?: { data?: unknown } }).response;
-    const data = response?.data;
-    if (typeof data === "object" && data !== null) {
-      const envelopeError = (data as { error?: { detail?: unknown; title?: unknown } }).error;
-      if (typeof envelopeError?.detail === "string" && envelopeError.detail) {
-        return envelopeError.detail;
-      }
-      if (typeof envelopeError?.title === "string" && envelopeError.title) {
-        return envelopeError.title;
-      }
-      if (typeof (data as { message?: unknown }).message === "string") {
-        return String((data as { message?: unknown }).message);
-      }
-    }
-  }
-
-  if (error instanceof Error) return error.message || fallback;
-  if (typeof error === "object" && error !== null && "message" in error) {
-    return String((error as { message?: unknown }).message || fallback);
-  }
-  return fallback;
+  return extractApiErrorMessage(error, fallback);
 }

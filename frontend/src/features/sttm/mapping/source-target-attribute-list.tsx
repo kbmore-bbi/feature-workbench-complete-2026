@@ -46,7 +46,11 @@ function derivedTypeChipSx() {
   } as const;
 }
 
-const SourceTargetAttributeList = () => {
+type SourceTargetAttributeListProps = {
+  embedded?: boolean;
+};
+
+const SourceTargetAttributeList = ({ embedded = false }: SourceTargetAttributeListProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const dispatch = useAppDispatch();
   const { setCollapsed } = useSidebarSlot();
@@ -147,12 +151,21 @@ const SourceTargetAttributeList = () => {
         display: 'flex',
         flexDirection: 'column',
         bgcolor: '#fff',
-        borderRight: '1px solid #e0e0e0',
+        borderRight: embedded ? 'none' : '1px solid #e0e0e0',
+        borderBottom: embedded ? 'none' : undefined,
         overflow: 'hidden',
       }}
     >
-      <Box sx={{ p: 2, flexShrink: 0 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, mb: 2 }}>
+      <Box sx={{ p: embedded ? 1.5 : 2, flexShrink: 0 }}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 1,
+            mb: embedded ? 1.25 : 2,
+          }}
+        >
           <Typography sx={{ fontSize: 16, fontWeight: 800, color: '#111827', minWidth: 0 }}>
             STTM Builder
           </Typography>
@@ -193,9 +206,24 @@ const SourceTargetAttributeList = () => {
               fontSize: '0.72rem',
               fontWeight: 700,
               textTransform: 'none',
-              bgcolor: '#1d4ed8',
+              bgcolor: '#111827',
+              color: '#ffffff',
+              border: '1px solid #111827',
               boxShadow: 'none',
-              '&:hover': { bgcolor: '#1e40af', boxShadow: 'none' },
+              '&:hover': {
+                bgcolor: '#1f2937',
+                borderColor: '#1f2937',
+                boxShadow: 'none',
+              },
+              '&.Mui-disabled': {
+                bgcolor: '#9ca3af',
+                borderColor: '#9ca3af',
+                color: '#ffffff',
+              },
+              '&:focus-visible': {
+                outline: '2px solid #111827',
+                outlineOffset: 1,
+              },
             }}
           >
             Auto

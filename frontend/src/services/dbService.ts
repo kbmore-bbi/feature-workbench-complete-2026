@@ -1,4 +1,5 @@
 import { buildApiEnvelope, getApiData, postEnvelopeData } from "@/api/axiosInstance";
+import { API_ROUTES } from "@/api/routes";
 import {
   buildMockSemanticContextRefresh,
   buildMockValidateDerivedSource,
@@ -155,7 +156,7 @@ export const dbService = {
     }
 
     return postEnvelopeData<DatabaseItem[]>(
-      "/v1/table-selection/databases",
+      API_ROUTES.tableSelection.databases,
       buildApiEnvelope("table_selection.list_databases", {}),
     );
   },
@@ -167,7 +168,7 @@ export const dbService = {
     }
 
     return postEnvelopeData<SchemaItem[]>(
-      "/v1/table-selection/schemas",
+      API_ROUTES.tableSelection.schemas,
       buildApiEnvelope("table_selection.list_schemas", { database }, { database }),
     );
   },
@@ -179,7 +180,7 @@ export const dbService = {
     }
 
     return postEnvelopeData<TableItem[]>(
-      "/v1/table-selection/tables",
+      API_ROUTES.tableSelection.tables,
       buildApiEnvelope("table_selection.list_tables", { database, schema }, { database, schema }),
     );
   },
@@ -191,7 +192,7 @@ export const dbService = {
     }
 
     return postEnvelopeData<TableAttributes[]>(
-      "/v1/table-selection/attributes",
+      API_ROUTES.tableSelection.attributes,
       buildApiEnvelope("table_selection.list_attributes", { tables }, { tables }),
     );
   },
@@ -205,7 +206,7 @@ export const dbService = {
     }
 
     return postEnvelopeData<RelationshipItem[]>(
-      "/v1/table-selection/relationships",
+      API_ROUTES.tableSelection.relationships,
       buildApiEnvelope("table_selection.list_relationships", { tables }, { tables }),
     );
   },
@@ -216,7 +217,7 @@ export const dbService = {
       return mockDelay(listMockDerivedSources() as DerivedSourceRecord[]);
     }
 
-    return getApiData<DerivedSourceRecord[]>("/v1/derived-sources");
+    return getApiData<DerivedSourceRecord[]>(API_ROUTES.derivedSources.list);
   },
 
   validatePreProcessExpression: async (
@@ -232,7 +233,7 @@ export const dbService = {
     }
 
     return postEnvelopeData<DerivedSourceValidateResult>(
-      "/v1/derived-sources/validate",
+      API_ROUTES.derivedSources.validate,
       buildApiEnvelope("derived_source.validate", payload, {
         source_tables: payload.source_tables,
         driving_table: payload.driving_table ?? null,
@@ -249,7 +250,7 @@ export const dbService = {
     }
 
     return postEnvelopeData<DerivedSourceRecord>(
-      "/v1/derived-sources",
+      API_ROUTES.derivedSources.save,
       buildApiEnvelope("derived_source.save", payload, {
         source_tables: payload.source_tables,
         driving_table: payload.driving_table ?? null,
@@ -268,7 +269,7 @@ export const dbService = {
     }
 
     return postEnvelopeData<SemanticContextBundleResponse>(
-      "/v1/semantic-context/refresh",
+      API_ROUTES.semanticContext.refresh,
       buildApiEnvelope("semantic_context.refresh", payload),
       { timeout: 120000 },
     );

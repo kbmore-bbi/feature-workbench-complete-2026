@@ -1,43 +1,55 @@
+import VerifiedRoundedIcon from '@mui/icons-material/VerifiedRounded';
 import { Box, TableCell, Typography } from '@mui/material';
+import type { SxProps, Theme } from '@mui/material/styles';
 import { focusTableCellSx } from '@/components/ui/focus-table';
 
 type MappingTargetColumnCellProps = {
   name: string;
-  type?: string;
+  isMapped?: boolean;
   width?: number | string;
   minWidth?: number | string;
+  sx?: SxProps<Theme>;
 };
 
 export const MappingTargetColumnCell = ({
   name,
-  type,
+  isMapped = false,
   width,
   minWidth,
+  sx,
 }: MappingTargetColumnCellProps) => (
-  <TableCell sx={focusTableCellSx({ width, minWidth })}>
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.25 }}>
+  <TableCell sx={focusTableCellSx({ width, minWidth, sx })}>
+    <Box
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 0.5,
+        minWidth: 0,
+        flexWrap: 'wrap',
+      }}
+    >
       <Typography
         sx={{
-          fontSize: '0.85rem',
-          fontWeight: 600,
+          fontSize: '0.8rem',
+          fontWeight: 400,
           color: '#111827',
-          lineHeight: 1.3,
+          lineHeight: 1.45,
           whiteSpace: 'normal',
           overflowWrap: 'anywhere',
+          minWidth: 0,
         }}
       >
         {name}
       </Typography>
-      {type ? (
-        <Typography
+      {isMapped ? (
+        <VerifiedRoundedIcon
+          aria-label="Mapped"
           sx={{
-            fontSize: '0.7rem',
-            color: '#6b7280',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+            fontSize: 16,
+            color: '#22c55e',
+            flexShrink: 0,
           }}
-        >
-          {type}
-        </Typography>
+        />
       ) : null}
     </Box>
   </TableCell>

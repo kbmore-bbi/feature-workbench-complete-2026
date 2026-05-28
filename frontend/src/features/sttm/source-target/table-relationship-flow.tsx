@@ -2,11 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Background,
-  BackgroundVariant,
-  Controls,
   MarkerType,
-  ReactFlow,
   type Connection,
   type Edge,
   useEdgesState,
@@ -24,6 +20,12 @@ import { JoinModal } from "./join-modal";
 import { TableEdge } from "./table-edge";
 import { TableNode, type TableNodeData } from "./table-node";
 import { AddDerivedModal } from "./add-derived-modal";
+import { RelationshipFlowView } from "./relationship-flow-view";
+import {
+  buildRelationshipLayout,
+  mergeRelationshipNodePositions,
+  RELATIONSHIP_LAYOUT_FULL,
+} from "./relationship-layout";
 
 const nodeTypes = { tableNode: TableNode };
 const edgeTypes = { tableEdge: TableEdge };
@@ -72,6 +74,7 @@ function parseHandleId(
 
 function tagChipPalette(tag?: string) {
   const t = (tag || "").toLowerCase();
+  if (t.includes("driving")) return { tagBg: "#fef3c7", tagFg: "#854d0e" };
   if (t.includes("derived")) return { tagBg: "#dcfce3", tagFg: "#166534" };
   if (t.includes("staging")) return { tagBg: "#f3e8ff", tagFg: "#7c3aed" };
   if (t.includes("sales")) return { tagBg: "#dbeafe", tagFg: "#1d4ed8" };
@@ -259,18 +262,33 @@ export default function SttmTableRelationshipFlow({
     }
   }, [activeTables, currentJoins, onJoinsChange, setRelationships]);
 
+  const layoutPositions = useMemo(
+    () =>
+      buildRelationshipLayout(
+        activeTables.map((table) => table.id as string),
+        effectiveDrivingTableId,
+        currentJoins,
+        RELATIONSHIP_LAYOUT_FULL,
+      ),
+    [activeTables, currentJoins, effectiveDrivingTableId],
+  );
+
   const initialNodes = useMemo(() => {
-    return activeTables.map((table, idx) => ({
+    return activeTables.map((table) => {
+      const isDriving = table.id === effectiveDrivingTableId;
+      const chip = tagChipPalette(isDriving ? "Driving" : table.tag);
+
+      return {
       id: table.id as string,
       type: "tableNode",
-      position: { x: 40 + idx * 300, y: 48 },
+      position: layoutPositions[table.id as string] ?? { x: 48, y: 48 },
       data: {
         label: table.name ?? "—",
         schema: table.schema ?? "—",
         database: table.database ?? "—",
-        tag: table.tag ?? "Source",
-        tagBg: table.tagBg ?? "#f1f5f9",
-        tagFg: table.tagFg ?? "#475569",
+        tag: isDriving ? "Driving" : table.tag ?? "Source",
+        tagBg: isDriving ? chip.tagBg : table.tagBg ?? chip.tagBg,
+        tagFg: isDriving ? chip.tagFg : table.tagFg ?? chip.tagFg,
         rowCount: table.rowCount ?? "—",
         colCount: table.colCount ?? table.columns?.length ?? 0,
         columns: table.columns ?? [],
@@ -292,11 +310,14 @@ export default function SttmTableRelationshipFlow({
               }
             : undefined,
       } satisfies TableNodeData,
-    }));
+    };
+    });
   }, [
     activeTables,
     allowDerivedEditing,
     derivedSources,
+    effectiveDrivingTableId,
+    layoutPositions,
     onToggleColumn,
     selectableColumns,
     selectedColumnsByTable,
@@ -305,8 +326,19 @@ export default function SttmTableRelationshipFlow({
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
 
   useEffect(() => {
-    setNodes(initialNodes);
-  }, [initialNodes, setNodes]);
+    setNodes((previousNodes) =>
+      mergeRelationshipNodePositions(
+        initialNodes,
+        previousNodes,
+        layoutPositions,
+        RELATIONSHIP_LAYOUT_FULL,
+        {
+          joins: currentJoins,
+          drivingTableId: effectiveDrivingTableId,
+        },
+      ),
+    );
+  }, [currentJoins, effectiveDrivingTableId, initialNodes, layoutPositions, setNodes]);
 
   const derivedEdges: Edge[] = useMemo(() => {
     const joinEdges = currentJoins
@@ -496,7 +528,7 @@ export default function SttmTableRelationshipFlow({
   ]);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex w-full flex-col gap-3 pb-3">
       <div className="canvas-area">
         <div className="canvas-area__header">
           <div className="canvas-area__title">
@@ -527,7 +559,7 @@ export default function SttmTableRelationshipFlow({
               <div className="canvas-area__empty-inner">{emptyStateText}</div>
             </div>
           ) : null}
-          <ReactFlow
+          <RelationshipFlowView
             nodes={nodes}
             edges={edges}
             onNodesChange={onNodesChange}
@@ -535,16 +567,11 @@ export default function SttmTableRelationshipFlow({
             onConnect={onConnect}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
-            proOptions={{ hideAttribution: true }}
             defaultEdgeOptions={{
               type: "tableEdge",
               animated: true,
             }}
-            style={{ width: "100%", height: "100%" }}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#e2e8f0" />
-            <Controls position="bottom-right" style={{ marginBottom: 16, marginRight: 16 }} />
-          </ReactFlow>
+          />
         </div>
 
         <div className="canvas-legend">

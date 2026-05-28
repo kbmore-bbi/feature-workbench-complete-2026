@@ -1,4 +1,5 @@
 import { getApiData } from '@/api/axiosInstance';
+import { API_ROUTES } from '@/api/routes';
 import type { PermissionSet, UserSession } from '@/types/user';
 import {
   mockPermissions,
@@ -28,7 +29,7 @@ export const authService = {
       throwMockError();
       return mockDelay(mockUserSession);
     }
-    return getApiData<UserSession>('/v1/auth/session');
+    return getApiData<UserSession>(API_ROUTES.auth.session, { skipGlobalError: true });
   },
 
   getPermissions: async (): Promise<PermissionSet> => {
@@ -36,7 +37,7 @@ export const authService = {
       throwMockError();
       return mockDelay(mockPermissions);
     }
-    return getApiData<PermissionSet>('/v1/auth/permissions');
+    return getApiData<PermissionSet>(API_ROUTES.auth.permissions);
   },
 
   getSnowflakeContext: async (): Promise<SnowflakeContext> => {
@@ -44,7 +45,7 @@ export const authService = {
       throwMockError();
       return mockDelay(mockSnowflakeContext);
     }
-    return getApiData<SnowflakeContext>('/v1/auth/snowflake-context');
+    return getApiData<SnowflakeContext>(API_ROUTES.auth.snowflakeContext);
   },
 
   getUserRoles: async (): Promise<UserRolesResponse> => {
@@ -52,6 +53,6 @@ export const authService = {
       throwMockError();
       return mockDelay(mockUserRoles);
     }
-    return getApiData<UserRolesResponse>('/v1/user/roles');
+    return getApiData<UserRolesResponse>(API_ROUTES.user.roles);
   },
 };

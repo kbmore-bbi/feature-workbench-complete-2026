@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Box,
-  Button,
   CircularProgress,
   IconButton,
-  LinearProgress,
   Paper,
   Stack,
   Table,
@@ -15,14 +13,14 @@ import {
   TableCell,
   TableHead,
   TableRow,
-  Tooltip,
   Typography,
 } from '@mui/material';
 import ChecklistRtlRoundedIcon from '@mui/icons-material/ChecklistRtlRounded';
-import CodeRoundedIcon from '@mui/icons-material/CodeRounded';
+import TerminalRoundedIcon from '@mui/icons-material/TerminalRounded';
 import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
 import TableRowsRoundedIcon from '@mui/icons-material/TableRowsRounded';
-import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
+import DragIndicatorRoundedIcon from '@mui/icons-material/DragIndicatorRounded';
+import KeyboardDoubleArrowRightRoundedIcon from '@mui/icons-material/KeyboardDoubleArrowRightRounded';
 import { useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
 import SourceTargetAttributeList from '@/features/sttm/mapping/source-target-attribute-list';
 import SourceTargetAttributeMapping from '@/features/sttm/mapping/source-target-attribute-mapping';
@@ -37,46 +35,15 @@ import {
   buildMappingSelectSql,
   buildSourceQueryPreviewSql,
 } from '@/features/sttm/mapping/mapping-utils';
+import { MappingSqlPreview } from '@/components/sql';
+import { MappingProgressIndicator } from '@/features/sttm/shared/mapping-progress-indicator';
+import { BuilderWorkspaceTabBar } from '@/features/sttm/shared/builder-workspace-tab-bar';
 
 type MappingTab = 'mapping' | 'sql-preview' | 'data-preview' | 'data-lineage';
 
-const SQL_KEYWORDS = new Set([
-  'AS',
-  'BY',
-  'FROM',
-  'GROUP',
-  'INSERT',
-  'INTO',
-  'JOIN',
-  'LEFT',
-  'ON',
-  'ORDER',
-  'RIGHT',
-  'SELECT',
-  'WHERE',
-  'INNER',
-  'OUTER',
-  'FULL',
-  'AND',
-  'OR',
-  'CASE',
-  'WHEN',
-  'THEN',
-  'ELSE',
-  'END',
-  'NULL',
-]);
-
-const sqlStatPillSx = {
-  px: 1,
-  py: 0.45,
-  borderRadius: '999px',
-  border: '1px solid rgba(148,163,184,0.18)',
-  backgroundColor: 'rgba(15,23,42,0.72)',
-  color: '#cbd5e1',
-  fontSize: '0.73rem',
-  fontWeight: 800,
-} as const;
+const MIN_SIDEBAR_WIDTH = 248;
+const MAX_SIDEBAR_WIDTH = 420;
+const COLLAPSED_SIDEBAR_WIDTH = 54;
 
 function countFilterConditions(
   groups: Array<{ type?: string; children?: unknown[] }>,
@@ -92,64 +59,12 @@ function countFilterConditions(
   }, 0);
 }
 
-function renderSqlToken(token: string, key: string) {
-  if (/^\s+$/.test(token)) {
-    return <span key={key}>{token}</span>;
-  }
-
-  let color = '#e5e7eb';
-  let fontWeight = 500;
-
-  if (token.startsWith('--')) {
-    color = '#7c8597';
-  } else if (/^['"].*['"]$/.test(token)) {
-    color = '#a3e635';
-  } else if (/^[(),;]$/.test(token)) {
-    color = '#cbd5e1';
-  } else if (SQL_KEYWORDS.has(token.toUpperCase())) {
-    color = '#f97316';
-    fontWeight = 800;
-  } else if (/^\d+(\.\d+)?$/.test(token)) {
-    color = '#fda4af';
-  } else if (token.includes('.')) {
-    color = '#f4c15d';
-    fontWeight = 700;
-  } else if (/^[A-Z0-9_]+$/.test(token)) {
-    color = '#f8fafc';
-    fontWeight = 700;
-  } else if (/^[a-z][a-z0-9_]*$/i.test(token)) {
-    color = '#f8d77c';
-  }
-
-  return (
-    <Box key={key} component="span" sx={{ color, fontWeight }}>
-      {token}
-    </Box>
-  );
-}
-
-function renderSqlLine(line: string, lineIndex: number) {
-  const parts = line
-    .split(/(\s+|--.*$|'[^']*'|"[^"]*"|\b[A-Za-z_][A-Za-z0-9_]*\b|[(),;])/g)
-    .filter((part) => part !== '');
-
-  return (
-    <Box
-      key={`sql-line-${lineIndex}`}
-      component="div"
-      sx={{ minHeight: 22 }}
-    >
-      {parts.map((token, tokenIndex) => renderSqlToken(token, `${lineIndex}-${tokenIndex}`))}
-    </Box>
-  );
-}
-
 export default function MappingPage() {
   const router = useRouter();
-  const { setContent } = useSidebarSlot();
+  const { setContent, collapsed, setCollapsed, width, setWidth } = useSidebarSlot();
+  const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const dispatch = useAppDispatch();
   const [activeTab, setActiveTab] = useState<MappingTab>('mapping');
-  const [copiedSql, setCopiedSql] = useState(false);
   const [previewColumns, setPreviewColumns] = useState<Array<{ name: string; dataType: string }>>([]);
   const [previewRows, setPreviewRows] = useState<Array<Record<string, unknown>>>([]);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -194,7 +109,6 @@ export default function MappingPage() {
 
   const totalCount = mappings.length;
   const mappedCount = mappings.filter((m) => m.status === 'MAPPED').length;
-  const progressValue = totalCount > 0 ? (mappedCount / totalCount) * 100 : 0;
   const selectedInputCount = useMemo(
     () =>
       sources.filter((table) => table.isSelected).length +
@@ -207,8 +121,41 @@ export default function MappingPage() {
   );
 
   useEffect(() => {
-    setContent(<SourceTargetAttributeList />);
+    setContent(null);
+    return () => setContent(null);
   }, [setContent]);
+
+  useEffect(() => {
+    const handlePointerMove = (event: MouseEvent) => {
+      const state = resizeStateRef.current;
+      if (!state) {
+        return;
+      }
+      const nextWidth = Math.min(
+        MAX_SIDEBAR_WIDTH,
+        Math.max(MIN_SIDEBAR_WIDTH, state.startWidth + event.clientX - state.startX),
+      );
+      setWidth(nextWidth);
+    };
+
+    const handlePointerUp = () => {
+      resizeStateRef.current = null;
+    };
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('mouseup', handlePointerUp);
+    return () => {
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('mouseup', handlePointerUp);
+    };
+  }, [setWidth]);
+
+  const beginResize = (event: React.MouseEvent<HTMLButtonElement>) => {
+    resizeStateRef.current = {
+      startX: event.clientX,
+      startWidth: width,
+    };
+  };
 
   useEffect(() => {
     if (!hasSelectedInputs || !hasSelectedTarget) {
@@ -487,333 +434,146 @@ export default function MappingPage() {
     return () => window.removeEventListener('sttm:run-validation', handleRunValidation);
   }, []);
 
-  const tabs: Array<{ key: MappingTab; label: string; icon: ReactNode }> = [
+  const tabs: Array<{ key: MappingTab; label: string; icon: ReactNode; badge?: number }> = [
     { key: 'mapping', label: 'Mapping', icon: <ChecklistRtlRoundedIcon sx={{ fontSize: 17 }} /> },
-    { key: 'sql-preview', label: 'SQL Preview', icon: <CodeRoundedIcon sx={{ fontSize: 17 }} /> },
+    {
+      key: 'sql-preview',
+      label: 'SQL Preview',
+      icon: <TerminalRoundedIcon sx={{ fontSize: 17 }} />,
+      badge: mappedCount > 0 ? mappedCount : undefined,
+    },
     { key: 'data-preview', label: 'Data Preview', icon: <TableRowsRoundedIcon sx={{ fontSize: 17 }} /> },
-    { key: 'data-lineage', label: 'Lineage', icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
+    { key: 'data-lineage', label: 'Data Lineage', icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
   ];
 
-  const handleCopySql = async () => {
-    try {
-      await navigator.clipboard.writeText(generatedSql);
-      setCopiedSql(true);
-      window.setTimeout(() => setCopiedSql(false), 1500);
-    } catch {
-      setCopiedSql(false);
-    }
-  };
+  const progressTrailing = (
+    <MappingProgressIndicator mappedCount={mappedCount} totalCount={totalCount} />
+  );
 
   return (
     <div className="flex h-full min-h-0 w-full min-w-0 flex-1 flex-col overflow-hidden bg-white">
+      <BuilderWorkspaceTabBar
+        tabs={tabs}
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        trailing={progressTrailing}
+      />
+
       <Box
         sx={{
           display: 'flex',
-          alignItems: 'center',
-          gap: 1.5,
-          px: 2,
-          py: 1.25,
-          borderBottom: '1px solid #e5e7eb',
-          backgroundColor: '#fff',
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          overflow: 'hidden',
         }}
       >
-        {tabs.map((tab) => {
-          const selected = activeTab === tab.key;
-          return (
-            <Button
-              key={tab.key}
-              variant="text"
-              onClick={() => setActiveTab(tab.key)}
+        <Box
+          sx={{
+            display: 'flex',
+            width: collapsed ? COLLAPSED_SIDEBAR_WIDTH : width,
+            minWidth: collapsed ? COLLAPSED_SIDEBAR_WIDTH : MIN_SIDEBAR_WIDTH,
+            maxWidth: collapsed ? COLLAPSED_SIDEBAR_WIDTH : MAX_SIDEBAR_WIDTH,
+            flexShrink: 0,
+            borderRight: '1px solid #e5e7eb',
+            overflow: 'hidden',
+            bgcolor: '#fff',
+          }}
+        >
+          {collapsed ? (
+            <Box
               sx={{
-                minWidth: 0,
-                px: 1.35,
-                py: 0.75,
-                borderRadius: '8px',
-                textTransform: 'none',
-                fontSize: '0.84rem',
-                fontWeight: 700,
-                display: 'inline-flex',
-                gap: 0.75,
-                alignItems: 'center',
-                color: selected ? '#111827' : '#64748b',
-                backgroundColor: selected ? '#f8fafc' : 'transparent',
-                border: selected ? '1px solid #dbe2ea' : '1px solid transparent',
+                width: '100%',
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'center',
+                py: 1.25,
               }}
             >
-              {tab.icon}
-              {tab.label}
-            </Button>
-          );
-        })}
-        <Box sx={{ ml: 'auto', minWidth: 220 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.4 }}>
-            <Typography sx={{ fontSize: '0.76rem', color: '#64748b', fontWeight: 600 }}>
-              {totalCount} rows • {mappedCount} mapped
-            </Typography>
-            <Typography sx={{ fontSize: '0.76rem', color: '#64748b' }}>
-              {totalCount > 0 ? `${Math.round(progressValue)}%` : '0%'}
-            </Typography>
-          </Box>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 0.5 }}>
-            <Typography sx={{ fontSize: '0.78rem', fontWeight: 700, color: '#111827' }}>
-              Mapping progress
-            </Typography>
-            <Typography sx={{ fontSize: '0.76rem', color: '#94a3b8' }}>
-              {mappedCount}/{totalCount}
-            </Typography>
-          </Box>
-          <LinearProgress
-            variant="determinate"
-            value={progressValue}
-            sx={{
-              height: 7,
-              borderRadius: 999,
-              backgroundColor: '#e5e7eb',
-              '& .MuiLinearProgress-bar': {
-                borderRadius: 999,
-                backgroundColor: '#f59e0b',
-              },
-            }}
-          />
+              <IconButton
+                size="small"
+                aria-label="Expand source sidebar"
+                onClick={() => setCollapsed(false)}
+                sx={{
+                  color: '#475569',
+                  border: '1px solid #dbe2ea',
+                  backgroundColor: '#fff',
+                  '&:hover': {
+                    backgroundColor: '#f8fafc',
+                  },
+                }}
+              >
+                <KeyboardDoubleArrowRightRoundedIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Box>
+          ) : (
+            <Box sx={{ display: 'flex', width: '100%', minWidth: 0, minHeight: 0, flex: 1 }}>
+              <Box
+                sx={{
+                  minWidth: 0,
+                  flex: 1,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  overflow: 'hidden',
+                }}
+              >
+                <SourceTargetAttributeList embedded />
+              </Box>
+              <Box
+                sx={{
+                  width: 18,
+                  display: 'flex',
+                  alignItems: 'stretch',
+                  justifyContent: 'center',
+                  borderLeft: '1px solid #eef2f7',
+                  backgroundColor: '#fff',
+                  cursor: 'col-resize',
+                }}
+              >
+                <IconButton
+                  size="small"
+                  aria-label="Resize source sidebar"
+                  onMouseDown={beginResize}
+                  sx={{
+                    width: '100%',
+                    borderRadius: 0,
+                    color: '#94a3b8',
+                    '&:hover': { backgroundColor: '#f8fafc', color: '#475569' },
+                  }}
+                >
+                  <DragIndicatorRoundedIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Box>
+            </Box>
+          )}
         </Box>
-      </Box>
 
-      <div className="flex min-h-0 w-full min-w-0 flex-1 overflow-hidden">
+        <Box
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
         {activeTab === 'mapping' ? (
-          <div className="min-w-0 flex-1 overflow-hidden">
+          <Box sx={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
             <SourceTargetAttributeMapping />
-          </div>
+          </Box>
         ) : null}
 
         {activeTab === 'sql-preview' ? (
-          <Box
-            sx={{
-              flex: 1,
-              width: '100%',
-              minWidth: 0,
-              minHeight: 0,
-              overflow: 'hidden',
-              backgroundColor: '#0b1220',
-              display: 'flex',
-              flexDirection: 'column',
-            }}
-          >
-            <Paper
-              elevation={0}
-              sx={{
-                height: '100%',
-                borderRadius: 0,
-                backgroundColor: '#0b1220',
-                color: '#e2e8f0',
-                border: 'none',
-                overflow: 'hidden',
-                display: 'flex',
-                flexDirection: 'column',
-              }}
-            >
-              <Box
-                sx={{
-                  px: 2,
-                  py: 1.35,
-                  borderBottom: '1px solid rgba(148,163,184,0.1)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1.25,
-                  flexShrink: 0,
-                }}
-              >
-                <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0 }}>
-                  <Box
-                    sx={{
-                      width: 8,
-                      height: 8,
-                      borderRadius: '50%',
-                      backgroundColor: '#4ade80',
-                      flexShrink: 0,
-                    }}
-                  />
-                  <Typography sx={{ fontSize: '0.95rem', fontWeight: 800, color: '#f8fafc' }}>
-                    Generated SQL
-                  </Typography>
-                  {selectedTargetQualifiedName ? (
-                    <Typography
-                      sx={{
-                        fontSize: '0.8rem',
-                        color: '#64748b',
-                        whiteSpace: 'nowrap',
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                      }}
-                    >
-                      — {selectedTargetQualifiedName.split('.').pop()}
-                    </Typography>
-                  ) : null}
-                </Stack>
-                <Stack
-                  direction="row"
-                  spacing={1}
-                  useFlexGap
-                  sx={{ ml: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end' }}
-                >
-                  <Box sx={sqlStatPillSx}>{mappedCount} MAPPED</Box>
-                  <Box sx={sqlStatPillSx}>{selectedInputCount} TABLES</Box>
-                  <Box sx={sqlStatPillSx}>{filterCount} FILTERS</Box>
-                  <Tooltip title={copiedSql ? 'Copied' : 'Copy SQL'}>
-                    <IconButton
-                      size="small"
-                      onClick={() => {
-                        void handleCopySql();
-                      }}
-                      sx={{
-                        borderRadius: '12px',
-                        border: '1px solid rgba(148,163,184,0.18)',
-                        color: '#e2e8f0',
-                        px: 1,
-                        gap: 0.75,
-                      }}
-                    >
-                      <ContentCopyRoundedIcon sx={{ fontSize: 16 }} />
-                      <Typography sx={{ fontSize: '0.76rem', fontWeight: 700 }}>
-                        {copiedSql ? 'Copied' : 'Copy SQL'}
-                      </Typography>
-                    </IconButton>
-                  </Tooltip>
-                </Stack>
-              </Box>
-              <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 2.5, py: 2.25 }}>
-                <Box
-                  sx={{
-                    mb: 2.25,
-                    borderRadius: 3,
-                    border: '1px solid rgba(148,163,184,0.16)',
-                    backgroundColor: 'rgba(15,23,42,0.42)',
-                    overflow: 'hidden',
-                  }}
-                >
-                  <Box
-                    sx={{
-                      px: 1.5,
-                      py: 1.15,
-                      borderBottom: '1px solid rgba(148,163,184,0.12)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 1.5,
-                    }}
-                  >
-                    <Box>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800, color: '#f8fafc' }}>
-                        Source query foundation
-                      </Typography>
-                      <Typography sx={{ fontSize: '0.76rem', color: '#94a3b8' }}>
-                        Lowest-level Step 1 SQL with joins, filters, grouping, and ordering.
-                      </Typography>
-                    </Box>
-                    <Box sx={sqlStatPillSx}>{relationships.length} JOINS</Box>
-                  </Box>
-                  <Box
-                    component="pre"
-                    sx={{
-                      m: 0,
-                      px: 1.5,
-                      py: 1.35,
-                      fontSize: 13.25,
-                      lineHeight: 1.72,
-                      whiteSpace: 'pre-wrap',
-                      wordBreak: 'break-word',
-                      fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-                    }}
-                  >
-                    {sourceQueryPreviewSql
-                      .split('\n')
-                      .map((line, index) => renderSqlLine(line, index))}
-                  </Box>
-                </Box>
-                <Box
-                  sx={{
-                    mb: 2,
-                    display: 'inline-grid',
-                    gap: 0.25,
-                    px: 1.5,
-                    py: 1.2,
-                    borderRadius: 2,
-                    border: '1px solid rgba(148,163,184,0.18)',
-                    backgroundColor: 'rgba(15,23,42,0.5)',
-                  }}
-                >
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>
-                    STTM Builder · Frontend-generated SQL
-                  </Typography>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#94a3b8' }}>
-                    Target: {selectedTargetQualifiedName ?? 'TARGET_TABLE'}
-                  </Typography>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#94a3b8' }}>
-                    Live from source prep + mapping selections
-                  </Typography>
-                </Box>
-                <Box
-                  component="pre"
-                  sx={{
-                    m: 0,
-                    fontSize: 13.5,
-                    lineHeight: 1.82,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    fontFamily: '"SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace',
-                  }}
-                >
-                  {generatedSql.split('\n').map((line, index) =>
-                    renderSqlLine(line, index + sourceQueryPreviewSql.split('\n').length + 1),
-                  )}
-                </Box>
-              </Box>
-              <Box
-                sx={{
-                  px: 2,
-                  py: 1.2,
-                  borderTop: '1px solid rgba(148,163,184,0.12)',
-                  backgroundColor: 'rgba(15,23,42,0.96)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  gap: 2,
-                  flexShrink: 0,
-                  position: 'sticky',
-                  bottom: 0,
-                  zIndex: 2,
-                }}
-              >
-                <Box sx={{ minWidth: 0 }}>
-                  <Typography sx={{ fontSize: '0.8rem', fontWeight: 700, color: '#f8fafc' }}>
-                    SQL validation
-                  </Typography>
-                  <Typography sx={{ fontSize: '0.74rem', color: '#94a3b8' }}>
-                    {mappedCount > 0
-                      ? 'Validate the live SQL generated from source prep and mapping rules.'
-                      : 'Map at least one attribute to generate a validation-ready SQL statement.'}
-                  </Typography>
-                </Box>
-                <Button
-                  variant="contained"
-                  size="small"
-                  sx={{
-                    minWidth: 118,
-                    borderRadius: '10px',
-                    textTransform: 'none',
-                    fontWeight: 700,
-                    bgcolor: '#133d5b',
-                    boxShadow: 'none',
-                    '&:hover': {
-                      bgcolor: '#1d4f74',
-                      boxShadow: 'none',
-                    },
-                  }}
-                >
-                  Validate SQL
-                </Button>
-              </Box>
-            </Paper>
-          </Box>
+          <MappingSqlPreview
+            targetLabel={selectedTargetQualifiedName?.split('.').pop() ?? null}
+            mappedCount={mappedCount}
+            tableCount={selectedInputCount}
+            filterCount={filterCount}
+            joinCount={relationships.length}
+            sourceQuerySql={sourceQueryPreviewSql}
+            generatedSql={generatedSql}
+          />
         ) : null}
 
         {activeTab === 'data-preview' ? (
@@ -885,7 +645,8 @@ export default function MappingPage() {
         {activeTab === 'data-lineage' ? (
           <LineageTab />
         ) : null}
-      </div>
+        </Box>
+      </Box>
       <PreProcessModal />
     </div>
   );

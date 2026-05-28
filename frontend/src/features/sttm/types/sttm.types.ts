@@ -320,6 +320,7 @@ export type SttmBuilderContextValue = {
   sendChatMessage: (message: string) => void;
   submitChatFeedback: (payload: { messageId: string; rating: number; comment?: string | null }) => void;
   refreshAssistantSignals: () => void;
+  requestSemanticRefresh: () => Promise<void>;
   respondToAssistantSignal: (payload: {
     signalId: string;
     status?: "acknowledged" | "responded" | "dismissed";

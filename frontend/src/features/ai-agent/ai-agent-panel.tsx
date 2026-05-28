@@ -376,6 +376,7 @@ export default function AIAgentPanel({
     semanticViewName,
     selectedSourceCount,
     respondToAssistantSignal,
+    requestSemanticRefresh,
     sendChatMessage,
     submitChatFeedback,
   } = useSttmBuilderContext();
@@ -396,6 +397,10 @@ export default function AIAgentPanel({
   );
   const activeReview = pendingAiMappingReviews[0] ?? null;
   const isTransformationReview = !!activeReview?.preprocessingRule;
+  const activeSignal = useMemo(
+    () => assistantSignals.find((signal) => signal.status === "new") ?? assistantSignals[0] ?? null,
+    [assistantSignals],
+  );
 
   const handleSend = () => {
     const message = draft.trim();
@@ -545,6 +550,31 @@ export default function AIAgentPanel({
       delete next[signalId];
       return next;
     });
+  };
+
+  const applySignalAction = async (signal: (typeof assistantSignals)[number]) => {
+    const actionType = typeof signal.attributes?.action_type === "string" ? signal.attributes.action_type : "";
+    if (actionType === "refresh_semantic_context") {
+      await requestSemanticRefresh();
+      respondToAssistantSignal({
+        signalId: signal.signal_id,
+        status: "acknowledged",
+        optionSelected: "Refresh semantic context",
+      });
+      return;
+    }
+    if (actionType === "explain_relationship") {
+      const suggestedPrompt =
+        typeof signal.attributes?.suggested_prompt === "string" && signal.attributes.suggested_prompt.trim()
+          ? signal.attributes.suggested_prompt.trim()
+          : "Explain the relationship between the selected tables in business terms.";
+      sendChatMessage(suggestedPrompt);
+      respondToAssistantSignal({
+        signalId: signal.signal_id,
+        status: "acknowledged",
+        optionSelected: "Explain this relationship",
+      });
+    }
   };
 
   return (
@@ -743,12 +773,18 @@ export default function AIAgentPanel({
           backgroundColor: "#ffffff",
         }}
       >
-        {assistantSignals.length > 0 ? (
+        {activeSignal ? (
           <Stack spacing={1.5}>
-            {assistantSignals.map((signal) => {
+            {[activeSignal].map((signal) => {
               const draftResponse = pendingSignalResponses[signal.signal_id];
               const thumbsUpSelected = draftResponse?.rating === 5;
               const thumbsDownSelected = draftResponse?.rating === 1;
+              const actionLabel =
+                signal.attributes?.action_type === "refresh_semantic_context"
+                  ? "Apply refresh"
+                  : signal.attributes?.action_type === "explain_relationship"
+                    ? "Explain now"
+                    : null;
               return (
                 <Paper
                   key={signal.signal_id}
@@ -824,6 +860,18 @@ export default function AIAgentPanel({
                       />
                     ) : null}
                     <Stack direction="row" spacing={1}>
+                      {actionLabel ? (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => {
+                            void applySignalAction(signal);
+                          }}
+                          sx={{ textTransform: "none" }}
+                        >
+                          {actionLabel}
+                        </Button>
+                      ) : null}
                       <Button
                         size="small"
                         variant="contained"

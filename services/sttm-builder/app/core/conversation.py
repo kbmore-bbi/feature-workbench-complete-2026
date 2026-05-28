@@ -1383,6 +1383,8 @@ class ConversationService:
             f"{item.database}.{item.schema}.{item.table}".upper()
             for item in (data.source_tables or [])
         ]
+        if not selected_tables:
+            return
         selected_pair = selected_tables[:2]
         relationship_count = len(data.relationships or [])
         semantic_ready = bool(data.semantic_bundle_id and data.semantic_view_name)
@@ -1419,8 +1421,8 @@ class ConversationService:
                 user_id=user_id,
             )
             recommendation_message = (
-                f"I found an existing relationship for `{selected_pair[0]}` and `{selected_pair[1]}`. "
-                "Validate this join before mapping and confirm whether the business meaning looks right."
+                f"I found an existing relationship between `{selected_pair[0]}` and `{selected_pair[1]}`. "
+                "Before you map, validate whether this is the right business join and whether the key columns reflect the intended entity match."
             )
             recommendation_id = self._memory.record_recommendation(
                 request_id=request_id,
@@ -1460,7 +1462,11 @@ class ConversationService:
                 entity_type="table_pair",
                 entity_ids=selected_pair,
                 confidence=hit.score if hit.score is not None else 0.86,
-                attributes={"doc_id": hit.doc_id},
+                attributes={
+                    "doc_id": hit.doc_id,
+                    "action_type": "explain_relationship",
+                    "suggested_prompt": "Explain the relationship between the selected tables in business terms.",
+                },
                 recommendation_id=recommendation_id,
                 user_id=user_id,
             )
@@ -1500,7 +1506,7 @@ class ConversationService:
                     source="rule_engine",
                     title="Help improve these table semantics",
                     message=(
-                        "Are these selected tables truly related for business mapping, or should the join logic be adjusted?"
+                        f"For `{selected_pair[0]}` and `{selected_pair[1]}`, are these tables truly related for business mapping, or should the join logic be adjusted?"
                     ),
                     options=[
                         "These tables are related",
@@ -1543,14 +1549,20 @@ class ConversationService:
                 layer="recommendation",
                 source="rule_engine",
                 title="Refresh semantic context",
-                message="Generate an analyst-ready semantic bundle now so recommendations, joins, and mapping guidance stay grounded in the current selection.",
+                message=(
+                    f"Generate a refreshed semantic bundle for the current selection ({', '.join(selected_tables[:2])}"
+                    f"{'...' if len(selected_tables) > 2 else ''}) so relationship guidance and mapping suggestions stay grounded."
+                ),
                 options=["Refresh semantic context", "Ask AI to explain first", "Dismiss"],
                 allow_free_text=False,
                 requires_response=False,
                 entity_type="table_selection",
                 entity_ids=selected_tables[:3],
                 confidence=0.81,
-                attributes={"surface": data.surface or "SOURCE_SELECTION"},
+                attributes={
+                    "surface": data.surface or "SOURCE_SELECTION",
+                    "action_type": "refresh_semantic_context",
+                },
                 recommendation_id=None,
                 user_id=user_id,
             )

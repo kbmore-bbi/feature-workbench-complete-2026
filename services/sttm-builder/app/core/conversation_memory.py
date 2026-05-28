@@ -676,7 +676,9 @@ class ConversationMemoryService:
         signals: list[AssistantSignal] = []
         for row in rows:
             data = row.as_dict()
-            attributes = data.get("ATTRIBUTES") or {}
+            attributes = self._coerce_json_object(data.get("ATTRIBUTES"))
+            options = self._coerce_string_list(data.get("OPTIONS"))
+            entity_ids = self._coerce_string_list(data.get("ENTITY_IDS"))
             signals.append(
                 AssistantSignal(
                     signal_id=str(data.get("SIGNAL_ID") or ""),
@@ -686,12 +688,12 @@ class ConversationMemoryService:
                     source=str(data.get("SOURCE") or "rule_engine"),
                     title=str(data.get("TITLE") or ""),
                     message=str(data.get("MESSAGE") or ""),
-                    options=[str(item) for item in (data.get("OPTIONS") or []) if str(item).strip()],
+                    options=options,
                     allow_free_text=bool(data.get("ALLOW_FREE_TEXT")),
                     requires_response=bool(data.get("REQUIRES_RESPONSE")),
                     confidence=float(data["CONFIDENCE"]) if data.get("CONFIDENCE") is not None else None,
                     entity_type=str(data.get("ENTITY_TYPE") or "") or None,
-                    entity_ids=[str(item) for item in (data.get("ENTITY_IDS") or []) if str(item).strip()],
+                    entity_ids=entity_ids,
                     inference_id=str(data.get("INFERENCE_ID") or "") or None,
                     recommendation_id=(
                         str(attributes.get("recommendation_id") or "") or None
@@ -704,6 +706,39 @@ class ConversationMemoryService:
                 )
             )
         return signals
+
+    @staticmethod
+    def _coerce_json_object(value: Any) -> dict[str, Any]:
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return {}
+
+    @staticmethod
+    def _coerce_string_list(value: Any) -> list[str]:
+        if isinstance(value, list):
+            return [str(item) for item in value if str(item).strip()]
+        if isinstance(value, tuple):
+            return [str(item) for item in value if str(item).strip()]
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return []
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return [text]
+            if isinstance(parsed, list):
+                return [str(item) for item in parsed if str(item).strip()]
+            if isinstance(parsed, str) and parsed.strip():
+                return [parsed.strip()]
+            return []
+        return []
 
     def update_recommendation_review(
         self,

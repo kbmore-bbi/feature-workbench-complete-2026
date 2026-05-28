@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import { dbService } from "@/services/dbService";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   evaluateAssistantSignals,
@@ -64,7 +65,6 @@ export function SttmBuilderProvider({
   useEffect(() => {
     dispatch(fetchDatabases());
     dispatch(fetchDerivedSources());
-    dispatch(fetchAssistantSignals());
   }, [dispatch]);
 
   const assistantSignalSignature = useMemo(() => {
@@ -265,6 +265,44 @@ export function SttmBuilderProvider({
         );
       },
       refreshAssistantSignals: () => {
+        dispatch(fetchAssistantSignals());
+      },
+      requestSemanticRefresh: async () => {
+        const selectedSourceTables = state.sources
+          .filter((table) => table.isSelected)
+          .map((table) => ({ database: table.qualifiedName.split(".", 3)[0], schema: table.qualifiedName.split(".", 3)[1], table: table.qualifiedName.split(".", 3)[2] }));
+        const selectedDerivedSourceIds = state.derivedSources
+          .filter((source) => source.isSelected)
+          .map((source) => source.id);
+        if (!selectedSourceTables.length && !selectedDerivedSourceIds.length) {
+          return;
+        }
+        const selectedTargetTable = state.targets.find((table) => table.isSelected);
+        const refresh = await dbService.refreshSemanticContext({
+          selected_source_tables: selectedSourceTables,
+          selected_derived_sources: selectedDerivedSourceIds,
+          target_table: selectedTargetTable
+            ? { database: selectedTargetTable.qualifiedName.split(".", 3)[0], schema: selectedTargetTable.qualifiedName.split(".", 3)[1], table: selectedTargetTable.qualifiedName.split(".", 3)[2] }
+            : null,
+          relationships: state.relationships
+            .filter((join) => join.leftTableId && join.rightTableId && join.conditions?.length)
+            .map((join) => ({
+              left_table: { database: (join.leftTableId as string).split(".", 3)[0], schema: (join.leftTableId as string).split(".", 3)[1], table: (join.leftTableId as string).split(".", 3)[2] },
+              right_table: { database: (join.rightTableId as string).split(".", 3)[0], schema: (join.rightTableId as string).split(".", 3)[1], table: (join.rightTableId as string).split(".", 3)[2] },
+              constraint_name: join.constraintName ?? null,
+              join_type: join.joinType ?? "INNER",
+              source: join.source ?? "USER_DEFINED",
+              locked: join.locked ?? false,
+              conditions: (join.conditions ?? []).map((condition) => ({
+                left_column: condition.leftColumn,
+                right_column: condition.rightColumn,
+                operator: condition.operator ?? "=",
+              })),
+            })),
+          requested_level: selectedTargetTable ? "L3_MAPPING_ENRICHED" : "L2_ANALYST_READY",
+          force: false,
+        });
+        dispatch(applySemanticRefreshAction(refresh));
         dispatch(fetchAssistantSignals());
       },
       respondToAssistantSignal: ({ signalId, status, optionSelected, rating, comment }) => {

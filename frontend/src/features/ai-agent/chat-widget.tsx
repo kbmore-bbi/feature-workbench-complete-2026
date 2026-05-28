@@ -83,7 +83,7 @@ export default function AIAgentPopover() {
             >
                 <Badge
                     color="error"
-                    badgeContent={assistantUnreadCount > 0 ? assistantUnreadCount : null}
+                    badgeContent={assistantUnreadCount > 0 ? 1 : null}
                     sx={{ '& .MuiBadge-badge': { right: -8, top: 6 } }}
                 >
                     <SmartToyIcon />

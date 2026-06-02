@@ -2,7 +2,6 @@
 import React, { useMemo, useState } from 'react';
 import {
   AutoAwesomeRoundedIcon,
-  KeyboardDoubleArrowLeftRoundedIcon,
   TableChartOutlinedIcon,
 } from '@/utils/icons';
 import {
@@ -16,7 +15,6 @@ import {
 
 
 
-import IconButton from "@mui/material/IconButton";
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import { useAppDispatch } from '@/store/hooks';
 import {
@@ -32,6 +30,9 @@ import type { Column } from '@/features/sttm/types/sttm.types';
 
 import { useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
 import { ResizableSidebarSections } from '@/features/sttm/layout/resizable-sidebar-sections';
+import { SttmSidebarCollapseFooter } from '@/features/sttm/layout/sttm-sidebar-collapse-footer';
+import { SttmSidebarCollapsedRail } from '@/features/sttm/layout/sttm-sidebar-collapsed-rail';
+import { SttmSidebarSectionIcon } from '@/features/sttm/layout/sttm-sidebar-icons';
 import { AiaSearchbox } from '@/components/ui/aia-searchbox';
 import { AiaButton } from '@/components/ui/aia-button';
 
@@ -106,7 +107,7 @@ function AttributeColumnRow({
 const SourceTargetAttributeList = ({ embedded = false }: SourceTargetAttributeListProps) => {
   const [searchTerm, setSearchTerm] = useState('');
   const dispatch = useAppDispatch();
-  const { setCollapsed } = useSidebarSlot();
+  const { setCollapsed, collapsed } = useSidebarSlot();
 
   const {
     fullData,
@@ -347,6 +348,29 @@ const SourceTargetAttributeList = ({ embedded = false }: SourceTargetAttributeLi
     </>
   );
 
+  if (embedded && collapsed) {
+    return (
+      <Box
+        sx={{
+          width: '100%',
+          height: '100%',
+          minHeight: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          backgroundColor: 'var(--color-surface)',
+          overflow: 'hidden',
+        }}
+      >
+        <SttmSidebarCollapsedRail
+          items={[
+            { kind: 'source', label: 'Source Columns' },
+            { kind: 'target', label: 'Target Table' },
+          ]}
+        />
+      </Box>
+    );
+  }
+
   return (
     <Box
       sx={{
@@ -366,11 +390,13 @@ const SourceTargetAttributeList = ({ embedded = false }: SourceTargetAttributeLi
             {
               id: 'source-columns',
               title: 'Source Columns',
+              icon: <SttmSidebarSectionIcon kind="source" fontSize={13} />,
               content: sourceColumnsContent,
             },
             {
               id: 'target-table',
               title: 'Target Table',
+              icon: <SttmSidebarSectionIcon kind="target" fontSize={13} />,
               content: targetTableContent,
             },
           ]}
@@ -378,34 +404,11 @@ const SourceTargetAttributeList = ({ embedded = false }: SourceTargetAttributeLi
         />
       </Box>
 
-      <Box
-        sx={{
-          px: 1.5,
-          py: 1,
-          display: 'flex',
-          justifyContent: 'flex-start',
-          alignItems: 'center',
-          flexShrink: 0,
-          borderTop: '1px solid #eef2f7',
-          backgroundColor: 'var(--color-surface)',
-        }}
-      >
-        <IconButton
-          size="small"
-          aria-label="Collapse sidebar"
-          onClick={() => setCollapsed(true)}
-          sx={{
-            width: 32,
-            height: 32,
-            color: '#64748b',
-            border: '1px solid #dbe2ea',
-            borderRadius: '50%',
-            p: 0,
-          }}
-        >
-          <KeyboardDoubleArrowLeftRoundedIcon sx={{ fontSize: 18 }} />
-        </IconButton>
-      </Box>
+      <SttmSidebarCollapseFooter
+        collapsed={false}
+        collapseLabel="Collapse sidebar"
+        onToggle={() => setCollapsed(true)}
+      />
     </Box>
   );
 };

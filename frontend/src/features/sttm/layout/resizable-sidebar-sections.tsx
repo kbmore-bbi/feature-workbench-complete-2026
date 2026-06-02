@@ -10,7 +10,7 @@ import {
 } from "react";
 
 
-import { Box, Typography } from "@mui/material";
+import { Box, Tooltip, Typography } from "@mui/material";
 import {
   AIA_RESIZE_HANDLE_THICKNESS,
   AiaResizeHandle,
@@ -20,6 +20,7 @@ export type ResizableSidebarSection = {
   id: string;
   title: string;
   content: ReactNode;
+  icon?: ReactNode;
 };
 
 type ResizableSidebarSectionsProps = {
@@ -226,20 +227,69 @@ export function ResizableSidebarSections({
                 cursor: "pointer",
                 flexShrink: 0,
                 backgroundColor: "#fafafa",
+                borderBottom: "1px solid #eef2f7",
                 userSelect: "none",
               }}
             >
-              <Typography
+              <Box
                 sx={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: "var(--color-muted)",
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 0.75,
+                  minWidth: 0,
+                  flex: 1,
+                  justifyContent: isExpanded ? "flex-start" : "center",
                 }}
               >
-                {section.title}
-              </Typography>
+                {section.icon ? (
+                  isExpanded ? (
+                    <>
+                      {section.icon}
+                      <Typography
+                        sx={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: "var(--color-muted)",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.05em",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {section.title}
+                      </Typography>
+                    </>
+                  ) : (
+                    <Tooltip title={section.title} placement="right">
+                      <Box
+                        sx={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                        }}
+                      >
+                        {section.icon}
+                      </Box>
+                    </Tooltip>
+                  )
+                ) : (
+                  <Typography
+                    sx={{
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: "var(--color-muted)",
+                      textTransform: "uppercase",
+                      letterSpacing: "0.05em",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {section.title}
+                  </Typography>
+                )}
+              </Box>
               {isExpanded ? (
                 <KeyboardArrowDownRoundedIcon sx={{ fontSize: 16, color: "var(--color-muted)" }} />
               ) : (
@@ -249,6 +299,7 @@ export function ResizableSidebarSections({
 
             {isExpanded ? (
               <Box
+                className="sttm-scroll-pane"
                 sx={{
                   height: bodyHeight,
                   minHeight: minBodyHeight,

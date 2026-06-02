@@ -15,17 +15,22 @@ export default function SourceTargetList({ type, searchTerm = '' }: SourceTarget
 
   const filteredItems = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
-    if (!query) {
-      return items;
-    }
+    const baseItems = !query
+      ? items
+      : items.filter((item) => {
+          const haystack = [item.tableName, item.qualifiedName, item.tag]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase();
 
-    return items.filter((item) => {
-      const haystack = [item.tableName, item.qualifiedName, item.tag]
-        .filter(Boolean)
-        .join(' ')
-        .toLowerCase();
+          return haystack.includes(query);
+        });
 
-      return haystack.includes(query);
+    return [...baseItems].sort((left, right) => {
+      if (left.isSelected === right.isSelected) {
+        return 0;
+      }
+      return left.isSelected ? -1 : 1;
     });
   }, [items, searchTerm]);
 

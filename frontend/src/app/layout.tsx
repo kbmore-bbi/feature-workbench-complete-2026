@@ -3,7 +3,7 @@ import "./globals.css";
 import '@/theme/theme.css';
 import Providers from "./Providers";
 import AppHeader from "@/features/layout/app-header";
-import ChatWidget from '@/features/ai-agent/chat-widget';
+import AppShellGate from "@/features/layout/app-shell-gate";
 import { CLIENT_CONFIG as config } from '@/config/client.config';
 
 export const metadata: Metadata = {
@@ -26,8 +26,12 @@ export default function RootLayout({
       </head>
       <body suppressHydrationWarning>
         <Providers>
-          <AppHeader />
-          {children}
+          <div className="flex h-screen flex-col overflow-hidden">
+            <AppHeader />
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <AppShellGate>{children}</AppShellGate>
+            </div>
+          </div>
         </Providers>
       </body>
     </html>

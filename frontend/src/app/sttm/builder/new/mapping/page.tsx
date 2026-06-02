@@ -1,12 +1,11 @@
 "use client";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { AccountTreeOutlinedIcon, ChecklistRtlRoundedIcon, KeyboardDoubleArrowRightRoundedIcon, TerminalRoundedIcon } from '@/utils/icons';
+import { AccountTreeOutlinedIcon, ChecklistRtlRoundedIcon, TerminalRoundedIcon } from '@/utils/icons';
 import { MappingDataPreviewIcon, MappingDataPreviewTable } from '@/features/sttm/mapping/data-preview';
 import {
   Box,
   CircularProgress,
-  IconButton,
 } from '@mui/material';
 
 
@@ -15,6 +14,7 @@ import {
 
 import { AiaResizeHandle } from '@/components/ui/aia-resize-handle';
 import { useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
+import { SttmSidebarCollapseFooter } from '@/features/sttm/layout/sttm-sidebar-collapse-footer';
 import SourceTargetAttributeList from '@/features/sttm/mapping/source-target-attribute-list';
 import SourceTargetAttributeMapping from '@/features/sttm/mapping/source-target-attribute-mapping';
 import PreProcessModal from '@/features/sttm/mapping/pre-process-modal';
@@ -376,33 +376,20 @@ function MappingPageContent() {
               sx={{
                 width: '100%',
                 height: '100%',
+                minHeight: 0,
                 display: 'flex',
                 flexDirection: 'column',
-                alignItems: 'flex-start',
-                justifyContent: 'flex-end',
-                pb: 1.25,
-                pl: 0.75,
               }}
             >
-              <IconButton
-                size="small"
-                aria-label="Expand source sidebar"
-                onClick={() => setCollapsed(false)}
-                sx={{
-                  width: 32,
-                  height: 32,
-                  p: 0,
-                  color: '#475569',
-                  border: '1px solid #dbe2ea',
-                  borderRadius: '50%',
-                  backgroundColor: '#fff',
-                  '&:hover': {
-                    backgroundColor: '#f8fafc',
-                  },
-                }}
-              >
-                <KeyboardDoubleArrowRightRoundedIcon sx={{ fontSize: 18 }} />
-              </IconButton>
+              <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <SourceTargetAttributeList embedded />
+              </Box>
+              <SttmSidebarCollapseFooter
+                collapsed
+                centered
+                expandLabel="Expand source sidebar"
+                onToggle={() => setCollapsed(false)}
+              />
             </Box>
           ) : (
             <Box sx={{ display: 'flex', width: '100%', minWidth: 0, minHeight: 0, flex: 1 }}>

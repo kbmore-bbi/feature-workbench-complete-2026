@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Image from "next/image";
 import { DarkModeRoundedIcon, KeyboardArrowDownRoundedIcon, LightModeRoundedIcon } from '@/utils/icons';
 
@@ -18,6 +18,8 @@ import {
   getSelectedTargetTable,
 } from "@/features/sttm/shared/sttm-selection-utils";
 import BuilderContentHeader from "@/features/sttm/layout/builder-content-header";
+import PublishMappingModal from "@/features/sttm/summary/publish-mapping-modal";
+import { buildSummaryMetrics } from "@/features/sttm/summary/summary-utils";
 
 type AppHeaderProps = {
   userName?: string;
@@ -32,10 +34,16 @@ export default function AppHeader({
   const [session, setSession] = useState<UserSession | null>(null);
   const pathname = usePathname();
   const router = useRouter();
-  const { targets, mappings, derivedSources, relationships, sourceDatabases, targetDatabases } =
+  const { sources, targets, mappings, derivedSources, relationships, sourceDatabases, targetDatabases } =
     useAppSelector((state) => state.sttmBuilder);
   const selectedSourceTables = getSelectedSourceTables(sourceDatabases);
-  const selectedTargetTable = getSelectedTargetTable(targetDatabases);
+  const selectedTargetTable =
+    getSelectedTargetTable(targetDatabases) ?? targets.find((table) => table.isSelected);
+  const resolvedSourceTables =
+    selectedSourceTables.length > 0
+      ? selectedSourceTables
+      : sources.filter((table) => table.isSelected);
+  const [isPublishModalOpen, setIsPublishModalOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,21 +78,32 @@ export default function AppHeader({
     .slice(0, 2)
     .toUpperCase();
 
-  const isMappingPage = pathname.includes("/mapping");
-  const isSummaryPage = pathname.includes("/summary");
+  const isMappingPage = pathname === "/sttm/builder/new/mapping";
+  const isSummaryPage = pathname === "/sttm/builder/new/summary";
   const isSttmBuilderHeader =
     pathname === "/sttm/builder/new" || isMappingPage || isSummaryPage;
   const currentStep: 1 | 2 | 3 = isSummaryPage ? 3 : isMappingPage ? 2 : 1;
   const sourceTableCount =
-    selectedSourceTables.length +
+    resolvedSourceTables.length +
     derivedSources.filter((source) => source.isSelected).length;
   const joinCount = relationships.filter(
     (join) => join.leftTableId && join.rightTableId && join.conditions?.length,
   ).length;
   const tableCount = sourceTableCount + (selectedTargetTable ? 1 : 0);
   const mappedCount = mappings.filter((mapping) => mapping.status === "MAPPED").length;
+  const publishMetrics = useMemo(
+    () =>
+      buildSummaryMetrics({
+        mappings,
+        sources: resolvedSourceTables,
+        joinCount,
+      }),
+    [joinCount, mappings, resolvedSourceTables],
+  );
+  const defaultMappingName =
+    selectedTargetTable?.tableName?.toUpperCase() ?? "FACT_SALES_UNIFIED";
   const canProceedToMapping =
-    (selectedSourceTables.length > 0 || derivedSources.some((source) => source.isSelected)) &&
+    (resolvedSourceTables.length > 0 || derivedSources.some((source) => source.isSelected)) &&
     Boolean(selectedTargetTable);
 
   const requestProceedToMapping = () => {
@@ -142,7 +161,7 @@ export default function AppHeader({
                 router.push("/sttm/builder/new/summary");
               }
             }}
-            onPublish={() => console.log("publish mapping")}
+            onPublish={() => setIsPublishModalOpen(true)}
             onStepChange={(step) => {
               if (step === 1) {
                 router.push("/sttm/builder/new");
@@ -224,6 +243,17 @@ export default function AppHeader({
 
         <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#ffffff" }} />
       </Box>
+
+      <PublishMappingModal
+        open={isPublishModalOpen && isSummaryPage}
+        onClose={() => setIsPublishModalOpen(false)}
+        defaultMappingName={defaultMappingName}
+        metrics={publishMetrics}
+        onPublish={(payload) => {
+          console.log("Publish mapping", payload);
+          setIsPublishModalOpen(false);
+        }}
+      />
     </Box>
   );
 }

@@ -7,13 +7,6 @@ import {
   RadioButtonUncheckedRoundedIcon,
 } from '@/utils/icons';
 import { HierarchyIcon } from '@/features/sttm/shared/hierarchy-icons';
-
-
-
-
-
-
-
 import {
   Box,
   Button,
@@ -24,6 +17,10 @@ import {
 import { AiaSearchbox } from "@/components/ui/aia-searchbox";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import { ResizableSidebarSections } from "@/features/sttm/layout/resizable-sidebar-sections";
+import { useSidebarSlot } from "@/features/sttm/layout/sidebar-slot-context";
+import { SttmSidebarCollapseFooter } from "@/features/sttm/layout/sttm-sidebar-collapse-footer";
+import { SttmSidebarCollapsedRail } from "@/features/sttm/layout/sttm-sidebar-collapsed-rail";
+import { SttmSidebarSectionIcon } from "@/features/sttm/layout/sttm-sidebar-icons";
 import type {
   DatabaseNode,
   SchemaNode,
@@ -61,6 +58,7 @@ export default function DataSelectionPanel() {
     selectSchema,
   } = useSttmBuilderContext();
 
+  const { setCollapsed, collapsed } = useSidebarSlot();
   const [sourceSearchText, setSourceSearchText] = useState("");
   const [targetSearchText, setTargetSearchText] = useState("");
   const [expandedDbs, setExpandedDbs] = useState<Record<string, boolean>>({});
@@ -167,6 +165,30 @@ export default function DataSelectionPanel() {
           </Typography>
         </Box>
       </SidebarStateShell>
+    );
+  }
+
+  if (collapsed) {
+    return (
+      <Box
+        sx={{
+          width: "100%",
+          minWidth: 0,
+          height: "100%",
+          backgroundColor: "var(--color-surface)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <SttmSidebarCollapsedRail
+          items={[
+            { kind: "source", label: "Source Selection" },
+            { kind: "target", label: "Target Selection" },
+            { kind: "derived", label: "Derived Sources Selection" },
+          ]}
+        />
+      </Box>
     );
   }
 
@@ -629,35 +651,46 @@ export default function DataSelectionPanel() {
         overflow: "hidden",
       }}
     >
-      <ResizableSidebarSections
-        sections={[
-          {
-            id: "source",
-            title: "Source Selection",
-            content: renderDatabaseSection(
-              fullData?.sources || [],
-              "source",
-              sourceSearchText,
-              setSourceSearchText,
-            ),
-          },
-          {
-            id: "target",
-            title: "Target Selection",
-            content: renderDatabaseSection(
-              fullData?.targets || [],
-              "target",
-              targetSearchText,
-              setTargetSearchText,
-            ),
-          },
-          {
-            id: "derived",
-            title: "Derived Sources Selection",
-            content: renderDerivedSourcesContent(),
-          },
-        ]}
-        defaultExpanded={{ source: true, target: true, derived: true }}
+      <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        <ResizableSidebarSections
+          sections={[
+            {
+              id: "source",
+              title: "Source Selection",
+              icon: <SttmSidebarSectionIcon kind="source" fontSize={13} />,
+              content: renderDatabaseSection(
+                fullData?.sources || [],
+                "source",
+                sourceSearchText,
+                setSourceSearchText,
+              ),
+            },
+            {
+              id: "target",
+              title: "Target Selection",
+              icon: <SttmSidebarSectionIcon kind="target" fontSize={13} />,
+              content: renderDatabaseSection(
+                fullData?.targets || [],
+                "target",
+                targetSearchText,
+                setTargetSearchText,
+              ),
+            },
+            {
+              id: "derived",
+              title: "Derived Sources Selection",
+              icon: <SttmSidebarSectionIcon kind="derived" fontSize={13} />,
+              content: renderDerivedSourcesContent(),
+            },
+          ]}
+          defaultExpanded={{ source: true, target: true, derived: true }}
+        />
+      </Box>
+
+      <SttmSidebarCollapseFooter
+        collapsed={false}
+        collapseLabel="Collapse source sidebar"
+        onToggle={() => setCollapsed(true)}
       />
     </Box>
   );

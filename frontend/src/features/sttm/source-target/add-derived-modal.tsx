@@ -34,7 +34,6 @@ import {
   type ComputedColumn,
   type DetectedFunction,
 } from "./sql-hydration";
-import { TableEdge } from "./table-edge";
 import { TableNode, type TableNodeData } from "./table-node";
 import { RelationshipFlowView } from "./relationship-flow-view";
 import {
@@ -49,9 +48,6 @@ import type {
   PendingDerivedSourceDraft,
   TableMeta,
 } from "@/features/sttm/types/sttm.types";
-
-const nodeTypes = { tableNode: TableNode };
-const edgeTypes = { tableEdge: TableEdge };
 
 function buildRelationshipHandleId(
   table: { database?: string; schema?: string; name?: string },
@@ -1631,9 +1627,6 @@ export function AddDerivedModal({
                   onNodesChange={onNodesChange}
                   onEdgesChange={onEdgesChange}
                   onConnect={onConnect}
-                  nodeTypes={nodeTypes}
-                  edgeTypes={edgeTypes}
-                  defaultEdgeOptions={{ type: "tableEdge", animated: true }}
                 />
                 </Box>
               )}

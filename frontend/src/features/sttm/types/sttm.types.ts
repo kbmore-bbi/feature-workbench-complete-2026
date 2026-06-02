@@ -166,6 +166,17 @@ export type ColumnGroup = {
   columns: Column[];
 };
 
+/** Pre-filled builder workspace used when opening a saved mapping from the list. */
+export type MappingWorkspaceSnapshot = {
+  sources: TableNode[];
+  targets: TableNode[];
+  sourceAttributeGroups: ColumnGroup[];
+  targetAttributeGroup: ColumnGroup;
+  mappings: MappingState[];
+  relationships?: JoinConfig[];
+  drivingTableId?: string | null;
+};
+
 export type MappingSuggestion = {
   targetAttribute: string;
   sourceAttributes: string[];
@@ -200,6 +211,10 @@ export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
   status?: "completed" | "needs_input" | "failed";
+  requestId?: string | null;
+  conversationId?: string | null;
+  feedbackStatus?: "idle" | "sent" | "failed";
+  feedbackRating?: number | null;
   options?: string[];
   isStreaming?: boolean;
   traceSteps?: string[];

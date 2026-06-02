@@ -877,6 +877,9 @@ export function FilterConditions({
       className="filter-section"
       sx={{
         backgroundColor: "#ffffff",
+        minHeight: 420,
+        display: "flex",
+        flexDirection: "column",
         pb: showPreview && tables.length > 0 ? 3 : 0,
       }}
     >
@@ -886,6 +889,8 @@ export function FilterConditions({
           px: 3,
           py: 2,
           borderBottom: "1px solid #e5e7eb",
+          flexShrink: 0,
+          gap: 2,
         }}
       >
         <Box
@@ -894,6 +899,8 @@ export function FilterConditions({
             alignItems: "center",
             gap: "10px",
             flexWrap: "wrap",
+            flex: 1,
+            minWidth: 0,
           }}
         >
           <Typography
@@ -941,7 +948,8 @@ export function FilterConditions({
           disabled={tables.length === 0}
           style={{
             opacity: tables.length === 0 ? 0.5 : 1,
-            cursor: tables.length === 0 ? "not-allowed" : "pointer"
+            cursor: tables.length === 0 ? "not-allowed" : "pointer",
+            flexShrink: 0,
           }}
         >
           {activeTab === "filters"
@@ -952,9 +960,19 @@ export function FilterConditions({
         </button>
       </Box>
 
-      <Box className="filter-body" sx={{ px: 3, pb: 3 }}>
+      <Box
+        className="filter-body"
+        sx={{
+          px: 3,
+          pb: 3,
+          flex: 1,
+          minHeight: 320,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
         {tables.length === 0 ? (
-          <div className="canvas-area__empty" aria-hidden style={{ marginTop: 24, marginBottom: 8 }}>
+          <div className="filter-empty-state" aria-hidden>
             <div className="canvas-area__empty-inner">
               Select one or more tables from Source selection. They will appear
               here so you can define filter conditions.

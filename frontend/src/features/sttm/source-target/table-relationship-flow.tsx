@@ -17,7 +17,6 @@ import type { Column, DerivedSource, JoinConfig, TableMeta } from "@/features/st
 
 import { FilterConditions } from "./filter-conditions";
 import { JoinModal } from "./join-modal";
-import { TableEdge } from "./table-edge";
 import { TableNode, type TableNodeData } from "./table-node";
 import { AddDerivedModal } from "./add-derived-modal";
 import { RelationshipFlowView } from "./relationship-flow-view";
@@ -26,9 +25,6 @@ import {
   mergeRelationshipNodePositions,
   RELATIONSHIP_LAYOUT_FULL,
 } from "./relationship-layout";
-
-const nodeTypes = { tableNode: TableNode };
-const edgeTypes = { tableEdge: TableEdge };
 const EMPTY_SELECTED_COLUMNS: Record<string, string[]> = {};
 
 function renderSqlTableReference(table: TableMeta) {
@@ -526,7 +522,7 @@ export default function SttmTableRelationshipFlow({
   ]);
 
   return (
-    <div className="flex w-full flex-col gap-3 pb-3">
+    <div className="flex w-full flex-col gap-3">
       <div className="canvas-area">
         <div className="canvas-area__header">
           <div className="canvas-area__title">
@@ -563,12 +559,6 @@ export default function SttmTableRelationshipFlow({
             onNodesChange={onNodesChange}
             onEdgesChange={onEdgesChange}
             onConnect={onConnect}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            defaultEdgeOptions={{
-              type: "tableEdge",
-              animated: true,
-            }}
           />
         </div>
 

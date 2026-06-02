@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   AccountTreeOutlinedIcon,
   KeyboardDoubleArrowRightRoundedIcon,
@@ -17,6 +17,7 @@ import {
   buildSourceQueryPreviewSql,
 } from "@/features/sttm/mapping/mapping-utils";
 import { BuilderWorkspaceTabBar } from "@/features/sttm/shared/builder-workspace-tab-bar";
+import { SttmSidebarCollapsedRail } from "@/features/sttm/layout/sttm-sidebar-collapsed-rail";
 import { AiSummaryPanel } from "./ai-summary-panel";
 import { SummaryExportActions } from "./summary-export-actions";
 import { SummaryStatsRow } from "./summary-stats-row";
@@ -64,7 +65,7 @@ export function SummaryWorkspace() {
   const aiSummaryResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   useEffect(() => {
-    const handlePointerMove = (event: MouseEvent) => {
+    const handlePointerMove = (event: globalThis.MouseEvent) => {
       const state = aiSummaryResizeRef.current;
       if (!state) {
         return;
@@ -88,7 +89,7 @@ export function SummaryWorkspace() {
     };
   }, []);
 
-  const beginAiSummaryResize = (event: MouseEvent<HTMLDivElement>) => {
+  const beginAiSummaryResize = (event: ReactMouseEvent<HTMLDivElement>) => {
     aiSummaryResizeRef.current = {
       startX: event.clientX,
       startWidth: aiSummaryWidth,
@@ -222,31 +223,32 @@ export function SummaryWorkspace() {
                 height: "100%",
                 display: "flex",
                 flexDirection: "column",
-                alignItems: "flex-start",
-                justifyContent: "flex-end",
-                pb: 1.25,
-                pl: 0.75,
+                alignItems: "center",
+                overflow: "hidden",
               }}
             >
-              <IconButton
-                size="small"
-                aria-label="Expand AI summary"
-                onClick={() => setAiSummaryCollapsed(false)}
-                sx={{
-                  width: 32,
-                  height: 32,
-                  p: 0,
-                  color: "#475569",
-                  border: "1px solid #dbe2ea",
-                  borderRadius: "50%",
-                  backgroundColor: "#fff",
-                  "&:hover": {
-                    backgroundColor: "#f8fafc",
-                  },
-                }}
-              >
-                <KeyboardDoubleArrowRightRoundedIcon sx={{ fontSize: 18 }} />
-              </IconButton>
+              <SttmSidebarCollapsedRail items={[{ kind: "ai", label: "AI Summary" }]} />
+              <Box sx={{ mt: "auto", pb: 1.25 }}>
+                <IconButton
+                  size="small"
+                  aria-label="Expand AI summary"
+                  onClick={() => setAiSummaryCollapsed(false)}
+                  sx={{
+                    width: 32,
+                    height: 32,
+                    p: 0,
+                    color: "#475569",
+                    border: "1px solid #dbe2ea",
+                    borderRadius: "50%",
+                    backgroundColor: "#fff",
+                    "&:hover": {
+                      backgroundColor: "#f8fafc",
+                    },
+                  }}
+                >
+                  <KeyboardDoubleArrowRightRoundedIcon sx={{ fontSize: 18 }} />
+                </IconButton>
+              </Box>
             </Box>
           ) : (
             <Box sx={{ display: "flex", width: "100%", minWidth: 0, minHeight: 0, flex: 1 }}>

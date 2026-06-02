@@ -1,5 +1,27 @@
 /* NOTE: These classnames are used by the STTM embedded relationship UI. */
 
+.sttm-scroll-pane {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 #f8fafc;
+}
+
+.sttm-scroll-pane::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.sttm-scroll-pane::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1;
+  border-radius: 999px;
+}
+
+.sttm-scroll-pane::-webkit-scrollbar-track {
+  background-color: #f8fafc;
+}
+
 .app-container {
   display: flex;
   flex-direction: column;
@@ -24,12 +46,11 @@
 /* --- React Flow Canvas Area --- */
 .canvas-area {
   width: 100%;
-  height: 675px;
-  min-height: 675px;
-  flex-shrink: 0;
+  min-height: 420px;
+  height: auto;
   position: relative;
   background: #ffffff;
-  margin: 0 0 0;
+  margin: 0;
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   overflow: hidden;
@@ -90,8 +111,9 @@
 }
 
 .canvas-area__flow-host {
-  flex: 1;
-  min-height: 473px;
+  flex: 1 0 auto;
+  min-height: 320px;
+  height: 320px;
   position: relative;
   width: 100%;
 }
@@ -794,23 +816,25 @@
 .filter-section {
   background: white;
   margin: 0;
-  border: 1px solid #e2e8f0;
+  border: 1px solid #e5e7eb;
   border-radius: 12px;
   overflow: hidden;
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
   display: flex;
   flex-direction: column;
   position: relative;
   z-index: 10;
   flex-shrink: 0;
+  min-height: 420px;
 }
 
 .filter-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 16px 24px;
   border-bottom: 1px solid #f1f5f9;
+  flex-shrink: 0;
 }
 
 .filter-header__left {
@@ -858,7 +882,20 @@
 .filter-body {
   padding: 0 24px 24px;
   flex: 1;
+  min-height: 320px;
+  display: flex;
+  flex-direction: column;
   overflow-y: auto;
+}
+
+.filter-empty-state {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+  min-height: 280px;
 }
 
 .filter-table-header {

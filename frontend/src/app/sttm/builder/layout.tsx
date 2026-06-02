@@ -9,7 +9,8 @@ import {
   getSelectedTargetTable,
 } from '@/features/sttm/shared/sttm-selection-utils';
 import { dbService } from '@/services/dbService';
-import { KeyboardDoubleArrowRightRoundedIcon } from '@/utils/icons';
+import { AiaResizeHandle } from '@/components/ui/aia-resize-handle';
+import { SttmSidebarCollapseFooter } from '@/features/sttm/layout/sttm-sidebar-collapse-footer';
 import {
   Box,
   Button,
@@ -20,8 +21,6 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
-
-import { AiaResizeHandle } from '@/components/ui/aia-resize-handle';
 
 type SemanticPrepState = {
   open: boolean;
@@ -235,7 +234,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="flex h-[calc(100vh-60px)] flex-col bg-gray-50">
+      <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {showSidebarHost ? (
             <aside
@@ -246,22 +245,28 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
                 <Box
                   sx={{
                     width: '100%',
+                    height: '100%',
+                    minHeight: 0,
                     display: 'flex',
-                    alignItems: 'flex-start',
-                    justifyContent: 'center',
-                    py: 1.25,
+                    flexDirection: 'column',
                   }}
                 >
-                  <TooltipButton
-                    title="Expand source sidebar"
-                    onClick={() => setCollapsed(false)}
-                    icon={<KeyboardDoubleArrowRightRoundedIcon sx={{ fontSize: 18 }} />}
+                  <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                    <SidebarHost />
+                  </Box>
+                  <SttmSidebarCollapseFooter
+                    collapsed
+                    centered
+                    expandLabel="Expand source sidebar"
+                    onToggle={() => setCollapsed(false)}
                   />
                 </Box>
               ) : (
                 <Box sx={{ display: 'flex', width: '100%', minWidth: 0, height: '100%', minHeight: 0 }}>
                   <Box sx={{ minWidth: 0, flex: 1, height: '100%', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                    <SidebarHost />
+                    <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                      <SidebarHost />
+                    </Box>
                   </Box>
                   <AiaResizeHandle
                     direction="horizontal"
@@ -278,7 +283,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
               className={
                 isWorkspacePage
                   ? 'flex min-h-0 flex-1 overflow-hidden bg-white'
-                  : 'flex min-h-0 flex-1 overflow-auto bg-white'
+                  : 'flex min-h-0 flex-1 flex-col overflow-hidden bg-white'
               }
             >
               {children}
@@ -351,34 +356,6 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
         </Box>
       </Dialog>
     </>
-  );
-}
-
-function TooltipButton({
-  title,
-  onClick,
-  icon,
-}: {
-  title: string;
-  onClick: () => void;
-  icon: ReactNode;
-}) {
-  return (
-    <IconButton
-      size="small"
-      onClick={onClick}
-      aria-label={title}
-      sx={{
-        color: '#475569',
-        border: '1px solid #dbe2ea',
-        backgroundColor: '#fff',
-        '&:hover': {
-          backgroundColor: '#f8fafc',
-        },
-      }}
-    >
-      {icon}
-    </IconButton>
   );
 }
 

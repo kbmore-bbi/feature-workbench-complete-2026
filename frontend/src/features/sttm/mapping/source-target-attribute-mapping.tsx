@@ -73,11 +73,6 @@ function resolveMappingRuleSelectValue(rule: string | null | undefined): string 
   return rule && rule !== 'Select...' ? rule : '';
 }
 
-function isSourceColumnInputDisabled(rule: string | null | undefined): boolean {
-  const resolvedRule = resolveMappingRuleSelectValue(rule);
-  return !resolvedRule || resolvedRule === 'Custom';
-}
-
 function resolveMappingDescription(
   row: {
     targetColumn: string;
@@ -961,7 +956,8 @@ const SourceTargetAttributeMapping = () => {
                   <MappingSourceColumnsCell
                     value={row.sourceColumn}
                     options={sourceColumnOptions}
-                    disabled={isSourceColumnInputDisabled(row.rule)}
+                    disabled={!resolvedRule}
+                    displayAsPlainText={resolvedRule === 'Custom'}
                     onChange={(nextValue) => {
                       const nextColumns = parseSourceColumns(nextValue);
                       const rule = resolveMappingRuleSelectValue(row.rule);

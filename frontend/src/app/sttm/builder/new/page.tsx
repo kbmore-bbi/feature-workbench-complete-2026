@@ -17,20 +17,19 @@ export default function SttmBuilderPage() {
   }, [setContent]);
 
   return (
-    <div className="w-full bg-white flex flex-col p-3 gap-3">
-      {/* Panels container: Column on mobile, Row on large screens */}
-      <div className="flex flex-col lg:flex-row min-h-[450px] border border-[#e5e7eb] rounded-xl overflow-hidden bg-white shrink-0">
-        {/* Source panel */}
-        <div className="flex-1 border-b lg:border-b-0 lg:border-r border-[#e5e7eb]">
-          <SourceTargetPanel type="source" />
+    <div className="sttm-scroll-pane h-full min-h-0 flex-1 overflow-y-auto bg-white p-3">
+      <div className="flex flex-col gap-3 pb-3">
+        <div className="flex min-h-[450px] flex-col rounded-xl border border-[#e5e7eb] bg-white lg:flex-row lg:items-stretch">
+          <div className="flex flex-1 border-b border-[#e5e7eb] lg:border-b-0 lg:border-r">
+            <SourceTargetPanel type="source" />
+          </div>
+          <div className="flex flex-1">
+            <SourceTargetPanel type="target" />
+          </div>
         </div>
-        {/* Target panel */}
-        <div className="flex-1">
-          <SourceTargetPanel type="target" />
-        </div>
-      </div>      
-      {/* Table Relationships + Filter Conditions */}
-      <SttmTableRelationshipFlow />
+
+        <SttmTableRelationshipFlow />
+      </div>
     </div>
   );
 }

@@ -2,7 +2,6 @@
 import type { ReactNode } from "react";
 import {
   AllInclusiveIcon,
-  AutoAwesomeRoundedIcon,
   CheckRoundedIcon,
   ErrorOutlineRoundedIcon,
   EastRoundedIcon,
@@ -11,6 +10,7 @@ import {
   TableChartOutlinedIcon,
   WarningAmberRoundedIcon,
 } from '@/utils/icons';
+import { SttmSidebarSectionIcon } from "@/features/sttm/layout/sttm-sidebar-icons";
 import {
   Box,
   Chip,
@@ -339,7 +339,7 @@ export function AiSummaryPanel({
     >
       <Box sx={{ px: 2, py: 1.5, borderBottom: "1px solid #e5e7eb", backgroundColor: "#fff" }}>
         <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-          <AutoAwesomeRoundedIcon sx={{ fontSize: 18, color: "#6366f1" }} />
+          <SttmSidebarSectionIcon kind="ai" fontSize={18} />
           <Typography sx={{ fontSize: "0.92rem", fontWeight: 700, color: "#111827" }}>
             AI Summary
           </Typography>

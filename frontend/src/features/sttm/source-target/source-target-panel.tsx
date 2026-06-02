@@ -105,7 +105,9 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
       sx={{
         width: "100%",
         maxWidth: "100%",
-        height: "100%",
+        flex: 1,
+        display: "flex",
+        flexDirection: "column",
         backgroundColor: "transparent",
         p: 2,
       }}
@@ -232,7 +234,7 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
         </Box>
       )}
 
-      <Box>
+      <Box sx={{ pr: 0.5 }}>
         <Stack spacing={0.5}>
           <SourceTargetList type={type} searchTerm={searchTerm} />
         </Stack>

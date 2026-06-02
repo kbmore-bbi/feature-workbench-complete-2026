@@ -11,6 +11,7 @@ type MappingSourceColumnsCellProps = {
   options: AiaAutocompleteOption[];
   onChange: (value: string) => void;
   disabled?: boolean;
+  displayAsPlainText?: boolean;
   width?: number | string;
   minWidth?: number | string;
   confidenceScore?: number | null;
@@ -22,11 +23,97 @@ type MappingSourceColumnsCellProps = {
 
 const DISABLED_SOURCE_FIELD_BG = '#f8fafc';
 
+function ConfidenceMeta({
+  confidenceScore,
+  helperText,
+}: {
+  confidenceScore?: number | null;
+  helperText: string;
+}) {
+  if (confidenceScore !== null && confidenceScore !== undefined) {
+    return (
+      <Box
+        sx={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          gap: 0.5,
+          minWidth: 54,
+          pt: 0.15,
+          flexShrink: 0,
+        }}
+      >
+        <Typography
+          sx={{
+            fontSize: '0.68rem',
+            fontWeight: 800,
+            color:
+              confidenceScore >= 0.8
+                ? '#166534'
+                : confidenceScore >= 0.55
+                  ? '#92400e'
+                  : '#b91c1c',
+          }}
+        >
+          {Math.round(confidenceScore * 100)}%
+        </Typography>
+
+        {helperText ? (
+          <Tooltip
+            title={helperText}
+            placement="top"
+            arrow
+            enterDelay={200}
+            slotProps={{
+              tooltip: {
+                sx: {
+                  fontSize: '0.72rem',
+                  maxWidth: 360,
+                  lineHeight: 1.5,
+                },
+              },
+            }}
+          >
+            <InfoOutlinedIcon sx={{ fontSize: 15, color: '#64748b', cursor: 'help' }} />
+          </Tooltip>
+        ) : null}
+      </Box>
+    );
+  }
+
+  if (!helperText) {
+    return null;
+  }
+
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'flex-end', minWidth: 24, pt: 0.15, flexShrink: 0 }}>
+      <Tooltip
+        title={helperText}
+        placement="top"
+        arrow
+        enterDelay={200}
+        slotProps={{
+          tooltip: {
+            sx: {
+              fontSize: '0.72rem',
+              maxWidth: 360,
+              lineHeight: 1.5,
+            },
+          },
+        }}
+      >
+        <InfoOutlinedIcon sx={{ fontSize: 15, color: '#64748b', cursor: 'help' }} />
+      </Tooltip>
+    </Box>
+  );
+}
+
 export const MappingSourceColumnsCell = ({
   value,
   options,
   onChange,
   disabled = false,
+  displayAsPlainText = false,
   width,
   minWidth,
   confidenceScore,
@@ -41,6 +128,40 @@ export const MappingSourceColumnsCell = ({
     (candidateSourceColumns.length
       ? `Best alternatives: ${candidateSourceColumns.join(', ')}`
       : '');
+
+  if (displayAsPlainText) {
+    const displayValue = value?.trim() ?? '';
+
+    return (
+      <TableCell sx={aiaTableCellSx({ width, minWidth, sx })}>
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 0.9,
+          }}
+        >
+          <Typography
+            component="div"
+            sx={{
+              flex: 1,
+              minWidth: 0,
+              fontSize: '0.8rem',
+              color: displayValue ? '#111827' : '#94a3b8',
+              whiteSpace: 'normal',
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
+              lineHeight: 1.45,
+            }}
+          >
+            {displayValue || 'Use Pre-process to add source columns...'}
+          </Typography>
+
+          <ConfidenceMeta confidenceScore={confidenceScore} helperText={helperText} />
+        </Box>
+      </TableCell>
+    );
+  }
 
   return (
     <TableCell sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'hidden' })}>
@@ -101,74 +222,7 @@ export const MappingSourceColumnsCell = ({
             />
           </Box>
 
-          {confidenceScore !== null && confidenceScore !== undefined ? (
-            <Box
-              sx={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'flex-end',
-                gap: 0.5,
-                minWidth: 54,
-                pt: 0.6,
-                flexShrink: 0,
-              }}
-            >
-              <Typography
-                sx={{
-                  fontSize: '0.68rem',
-                  fontWeight: 800,
-                  color:
-                    confidenceScore >= 0.8
-                      ? '#166534'
-                      : confidenceScore >= 0.55
-                        ? '#92400e'
-                        : '#b91c1c',
-                }}
-              >
-                {Math.round(confidenceScore * 100)}%
-              </Typography>
-
-              {helperText ? (
-                <Tooltip
-                  title={helperText}
-                  placement="top"
-                  arrow
-                  enterDelay={200}
-                  slotProps={{
-                    tooltip: {
-                      sx: {
-                        fontSize: '0.72rem',
-                        maxWidth: 360,
-                        lineHeight: 1.5,
-                      },
-                    },
-                  }}
-                >
-                  <InfoOutlinedIcon sx={{ fontSize: 15, color: '#64748b', cursor: 'help' }} />
-                </Tooltip>
-              ) : null}
-            </Box>
-          ) : helperText ? (
-            <Box sx={{ display: 'flex', justifyContent: 'flex-end', minWidth: 24, pt: 0.6, flexShrink: 0 }}>
-              <Tooltip
-                title={helperText}
-                placement="top"
-                arrow
-                enterDelay={200}
-                slotProps={{
-                  tooltip: {
-                    sx: {
-                      fontSize: '0.72rem',
-                      maxWidth: 360,
-                      lineHeight: 1.5,
-                    },
-                  },
-                }}
-              >
-                <InfoOutlinedIcon sx={{ fontSize: 15, color: '#64748b', cursor: 'help' }} />
-              </Tooltip>
-            </Box>
-          ) : null}
+          <ConfidenceMeta confidenceScore={confidenceScore} helperText={helperText} />
         </Box>
       </Box>
     </TableCell>

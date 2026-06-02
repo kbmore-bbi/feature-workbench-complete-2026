@@ -13,6 +13,7 @@ import { getAppTheme, type AppThemeMode } from "@/theme/theme";
 import { Provider as ReduxProvider } from "react-redux";
 import { store } from "@/store/store";
 import { GlobalErrorProvider } from "@/components/error/global-error-provider";
+import { AppSidebarProvider } from "@/features/layout/app-sidebar-context";
 
 type ThemeModeContextValue = {
   mode: AppThemeMode;
@@ -66,7 +67,9 @@ export default function Providers({ children }: { children: ReactNode }) {
       <ReduxProvider store={store}>
         <ThemeProvider theme={theme}>
           <CssBaseline />
-          <GlobalErrorProvider>{children}</GlobalErrorProvider>
+          <GlobalErrorProvider>
+            <AppSidebarProvider>{children}</AppSidebarProvider>
+          </GlobalErrorProvider>
         </ThemeProvider>
       </ReduxProvider>
     </ThemeModeContext.Provider>

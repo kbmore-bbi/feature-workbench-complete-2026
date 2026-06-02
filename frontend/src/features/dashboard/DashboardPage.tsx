@@ -1,47 +1,36 @@
 "use client";
 
-import { Box, Paper } from "@mui/material";
-import DashboardSidebar from "./DashboardSidebar";
+import { Box } from "@mui/material";
 import DashboardStats from "./DashboardStats";
 import QuickStatsPanel from "./QuickStatsPanel";
 import RecentMappingsPanel from "./RecentMappingsPanel";
 import DashboardHeader from "./DashboardHeader";
 
 type DashboardPageProps = {
-    initialNewMappingOpen?: boolean;
+  initialNewMappingOpen?: boolean;
 };
 
-export default function DashboardPage({
-    initialNewMappingOpen = false,
-}: DashboardPageProps) {
-    return (
-        <Box className="h-screen overflow-hidden bg-[#F7F8FA]">
-            <Paper
-                elevation={0}
-                className="mx-auto flex min-h-[calc(100vh-32px)] max-w-[1600px] flex-col overflow-hidden rounded-[24px] border border-[#E8ECF4] bg-white"
-            >
-                {/* <AppHeader /> */}
+export default function DashboardPage(_props: DashboardPageProps) {
+  return (
+    <Box
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        overflowY: "auto",
+        px: 3,
+        py: 2.5,
+      }}
+    >
+      <DashboardHeader />
 
-                <Box className="flex min-h-0 flex-1">
-                    <DashboardSidebar initialNewMappingOpen={initialNewMappingOpen} />
+      <Box className="mt-6">
+        <DashboardStats />
+      </Box>
 
-                    <Box className="flex min-w-0 flex-1 flex-col px-6 py-5">
-                        <DashboardHeader />
-
-                        <Box className="mt-6">
-                            <DashboardStats />
-                        </Box>
-
-                        <Box className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.25fr_0.9fr]">
-                            <QuickStatsPanel />
-                            <RecentMappingsPanel />
-                        </Box>
-
-                        <Box className="mt-auto pt-8">
-                        </Box>
-                    </Box>
-                </Box>
-            </Paper>
-        </Box>
-    );
+      <Box className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_1fr]">
+        <QuickStatsPanel />
+        <RecentMappingsPanel />
+      </Box>
+    </Box>
+  );
 }

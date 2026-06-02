@@ -31,6 +31,7 @@ import type {
   SourceTargetInfo,
   TableNode,
   MappingState,
+  MappingWorkspaceSnapshot,
   PendingAiMappingReview,
 } from "@/features/sttm/types/sttm.types";
 import {
@@ -2137,6 +2138,26 @@ export const sttmBuilderSlice = createSlice({
     },
 
     // UI Mapping Reducers
+    loadMappingWorkspaceSnapshot: (
+      state,
+      action: PayloadAction<MappingWorkspaceSnapshot>,
+    ) => {
+      const snapshot = action.payload;
+      state.sources = snapshot.sources;
+      state.targets = snapshot.targets;
+      state.sourceAttributeGroups = snapshot.sourceAttributeGroups;
+      state.targetAttributeGroup = snapshot.targetAttributeGroup;
+      state.mappings = snapshot.mappings;
+      state.relationships = snapshot.relationships ?? [];
+      state.drivingTableId =
+        snapshot.drivingTableId ??
+        snapshot.sources.find((table) => table.isSelected)?.tableId ??
+        null;
+      state.selectedMappingIds = [];
+      state.pendingAiMappingReviews = [];
+      state.mappingSuggestions = [];
+      state.loadState.attributes = "success";
+    },
     initializeMappings: (state, action: PayloadAction<MappingState[]>) => {
       state.mappings = action.payload;
       state.selectedMappingIds = [];
@@ -2714,6 +2735,7 @@ export const {
   openPendingDerivedSourceDraft,
   acknowledgePendingDerivedSourceDraft,
   dismissPendingDerivedSourceDraft,
+  loadMappingWorkspaceSnapshot,
   initializeMappings,
   updateMapping,
   applyPendingAiMappingReview,

@@ -13,6 +13,16 @@ import {
 } from '@xyflow/react';
 
 import { getRelationshipViewportPadding } from './relationship-layout';
+import { TableEdge } from './table-edge';
+import { TableNode } from './table-node';
+
+export const RELATIONSHIP_NODE_TYPES = { tableNode: TableNode };
+export const RELATIONSHIP_EDGE_TYPES = { tableEdge: TableEdge };
+export const RELATIONSHIP_PRO_OPTIONS = { hideAttribution: true } as const;
+export const RELATIONSHIP_DEFAULT_EDGE_OPTIONS = {
+  type: 'tableEdge',
+  animated: true,
+} as const;
 
 type RelationshipFlowViewProps = ReactFlowProps<any, any> & {
   /** Align viewport to top-left only on the first table selection. */
@@ -92,10 +102,10 @@ function RelationshipFlowCanvas({
       onNodesChange={onNodesChange}
       onEdgesChange={onEdgesChange}
       onConnect={onConnect}
-      nodeTypes={nodeTypes}
-      edgeTypes={edgeTypes}
-      proOptions={proOptions ?? { hideAttribution: true }}
-      defaultEdgeOptions={defaultEdgeOptions}
+      nodeTypes={nodeTypes ?? RELATIONSHIP_NODE_TYPES}
+      edgeTypes={edgeTypes ?? RELATIONSHIP_EDGE_TYPES}
+      proOptions={proOptions ?? RELATIONSHIP_PRO_OPTIONS}
+      defaultEdgeOptions={defaultEdgeOptions ?? RELATIONSHIP_DEFAULT_EDGE_OPTIONS}
       defaultViewport={{ x: 0, y: 0, zoom: 1 }}
       panOnScroll
       panOnDrag

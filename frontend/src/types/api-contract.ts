@@ -204,3 +204,152 @@ export type STTMBuilderEnvelopeResponse = ApiEnvelope<
   result: SourceMappingResult | TransformationResult | null;
   message?: string | null;
 };
+
+export type ConversationOperation =
+  | "conversation.ask"
+  | "conversation.recommend"
+  | "conversation.feedback"
+  | "conversation.handoff.sttm"
+  | "conversation.settings.get"
+  | "conversation.settings.update"
+  | "conversation.signals.list"
+  | "conversation.signals.evaluate"
+  | "conversation.signals.respond";
+
+export type ConversationIntentClass =
+  | "quick_answer"
+  | "recommendation"
+  | "rag_lookup"
+  | "feedback_capture"
+  | "sttm_handoff"
+  | "clarification";
+
+export type ConversationRoute =
+  | "conversation"
+  | "sttm_builder"
+  | "direct_refusal"
+  | "approval_required";
+
+export type ConversationStatus =
+  | "completed"
+  | "needs_input"
+  | "failed"
+  | "approval_required";
+
+export type EvidenceCitation = {
+  source_id: string;
+  source_type: string;
+  snippet?: string | null;
+  score?: number | null;
+};
+
+export type ConversationArtifact = {
+  source_ids?: string[];
+  quick_replies?: string[];
+  review_recorded?: boolean;
+  handoff_operation?: string | null;
+  handoff_request_id?: string | null;
+  handoff_summary?: string | null;
+  raw_feedback?: Record<string, unknown> | null;
+  conversation_id?: string | null;
+  turn_ids?: string[];
+  route_reason?: string | null;
+  route_confidence?: number | null;
+  suggested_operation?: string | null;
+  feedback_requested?: boolean;
+  signal_id?: string | null;
+};
+
+export type AssistantPreferenceState = {
+  feedback_enabled: boolean;
+  recommendations_enabled: boolean;
+};
+
+export type AssistantSignalType = "feedback" | "recommendation";
+export type AssistantSignalStatus = "new" | "acknowledged" | "responded" | "dismissed";
+
+export type AssistantSignal = {
+  signal_id: string;
+  signal_type: AssistantSignalType;
+  layer: "feedback" | "inference" | "recommendation";
+  status: AssistantSignalStatus;
+  source: string;
+  title: string;
+  message: string;
+  options: string[];
+  allow_free_text?: boolean;
+  requires_response?: boolean;
+  confidence?: number | null;
+  entity_type?: string | null;
+  entity_ids?: string[];
+  inference_id?: string | null;
+  recommendation_id?: string | null;
+  attributes?: Record<string, unknown>;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type AssistantInferenceRecord = {
+  inference_id: string;
+  inference_type: string;
+  summary: string;
+  confidence?: number | null;
+  source: string;
+  entity_type?: string | null;
+  entity_ids?: string[];
+  attributes?: Record<string, unknown>;
+};
+
+export type ConversationRequestData = {
+  message?: string | null;
+  intent_class?: ConversationIntentClass | null;
+  requested_sources?: string[];
+  feedback?: {
+    category?: string;
+    rating?: number | null;
+    comment?: string | null;
+    target_request_id?: string | null;
+  } | null;
+};
+
+export type ConversationResponseData = {
+  status: ConversationStatus;
+  route: ConversationRoute;
+  intent_class: ConversationIntentClass;
+  agent?: string | null;
+  message?: string | null;
+  approval_required?: boolean;
+  artifact?: ConversationArtifact | null;
+  citations?: EvidenceCitation[];
+};
+
+export type ConversationSettingsResponseData = {
+  settings: AssistantPreferenceState;
+};
+
+export type ConversationSignalsResponseData = {
+  settings: AssistantPreferenceState;
+  signals: AssistantSignal[];
+  inferences: AssistantInferenceRecord[];
+  unread_count: number;
+};
+
+export type AssistantSignalResponseData = {
+  signal_id: string;
+  status: AssistantSignalStatus;
+  feedback_recorded?: boolean;
+};
+
+export type ConversationEnvelopeRequest = ApiEnvelope<
+  STTMBuilderContext,
+  ConversationRequestData
+> & {
+  operation: ConversationOperation;
+};
+
+export type ConversationEnvelopeResponse = ApiEnvelope<
+  STTMBuilderContext,
+  ConversationResponseData
+> & {
+  operation: ConversationOperation;
+};

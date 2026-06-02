@@ -15,6 +15,8 @@ from app.core.snowflake import (
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.core.snowflake_analyst import SnowflakeAnalystClient
 from app.core.derived_source import DerivedSourceService
+from app.core.conversation import ConversationService
+from app.core.conversation_memory import ConversationMemoryService
 from app.core.semantic_context import SemanticContextService
 from app.core.semantic_model import SemanticModelService
 from app.core.table_selection import TableSelectionService
@@ -171,6 +173,27 @@ def get_sttm_builder_service(
         session=client.session,
         semantic_model_service=semantic_model_service,
         semantic_context_service=semantic_context_service,
+    )
+
+
+def get_conversation_memory_service(
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ConversationMemoryService:
+    return ConversationMemoryService(client.session, settings)
+
+
+def get_conversation_service(
+    agent_client: Annotated[SnowflakeAgentClient, Depends(get_snowflake_agent_client)],
+    sttm_builder_service: Annotated[STTMBuilderService, Depends(get_sttm_builder_service)],
+    conversation_memory: Annotated[ConversationMemoryService, Depends(get_conversation_memory_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ConversationService:
+    return ConversationService(
+        agent_client,
+        sttm_builder_service=sttm_builder_service,
+        memory_service=conversation_memory,
+        settings=settings,
     )
 
 

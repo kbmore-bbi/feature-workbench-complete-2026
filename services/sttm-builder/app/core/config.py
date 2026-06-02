@@ -100,6 +100,10 @@ class Settings(BaseSettings):
         default="",
         alias="SNOWFLAKE_SEMANTIC_MODEL_AGENT",
     )
+    snowflake_workbench_conversation_agent: str = Field(
+        default="",
+        alias="SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT",
+    )
     snowflake_relationships_procedure: str = Field(
         default="",
         alias="SNOWFLAKE_RELATIONSHIPS_PROCEDURE",
@@ -124,6 +128,42 @@ class Settings(BaseSettings):
         default="VW_DERIVED_SOURCE_",
         alias="SNOWFLAKE_DERIVED_VIEW_PREFIX",
     )
+    snowflake_conversation_turns_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_CONVERSATION_TURNS",
+        alias="SNOWFLAKE_CONVERSATION_TURNS_TABLE",
+    )
+    snowflake_conversation_feedback_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_FEEDBACK",
+        alias="SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE",
+    )
+    snowflake_conversation_recommendations_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RECOMMENDATIONS",
+        alias="SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE",
+    )
+    snowflake_assistant_inferences_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_INFERENCES",
+        alias="SNOWFLAKE_ASSISTANT_INFERENCES_TABLE",
+    )
+    snowflake_assistant_signals_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SIGNALS",
+        alias="SNOWFLAKE_ASSISTANT_SIGNALS_TABLE",
+    )
+    snowflake_assistant_settings_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SETTINGS",
+        alias="SNOWFLAKE_ASSISTANT_SETTINGS_TABLE",
+    )
+    snowflake_relationship_facts_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RELATIONSHIP_FACTS",
+        alias="SNOWFLAKE_RELATIONSHIP_FACTS_TABLE",
+    )
+    snowflake_rag_documents_table: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RAG_DOCUMENTS",
+        alias="SNOWFLAKE_RAG_DOCUMENTS_TABLE",
+    )
+    snowflake_rag_search_service: str = Field(
+        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_WORKBENCH_RAG",
+        alias="SNOWFLAKE_RAG_SEARCH_SERVICE",
+    )
     snowflake_agent_orchestration_model: str = Field(
         default="claude-sonnet-4",
         alias="SNOWFLAKE_AGENT_ORCHESTRATION_MODEL",
@@ -135,11 +175,34 @@ class Settings(BaseSettings):
     datahub_dataset_env: str = Field(default="PROD", alias="DATAHUB_DATASET_ENV")
     datahub_timeout_seconds: float = Field(default=10.0, alias="DATAHUB_TIMEOUT_SECONDS")
     cors_allowed_origins: str = Field(default="", alias="CORS_ALLOWED_ORIGINS")
+    guardrails_enabled: bool = Field(default=True, alias="GUARDRAILS_ENABLED")
+    guardrails_debug_routes_enabled: bool = Field(
+        default=False,
+        alias="GUARDRAILS_DEBUG_ROUTES_ENABLED",
+    )
+    guardrails_presidio_enabled: bool = Field(
+        default=False,
+        alias="GUARDRAILS_PRESIDIO_ENABLED",
+    )
+    guardrails_reject_raw_pii: bool = Field(
+        default=False,
+        alias="GUARDRAILS_REJECT_RAW_PII",
+    )
 
     @computed_field
     @property
     def agents(self) -> list[AgentConfig]:
         return [
+            AgentConfig(
+                id="workbench_conversation",
+                display_name="Workbench Conversation Agent",
+                description=(
+                    "Fast governed conversation agent for quick answers, recommendations, "
+                    "feedback capture, and approved semantic-context RAG before any STTM handoff."
+                ),
+                snowflake_name=self.resolved_workbench_conversation_agent,
+                default_model=self.snowflake_agent_orchestration_model,
+            ),
             AgentConfig(
                 id="sttm_builder",
                 display_name="STTM Builder Agent",
@@ -225,6 +288,14 @@ class Settings(BaseSettings):
         )
 
     @property
+    def resolved_workbench_conversation_agent(self) -> str:
+        return self._resolve_agent_name(
+            self.snowflake_workbench_conversation_agent,
+            legacy_object_name="WORKBENCH_CONVERSATION_AGENT",
+            default_object_name="AGT_WORKBENCH_CONVERSATION",
+        )
+
+    @property
     def resolved_relationships_procedure(self) -> str:
         raw_value = self.snowflake_relationships_procedure.strip()
         if raw_value and not _looks_like_placeholder(raw_value):
@@ -252,6 +323,16 @@ class Settings(BaseSettings):
         if host == "your_org-your_account.snowflakecomputing.com":
             return ""
         return host
+
+    @property
+    def non_local_env(self) -> bool:
+        return self.app_env.strip().lower() not in {"", "dev", "local", "test"}
+
+    @property
+    def debug_routes_enabled(self) -> bool:
+        if self.guardrails_debug_routes_enabled:
+            return True
+        return not self.non_local_env
 
     def _resolve_agent_name(
         self,

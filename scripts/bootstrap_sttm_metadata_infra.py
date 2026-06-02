@@ -22,9 +22,16 @@ SQL_FILES = [
     ROOT_DIR / "infra/snowflake/create-derived-sources-table.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-ddl.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-list-tables.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-list-columns.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-sample-data.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-stats.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-attribute-profile.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-relationship.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-check-table-staleness.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-check-column-staleness.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-cached-semantic-view.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-save-semantic-view.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-rollup-schema-summary.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-semantic-model.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-subagent-semantic-model.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-subagent-source-mapping.sql",
@@ -36,11 +43,13 @@ AGENT_SPECS = [
     ("AGT_TRANSFORMATION_RULE", ROOT_DIR / "infra/snowflake/agents/agent_spec_transformation_rule.yaml"),
     ("AGT_STTM_BUILDER", ROOT_DIR / "infra/snowflake/agents/agent_spec_sttm_builder.yaml"),
     ("AGT_SEMANTIC_MODEL", ROOT_DIR / "infra/snowflake/agents/agent_spec_semantic_model.yaml"),
+    ("AGT_WORKBENCH_CONVERSATION", ROOT_DIR / "infra/snowflake/agents/agent_spec_workbench_conversation.yaml"),
 ]
 
 SKILL_DIRECTORIES = [
     ROOT_DIR / "infra/snowflake/skills/sttm_bundle_orchestration",
     ROOT_DIR / "infra/snowflake/skills/derived_source_analyst",
+    ROOT_DIR / "infra/snowflake/skills/live_feedback_and_recommendations",
 ]
 
 

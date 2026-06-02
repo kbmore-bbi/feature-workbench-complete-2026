@@ -668,6 +668,148 @@ export default function PreProcessModal() {
             sx={{ width: '100%', flex: 1, minHeight: 0 }}
           />
         </Box>
+
+        {/* Function Library */}
+        <Box
+          sx={{
+            width: 280,
+            flexShrink: 0,
+            borderLeft: '1px solid #e5e7eb',
+            display: 'flex',
+            flexDirection: 'column',
+            bgcolor: '#fff',
+          }}
+        >
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: '1px solid #e5e7eb',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 0.75,
+            }}
+          >
+            <FunctionsRoundedIcon sx={{ fontSize: 16, color: '#374151' }} />
+            <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827' }}>
+              Function Library
+            </Typography>
+          </Box>
+
+          <Box sx={{ px: 1.5, pt: 1.25, pb: 1 }}>
+            <Box
+              sx={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 0.5,
+                p: 0.5,
+                bgcolor: '#f3f4f6',
+                borderRadius: '10px',
+              }}
+            >
+              {FUNCTION_TABS.map((tab) => {
+                const isActive = functionTab === tab.id;
+                return (
+                  <Box
+                    key={tab.id}
+                    onClick={() => setFunctionTab(tab.id)}
+                    sx={{
+                      px: 1.25,
+                      py: 0.5,
+                      borderRadius: '7px',
+                      cursor: 'pointer',
+                      fontSize: '0.74rem',
+                      fontWeight: 600,
+                      color: isActive ? '#111827' : '#6b7280',
+                      bgcolor: isActive ? '#ffffff' : 'transparent',
+                      boxShadow: isActive
+                        ? '0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.04)'
+                        : 'none',
+                      transition:
+                        'background-color 120ms ease, color 120ms ease, box-shadow 120ms ease',
+                      '&:hover': {
+                        bgcolor: isActive ? '#ffffff' : 'rgba(255,255,255,0.55)',
+                        color: '#111827',
+                      },
+                    }}
+                  >
+                    {tab.label}
+                  </Box>
+                );
+              })}
+            </Box>
+          </Box>
+
+          <Box
+            sx={{
+              px: 1.5,
+              py: 1.25,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 0.5,
+              borderBottom: '1px solid #f1f5f9',
+            }}
+          >
+            {QUICK_ACTIONS.map((action) => (
+              <Chip
+                key={action}
+                label={action}
+                size="small"
+                onClick={() => insertText(action, action.includes('()'))}
+                sx={{
+                  height: 26,
+                  borderRadius: '999px',
+                  bgcolor: '#f9fafb',
+                  border: '1px solid #e5e7eb',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  color: '#374151',
+                  cursor: 'pointer',
+                  '&:hover': { bgcolor: '#f3f4f6', borderColor: '#d1d5db' },
+                }}
+              />
+            ))}
+          </Box>
+
+          <Box
+            sx={{
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              px: 1.5,
+              py: 1.25,
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignContent: 'flex-start',
+              gap: 0.5,
+            }}
+          >
+            {FUNCTION_LIBRARY[functionTab].map((fn) => (
+              <Chip
+                key={fn}
+                label={fn}
+                size="small"
+                onClick={() => insertText(fn, fn.includes('()'))}
+                sx={{
+                  height: 26,
+                  borderRadius: '999px',
+                  bgcolor: '#faf5ff',
+                  border: '1px solid #ddd6fe',
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                  fontSize: '0.7rem',
+                  fontWeight: 600,
+                  color: '#6d28d9',
+                  cursor: 'pointer',
+                  '&:hover': {
+                    bgcolor: '#f3e8ff',
+                    borderColor: '#c4b5fd',
+                  },
+                }}
+              />
+            ))}
+          </Box>
+        </Box>
       </Box>
     </Dialog>
   );

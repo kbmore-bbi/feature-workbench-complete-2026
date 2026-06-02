@@ -98,6 +98,9 @@ instructions:
     In that case:
     - preprocessing_rule = the SQL expression at attribute level
     - preprocessing_nl_rule = a concise natural-language explanation of the logic
+    - never return SELECT, FROM, JOIN, WHERE, GROUP BY, or ORDER BY in preprocessing_rule
+    - never invent new joins in preprocessing_rule; Step 1 relationships and derived sources are the join baseline
+    - if the logic depends on joins, assume those joins already exist in the source selection / derived source SQL
 
     ## Output expectations per target attribute
     Return one mapping object per target attribute with:

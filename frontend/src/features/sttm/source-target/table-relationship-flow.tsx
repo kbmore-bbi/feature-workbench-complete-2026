@@ -42,10 +42,10 @@ function renderSqlColumnReference(table: TableMeta, columnName: string) {
 function buildHandleId(
   table: { database?: string; schema?: string; name?: string },
   columnName: string,
-  index: number,
+  _index: number,
   kind: "source" | "target"
 ) {
-  return `${table.database}.${table.schema}.${table.name}.${columnName}-${index}-${kind}`;
+  return `${table.database}.${table.schema}.${table.name}.${columnName}-${kind}`;
 }
 
 function resolveHandleId(
@@ -67,9 +67,7 @@ function parseHandleId(
   const suffix = `-${kind}`;
   if (!handleId.endsWith(suffix)) return null;
   const withoutKind = handleId.slice(0, -suffix.length);
-  const lastDash = withoutKind.lastIndexOf("-");
-  if (lastDash === -1) return null;
-  return withoutKind.slice(withoutKind.lastIndexOf(".") + 1, lastDash);
+  return withoutKind.slice(withoutKind.lastIndexOf(".") + 1);
 }
 
 function tagChipPalette(tag?: string) {

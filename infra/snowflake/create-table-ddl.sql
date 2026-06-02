@@ -70,6 +70,7 @@ CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC
     RELATIONSHIPS       VARIANT       NOT NULL,
     SEMANTIC_LEVEL      VARCHAR(32)   NOT NULL,
     SEMANTIC_VIEW_NAME  VARCHAR(255),
+    ANALYST_TOOL_NAME   VARCHAR(255),
     STATUS              VARCHAR(32)   NOT NULL,
     STALE_REASON        STRING,
     DATAHUB_CONTEXT     VARIANT,
@@ -115,6 +116,61 @@ CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_DERIVED_
     IS_ACTIVE BOOLEAN DEFAULT TRUE
 )
 COMMENT = 'Saved derived-source definitions with recursive lineage and semantic asset metadata.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SEM_SCHEMA_VIEWS (
+    VIEW_ID            STRING          NOT NULL,
+    DATABASE_NAME      STRING          NOT NULL,
+    SCHEMA_NAME        STRING          NOT NULL,
+    FQN                STRING          NOT NULL,
+    GENERATED_BY       STRING,
+    STATUS             STRING          NOT NULL DEFAULT 'ACTIVE',
+    VERSION            STRING          NOT NULL,
+    TABLE_COUNT        NUMBER,
+    COLUMN_SET_HASH    STRING,
+    LAST_ALTERED_TS    TIMESTAMP_NTZ,
+    SEMANTIC_VIEW      VARIANT         NOT NULL,
+    GENERATED_AT       TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT         TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Canonical versioned schema-level semantic views. One ACTIVE row per database and schema.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SEM_TABLE_VIEWS (
+    VIEW_ID            STRING          NOT NULL,
+    DATABASE_NAME      STRING          NOT NULL,
+    SCHEMA_NAME        STRING          NOT NULL,
+    TABLE_NAME         STRING          NOT NULL,
+    FQN                STRING          NOT NULL,
+    GENERATED_BY       STRING,
+    STATUS             STRING          NOT NULL DEFAULT 'ACTIVE',
+    VERSION            STRING          NOT NULL,
+    ROW_COUNT          NUMBER,
+    COLUMN_COUNT       NUMBER,
+    COLUMN_SET_HASH    STRING,
+    LAST_ALTERED_TS    TIMESTAMP_NTZ,
+    SEMANTIC_LEVEL     STRING,
+    SEMANTIC_VIEW      VARIANT         NOT NULL,
+    GENERATED_AT       TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT         TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Canonical versioned table-level semantic views. One ACTIVE row per database, schema, and table.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SEM_COLUMN_VIEWS (
+    VIEW_ID            STRING          NOT NULL,
+    DATABASE_NAME      STRING          NOT NULL,
+    SCHEMA_NAME        STRING          NOT NULL,
+    TABLE_NAME         STRING          NOT NULL,
+    COLUMN_NAME        STRING          NOT NULL,
+    FQN                STRING          NOT NULL,
+    TABLE_VIEW_ID      STRING          NOT NULL,
+    GENERATED_BY       STRING,
+    STATUS             STRING          NOT NULL DEFAULT 'ACTIVE',
+    DATA_TYPE          STRING,
+    COLUMN_HASH        STRING,
+    ATTRIBUTE_VIEW     VARIANT         NOT NULL,
+    GENERATED_AT       TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT         TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Canonical versioned column-level semantic views. One ACTIVE row per database, schema, table, and column.';
 
 
 -- ============================================================
@@ -355,3 +411,152 @@ CREATE TABLE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_CONVERSATIONS (
     CREATED_BY          VARCHAR(128)    REFERENCES FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_USERS(USER_ID)  COMMENT 'NULL if system-initiated'
 )
 COMMENT = 'Cortex Agent conversation threads. One STTM/DBT conversion may span multiple threads. Only one ACTIVE per parent at a time';
+
+
+-- ============================================================
+-- 11. Structured workbench conversation and RAG metadata
+-- ============================================================
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_CONVERSATION_TURNS (
+    TURN_ID             STRING          NOT NULL,
+    CONVERSATION_ID     STRING          NOT NULL,
+    REQUEST_ID          STRING,
+    TRACE_ID            STRING,
+    ROLE                STRING          NOT NULL,
+    ROUTE               STRING          NOT NULL,
+    INTENT_CLASS        STRING          NOT NULL,
+    MESSAGE             STRING,
+    CITATIONS           VARIANT,
+    GUARDRAILS_META     VARIANT,
+    USER_ID             STRING,
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Structured user and assistant turns for the governed conversation workflow.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_FEEDBACK (
+    FEEDBACK_ID         STRING          NOT NULL,
+    REQUEST_ID          STRING,
+    TARGET_REQUEST_ID   STRING,
+    CONVERSATION_ID     STRING          NOT NULL,
+    SIGNAL_ID           STRING,
+    FEEDBACK_TYPE       STRING          DEFAULT 'agent_quality',
+    CATEGORY            STRING          NOT NULL,
+    OPTION_SELECTED     STRING,
+    RATING              NUMBER,
+    COMMENT             STRING,
+    ENTITY_TYPE         STRING,
+    ENTITY_ID           STRING,
+    SELECTION_CONTEXT   VARIANT,
+    USER_ID             STRING,
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Structured user feedback captured from the conversation workflow.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RECOMMENDATIONS (
+    RECOMMENDATION_ID   STRING          NOT NULL,
+    REQUEST_ID          STRING,
+    CONVERSATION_ID     STRING          NOT NULL,
+    SIGNAL_ID           STRING,
+    RECOMMENDATION_TYPE STRING          DEFAULT 'conversation',
+    MESSAGE             STRING,
+    CITATIONS           VARIANT,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    CONFIDENCE          FLOAT,
+    ATTRIBUTES          VARIANT,
+    APPROVAL_REQUIRED   BOOLEAN         DEFAULT FALSE,
+    STATUS              STRING          NOT NULL,
+    REVIEW_RATING       NUMBER,
+    REVIEW_COMMENT      STRING,
+    REVIEW_STATUS       STRING,
+    USER_ID             STRING,
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Structured recommendation records emitted by the conversation workflow.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_INFERENCES (
+    INFERENCE_ID        STRING          NOT NULL,
+    INFERENCE_KEY       STRING          NOT NULL,
+    REQUEST_ID          STRING,
+    CONVERSATION_ID     STRING,
+    SOURCE              STRING          NOT NULL,
+    INFERENCE_TYPE      STRING          NOT NULL,
+    SUMMARY             STRING          NOT NULL,
+    CONFIDENCE          FLOAT,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    ATTRIBUTES          VARIANT,
+    STATUS              STRING          NOT NULL,
+    USER_ID             STRING,
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Structured inference layer bridging activity, feedback, and recommendation generation for the governed assistant.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SIGNALS (
+    SIGNAL_ID           STRING          NOT NULL,
+    SIGNAL_KEY          STRING          NOT NULL,
+    REQUEST_ID          STRING,
+    CONVERSATION_ID     STRING,
+    INFERENCE_ID        STRING,
+    SIGNAL_TYPE         STRING          NOT NULL,
+    LAYER               STRING          NOT NULL,
+    SOURCE              STRING          NOT NULL,
+    STATUS              STRING          NOT NULL,
+    TITLE               STRING          NOT NULL,
+    MESSAGE             STRING          NOT NULL,
+    OPTIONS             VARIANT,
+    ALLOW_FREE_TEXT     BOOLEAN         DEFAULT FALSE,
+    REQUIRES_RESPONSE   BOOLEAN         DEFAULT FALSE,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    CONFIDENCE          FLOAT,
+    ATTRIBUTES          VARIANT,
+    USER_ID             STRING,
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    RESPONDED_AT        TIMESTAMP_NTZ,
+    DISMISSED_AT        TIMESTAMP_NTZ
+)
+COMMENT = 'Live feedback and recommendation notifications surfaced above the AI assistant and linked to user activity or agent uncertainty.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SETTINGS (
+    USER_ID                     STRING          NOT NULL,
+    FEEDBACK_ENABLED            BOOLEAN         DEFAULT TRUE,
+    RECOMMENDATIONS_ENABLED     BOOLEAN         DEFAULT TRUE,
+    UPDATED_AT                  TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Per-user toggles controlling live feedback and recommendation prompts in the workbench UI.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RELATIONSHIP_FACTS (
+    RELATIONSHIP_DOC_ID STRING          NOT NULL,
+    SEMANTIC_BUNDLE_ID  STRING,
+    SOURCE_KIND         STRING          NOT NULL,
+    SOURCE_ENTITY_ID    STRING          NOT NULL,
+    SEMANTIC_VIEW_NAME  STRING,
+    LEFT_TABLE          STRING,
+    RIGHT_TABLE         STRING,
+    JOIN_TYPE           STRING,
+    CONSTRAINT_NAME     STRING,
+    SOURCE_HASH         STRING,
+    RELATIONSHIP_TEXT   STRING,
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Flattened relationship facts extracted from semantic bundles and derived sources for RAG and auditability.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RAG_DOCUMENTS (
+    DOC_ID              STRING          NOT NULL,
+    DOC_FOLDER          STRING          NOT NULL,
+    DOC_TYPE            STRING          NOT NULL,
+    ENTITY_ID           STRING,
+    TITLE               STRING,
+    SEARCH_TEXT         STRING          NOT NULL,
+    SEMANTIC_BUNDLE_ID  STRING,
+    SEMANTIC_VIEW_NAME  STRING,
+    REQUEST_ID          STRING,
+    CONVERSATION_ID     STRING,
+    SOURCE_HASH         STRING,
+    ATTRIBUTES          VARIANT,
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Canonical structured RAG document table indexed by Cortex Search for semantic, relationship, feedback, recommendation, and conversation retrieval.';

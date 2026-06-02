@@ -1,31 +1,39 @@
 import { Box, TableCell, Tooltip, Typography } from '@mui/material';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
-import { focusTableCellSx } from '@/components/ui/focus-table';
-import { FocusAutocomplete } from '@/components/ui/focus-auto-complete';
-import type { FocusAutocompleteOption } from '@/components/ui/focus-auto-complete';
+import type { SxProps, Theme } from '@mui/material/styles';
+import { InfoOutlinedIcon } from '@/utils/icons';
+
+import { aiaTableCellSx } from '@/components/ui/aia-table';
+import { AiaAutocomplete } from '@/components/ui/aia-auto-complete';
+import type { AiaAutocompleteOption } from '@/components/ui/aia-auto-complete';
 
 type MappingSourceColumnsCellProps = {
   value: string | null;
-  options: FocusAutocompleteOption[];
+  options: AiaAutocompleteOption[];
   onChange: (value: string) => void;
+  disabled?: boolean;
   width?: number | string;
   minWidth?: number | string;
   confidenceScore?: number | null;
   confidenceReason?: string | null;
   candidateSourceColumns?: string[];
   unmatchedReason?: string | null;
+  sx?: SxProps<Theme>;
 };
+
+const DISABLED_SOURCE_FIELD_BG = '#f8fafc';
 
 export const MappingSourceColumnsCell = ({
   value,
   options,
   onChange,
+  disabled = false,
   width,
   minWidth,
   confidenceScore,
   confidenceReason,
   candidateSourceColumns = [],
   unmatchedReason,
+  sx,
 }: MappingSourceColumnsCellProps) => {
   const helperText =
     confidenceReason ||
@@ -35,7 +43,7 @@ export const MappingSourceColumnsCell = ({
       : '');
 
   return (
-    <TableCell sx={focusTableCellSx({ width, minWidth }, { overflow: 'visible' })}>
+    <TableCell sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'hidden' })}>
       <Box sx={{ display: 'grid', gap: 0.55 }}>
         <Box
           sx={{
@@ -45,14 +53,19 @@ export const MappingSourceColumnsCell = ({
           }}
         >
           <Box sx={{ minWidth: 0, flex: 1 }}>
-            <FocusAutocomplete
+            <AiaAutocomplete
               hideLabel
               freeSolo
               fullWidth
               size="small"
+              disabled={disabled}
               value={value ?? ''}
               options={options}
-              placeholder="Type to map source columns..."
+              placeholder={
+                disabled
+                  ? 'Select a pre-processing rule first...'
+                  : 'Type to map source columns...'
+              }
               groupBy={(option) => option.group ?? ''}
               onChange={(next) => onChange(Array.isArray(next) ? next[0] ?? '' : next)}
               sx={{
@@ -60,7 +73,25 @@ export const MappingSourceColumnsCell = ({
                   minHeight: 38,
                   fontSize: '0.8rem',
                   borderRadius: '6px',
-                  bgcolor: '#fff',
+                  bgcolor: disabled ? DISABLED_SOURCE_FIELD_BG : '#fff',
+                  ...(disabled
+                    ? {
+                        opacity: 1,
+                        '& .MuiOutlinedInput-notchedOutline': {
+                          borderColor: DISABLED_SOURCE_FIELD_BG,
+                        },
+                        '&.Mui-disabled .MuiOutlinedInput-notchedOutline': {
+                          borderColor: `${DISABLED_SOURCE_FIELD_BG} !important`,
+                        },
+                        '& .MuiInputBase-input.Mui-disabled': {
+                          WebkitTextFillColor: '#94a3b8',
+                        },
+                      }
+                    : {
+                        '& .MuiOutlinedInput-notchedOutline': {
+                          borderColor: '#e5e7eb',
+                        },
+                      }),
                 },
                 '& .MuiInputBase-input, & .MuiAutocomplete-input': {
                   paddingY: '7px !important',

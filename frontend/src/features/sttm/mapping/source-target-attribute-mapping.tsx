@@ -1,6 +1,6 @@
 'use client';
-
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { ArrowForwardRoundedIcon, CheckRoundedIcon, CloseRoundedIcon, FileUploadOutlinedIcon } from '@/utils/icons';
 import {
   Table,
   TableBody,
@@ -8,17 +8,19 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  TablePagination,
   Paper,
   Typography,
   Box,
   Button,
   Chip,
   IconButton,
+  InputBase,
 } from '@mui/material';
-import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
-import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
-import FileUploadOutlinedIcon from '@mui/icons-material/FileUploadOutlined';
-import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+
+
+
+
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import type { MappingRuleType } from '@/features/sttm/types/sttm.types';
 import {
@@ -27,8 +29,9 @@ import {
   generateMappingDescription,
   parseSourceColumns,
 } from './mapping-utils';
-import { FocusCheckbox } from '@/components/ui/focus-checkbox';
-import { FocusCheckboxCell, FocusInputCell } from '@/components/ui/focus-table';
+import { AiaCheckbox } from '@/components/ui/aia-checkbox';
+import { AiaSelect } from '@/components/ui/aia-select';
+import { AiaCheckboxCell, AiaInputCell } from '@/components/ui/aia-table';
 import {
   MappingRuleCell,
   MappingSourceColumnsCell,
@@ -36,6 +39,14 @@ import {
   MappingTargetColumnCell,
   MappingTypePreviewCell,
 } from './cells';
+import { MappingDataPreviewCell } from './data-preview';
+import {
+  MAPPING_TABLE_CONTAINER_SX,
+  MAPPING_TABLE_HEADER_CELL_SX,
+  MAPPING_TABLE_PAGINATION_SX,
+  MAPPING_TABLE_ROW_SX,
+  mappingTableSx,
+} from './mapping-table-styles';
 
 const BUILT_IN_RULES = [
   'Direct',
@@ -56,17 +67,139 @@ const PREPROCESS_CONFIGURE_VALUE = 'Configure Pre-processing Rule...';
 
 const RULE_OPTIONS = BUILT_IN_RULES.map((rule) => ({ label: rule, value: rule }));
 
+const RULE_FILTER_OPTIONS = [{ label: 'All', value: '' }, ...RULE_OPTIONS];
+
+function resolveMappingRuleSelectValue(rule: string | null | undefined): string {
+  return rule && rule !== 'Select...' ? rule : '';
+}
+
+function isSourceColumnInputDisabled(rule: string | null | undefined): boolean {
+  const resolvedRule = resolveMappingRuleSelectValue(rule);
+  return !resolvedRule || resolvedRule === 'Custom';
+}
+
+function resolveMappingDescription(
+  row: {
+    targetColumn: string;
+    expression?: string | null;
+    description?: string | null;
+    descriptionEdited?: boolean;
+  },
+  sourceColumns: string[],
+  resolvedRule: string,
+): string {
+  const autoDescription = resolvedRule
+    ? generateMappingDescription({
+        rule: resolvedRule,
+        sourceColumns,
+        targetColumn: row.targetColumn,
+        expression: row.expression,
+      })
+    : '';
+
+  return row.descriptionEdited ? (row.description ?? '') : autoDescription;
+}
+
+const DEFAULT_ROWS_PER_PAGE = 25;
+const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
+
+type MappingColumnFilters = {
+  targetColumn: string;
+  sourceColumn: string;
+  typePreview: string;
+  preProcessRule: string;
+  nlRule: string;
+  order: string;
+  description: string;
+  status: string;
+};
+
+const EMPTY_COLUMN_FILTERS: MappingColumnFilters = {
+  targetColumn: '',
+  sourceColumn: '',
+  typePreview: '',
+  preProcessRule: '',
+  nlRule: '',
+  order: '',
+  description: '',
+  status: '',
+};
+
+const STATUS_FILTER_OPTIONS = [
+  { label: 'All', value: '' },
+  { label: 'Mapped', value: 'MAPPED' },
+  { label: 'Unmapped', value: 'UNMAPPED' },
+];
+
+const columnFilterControlSx = {
+  width: '100%',
+  minWidth: 0,
+  height: 28,
+  fontSize: '0.72rem',
+  lineHeight: 1.3,
+  borderRadius: '4px',
+  border: '1px solid #e5e7eb',
+  bgcolor: '#fff',
+  color: '#111827',
+  textAlign: 'left' as const,
+} as const;
+
+const columnFilterInputSx = {
+  ...columnFilterControlSx,
+  px: 0.75,
+  py: 0.35,
+  '&::placeholder': {
+    color: '#9ca3af',
+    opacity: 1,
+  },
+  '&:focus': {
+    outline: 'none',
+    borderColor: '#94a3b8',
+    boxShadow: '0 0 0 1px rgba(148, 163, 184, 0.35)',
+  },
+} as const;
+
+const columnFilterSelectSx = {
+  '& .MuiOutlinedInput-root': {
+    ...columnFilterControlSx,
+    display: 'flex',
+    alignItems: 'center',
+  },
+  '& .MuiSelect-select': {
+    py: '4px !important',
+    pl: '6px !important',
+    pr: '28px !important',
+    fontSize: '0.72rem',
+    lineHeight: 1.3,
+    textAlign: 'left',
+    display: 'flex',
+    alignItems: 'center',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  '& .MuiSelect-icon': {
+    right: 4,
+    fontSize: '1.1rem',
+    color: '#64748b',
+  },
+  '& .MuiOutlinedInput-notchedOutline': {
+    borderColor: '#e5e7eb',
+  },
+} as const;
+
 /** Minimum column widths — table scrolls horizontally when viewport is narrower. */
 const MAPPING_COLUMN_MIN_WIDTH = {
   checkbox: 64,
   targetColumn: 168,
+  preProcessRule: 248,
   sourceColumn: 300,
   typePreview: 112,
-  preProcessRule: 248,
   nlRule: 220,
   order: 96,
   description: 240,
-  status: 108,
+  status: 136,
+  dataPreview: 168,
 } as const;
 
 const MAPPING_TABLE_MIN_WIDTH = Object.values(MAPPING_COLUMN_MIN_WIDTH).reduce(
@@ -74,27 +207,7 @@ const MAPPING_TABLE_MIN_WIDTH = Object.values(MAPPING_COLUMN_MIN_WIDTH).reduce(
   0,
 );
 
-const tableScrollbarSx = {
-  scrollbarWidth: 'thin',
-  scrollbarColor: '#cbd5e1 transparent',
-  '&::-webkit-scrollbar': { width: 8, height: 8 },
-  '&::-webkit-scrollbar-thumb': {
-    backgroundColor: '#cbd5e1',
-    borderRadius: 999,
-  },
-  '&::-webkit-scrollbar-track': { backgroundColor: 'transparent' },
-} as const;
-
-const headerCellSx = {
-  color: '#4b5563',
-  fontWeight: 700,
-  fontSize: '0.68rem',
-  letterSpacing: '0.06em',
-  textTransform: 'uppercase' as const,
-  borderBottom: '1px solid #e5e7eb',
-  bgcolor: '#fafafa',
-  py: 0.65,
-};
+const headerCellSx = MAPPING_TABLE_HEADER_CELL_SX;
 
 const multilineCellInputSx = {
   '& .MuiOutlinedInput-root': {
@@ -116,22 +229,97 @@ const FROZEN_COLUMN_LEFT = {
 
 function mappingFrozenCellSx(
   left: number,
-  options: { header?: boolean; lastFrozen?: boolean } = {},
+  options: { header?: boolean; lastFrozen?: boolean; searchRow?: boolean } = {},
 ) {
-  const { header = false, lastFrozen = false } = options;
-  const backgroundColor = header ? '#fafafa' : '#fff';
+  const { header = false, lastFrozen = false, searchRow = false } = options;
+  const backgroundColor = header || searchRow ? '#fafafa' : '#fff';
+
+  const zIndex = (() => {
+    if (header) {
+      return lastFrozen ? 9 : 8;
+    }
+    if (searchRow) {
+      return lastFrozen ? 9 : 8;
+    }
+    return lastFrozen ? 5 : 4;
+  })();
 
   return {
     position: 'sticky' as const,
     left,
-    top: header ? 0 : undefined,
-    zIndex: header ? 5 : 2,
+    top: header ? 0 : searchRow ? 32 : undefined,
+    zIndex,
     bgcolor: backgroundColor,
     backgroundColor,
     ...(lastFrozen
       ? { boxShadow: '4px 0 8px -4px rgba(15, 23, 42, 0.12)' }
       : {}),
   };
+}
+
+const scrollableBodyCellSx = {
+  position: 'relative' as const,
+  zIndex: 1,
+  bgcolor: '#fff',
+  backgroundColor: '#fff',
+} as const;
+
+const scrollableHeaderCellSx = {
+  position: 'sticky' as const,
+  top: 0,
+  zIndex: 2,
+  bgcolor: '#fafafa',
+  backgroundColor: '#fafafa',
+} as const;
+
+const scrollableSearchHeaderCellSx = {
+  position: 'sticky' as const,
+  top: 32,
+  zIndex: 2,
+  bgcolor: '#fafafa',
+  backgroundColor: '#fafafa',
+} as const;
+
+function ColumnFilterInput({
+  value,
+  placeholder,
+  onChange,
+}: {
+  value: string;
+  placeholder: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <InputBase
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      placeholder={placeholder}
+      inputProps={{ 'aria-label': placeholder }}
+      sx={columnFilterInputSx}
+    />
+  );
+}
+
+function ColumnFilterSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: Array<{ label: string; value: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <AiaSelect
+      value={value}
+      options={options}
+      onChange={(next) => onChange(Array.isArray(next) ? next[0] ?? '' : next)}
+      placeholder="All"
+      size="small"
+      fullWidth
+      sx={columnFilterSelectSx}
+    />
+  );
 }
 
 const SourceTargetAttributeMapping = () => {
@@ -149,6 +337,10 @@ const SourceTargetAttributeMapping = () => {
     sourceAttributeGroups,
     derivedSources,
   } = useSttmBuilderContext();
+
+  const [columnFilters, setColumnFilters] = useState<MappingColumnFilters>(EMPTY_COLUMN_FILTERS);
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
 
   const sortedMappings = mappings;
   const sourceColumnOptions = buildSourceColumnOptions(sourceAttributeGroups, derivedSources);
@@ -179,18 +371,97 @@ const SourceTargetAttributeMapping = () => {
 
     const updates: Partial<typeof row> = { rule: newRule as MappingRuleType };
     if (!row.descriptionEdited) {
-      updates.description = generateMappingDescription({
-        rule: newRule,
-        sourceColumns,
-        targetColumn: row.targetColumn,
-        expression: row.expression,
-      });
+      updates.description =
+        generateMappingDescription({
+          rule: newRule,
+          sourceColumns,
+          targetColumn: row.targetColumn,
+          expression: row.expression,
+        }) || null;
     }
     updateMapping(id, updates);
   };
 
+  const filteredMappings = useMemo(() => {
+    const includes = (value: string | null | undefined, query: string) =>
+      String(value ?? '').toLowerCase().includes(query.trim().toLowerCase());
+
+    return sortedMappings.filter((row) => {
+      const previewType = formatSqlType(row.sourceType ?? row.targetType ?? undefined);
+      const sourceColumns =
+        row.sourceColumns && row.sourceColumns.length
+          ? row.sourceColumns
+          : parseSourceColumns(row.sourceColumn);
+      const resolvedRule = resolveMappingRuleSelectValue(row.rule);
+      const descriptionValue = resolveMappingDescription(row, sourceColumns, resolvedRule);
+
+      if (columnFilters.targetColumn && !includes(row.targetColumn, columnFilters.targetColumn)) {
+        return false;
+      }
+      if (columnFilters.sourceColumn && !includes(row.sourceColumn, columnFilters.sourceColumn)) {
+        return false;
+      }
+      if (columnFilters.typePreview && !includes(previewType, columnFilters.typePreview)) {
+        return false;
+      }
+      if (columnFilters.preProcessRule) {
+        const rowRule = resolveMappingRuleSelectValue(row.rule);
+        if (rowRule !== columnFilters.preProcessRule) {
+          return false;
+        }
+      }
+      if (columnFilters.nlRule && !includes(row.nlRule, columnFilters.nlRule)) {
+        return false;
+      }
+      if (columnFilters.order && !includes(row.loadOrder, columnFilters.order)) {
+        return false;
+      }
+      if (columnFilters.description && !includes(descriptionValue, columnFilters.description)) {
+        return false;
+      }
+      if (columnFilters.status && row.status !== columnFilters.status) {
+        return false;
+      }
+      return true;
+    });
+  }, [columnFilters, sortedMappings]);
+
+  useEffect(() => {
+    setPage(0);
+  }, [columnFilters, rowsPerPage]);
+
+  useEffect(() => {
+    const maxPage = Math.max(0, Math.ceil(filteredMappings.length / rowsPerPage) - 1);
+    if (page > maxPage) {
+      setPage(maxPage);
+    }
+  }, [filteredMappings.length, page, rowsPerPage]);
+
+  const paginatedMappings = useMemo(() => {
+    const start = page * rowsPerPage;
+    return filteredMappings.slice(start, start + rowsPerPage);
+  }, [filteredMappings, page, rowsPerPage]);
+
+  const updateColumnFilter = (key: keyof MappingColumnFilters, value: string) => {
+    setColumnFilters((current) => ({
+      ...current,
+      [key]: value,
+    }));
+  };
+
   return (
-    <Box sx={{ width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
+    <Box
+      sx={{
+        width: '100%',
+        flex: 1,
+        minHeight: 0,
+        minWidth: 0,
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
       {selectedMappingIds.length > 0 && (
         <Box
           sx={{
@@ -311,46 +582,16 @@ const SourceTargetAttributeMapping = () => {
         </Box>
       )}
 
-      <Box
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          minWidth: 0,
-          width: '100%',
-          overflowY: 'auto',
-          overflowX: 'hidden',
-          ...tableScrollbarSx,
-        }}
+      <TableContainer
+        component={Paper}
+        elevation={0}
+        sx={MAPPING_TABLE_CONTAINER_SX}
       >
-        <TableContainer
-          component={Paper}
-          elevation={0}
-          sx={{
-            width: '100%',
-            border: 'none',
-            borderRadius: 0,
-            overflowX: 'auto',
-            overflowY: 'visible',
-            ...tableScrollbarSx,
-          }}
-        >
           <Table
             stickyHeader
             size="small"
-            sx={{
-              width: '100%',
-              minWidth: MAPPING_TABLE_MIN_WIDTH,
-              tableLayout: 'fixed',
-              '& .MuiTableBody-root .MuiTableCell-root': {
-              borderBottom: '1px solid #edf2f7',
-              verticalAlign: 'top',
-              py: 1.2,
-            },
-            '& .MuiTableBody-root .MuiTableRow-root:last-of-type .MuiTableCell-root': {
-              borderBottom: '1px solid #edf2f7',
-            },
-          }}
-        >
+            sx={mappingTableSx(MAPPING_TABLE_MIN_WIDTH)}
+          >
           <colgroup>
             {Object.values(MAPPING_COLUMN_MIN_WIDTH).map((columnWidth, index) => (
               <col key={`mapping-col-${index}`} style={{ width: columnWidth }} />
@@ -380,7 +621,7 @@ const SourceTargetAttributeMapping = () => {
                     minHeight: 30,
                   }}
                 >
-                  <FocusCheckbox
+                  <AiaCheckbox
                     checked={allSelected}
                     indeterminate={someSelected}
                     checkHandler={(checked: boolean) =>
@@ -421,6 +662,17 @@ const SourceTargetAttributeMapping = () => {
               <TableCell
                 sx={{
                   ...headerCellSx,
+                  ...scrollableHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
+                  width: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
+                }}
+              >
+                Pre-processing Rule
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
                   width: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
                 }}
@@ -430,6 +682,7 @@ const SourceTargetAttributeMapping = () => {
               <TableCell
                 sx={{
                   ...headerCellSx,
+                  ...scrollableHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.typePreview,
                   width: MAPPING_COLUMN_MIN_WIDTH.typePreview,
                   whiteSpace: 'nowrap',
@@ -440,15 +693,7 @@ const SourceTargetAttributeMapping = () => {
               <TableCell
                 sx={{
                   ...headerCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
-                  width: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
-                }}
-              >
-                Pre-processing Rule
-              </TableCell>
-              <TableCell
-                sx={{
-                  ...headerCellSx,
+                  ...scrollableHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.nlRule,
                   width: MAPPING_COLUMN_MIN_WIDTH.nlRule,
                 }}
@@ -458,6 +703,7 @@ const SourceTargetAttributeMapping = () => {
               <TableCell
                 sx={{
                   ...headerCellSx,
+                  ...scrollableHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.order,
                   width: MAPPING_COLUMN_MIN_WIDTH.order,
                 }}
@@ -467,6 +713,7 @@ const SourceTargetAttributeMapping = () => {
               <TableCell
                 sx={{
                   ...headerCellSx,
+                  ...scrollableHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.description,
                   width: MAPPING_COLUMN_MIN_WIDTH.description,
                 }}
@@ -489,43 +736,198 @@ const SourceTargetAttributeMapping = () => {
               <TableCell
                 sx={{
                   ...headerCellSx,
+                  ...scrollableHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.status,
                   width: MAPPING_COLUMN_MIN_WIDTH.status,
                 }}
-                align="right"
               >
                 Status
               </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
+                  width: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                Data Preview
+              </TableCell>
+            </TableRow>
+            <TableRow>
+              <TableCell
+                padding="none"
+                sx={{
+                  ...headerCellSx,
+                  ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.checkbox, { searchRow: true }),
+                  width: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+                  maxWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+                  px: 0.5,
+                  py: 0.45,
+                }}
+              />
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
+                    searchRow: true,
+                    lastFrozen: true,
+                  }),
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
+                  width: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
+                  px: 1,
+                  py: 0.45,
+                }}
+              >
+                <ColumnFilterInput
+                  value={columnFilters.targetColumn}
+                  placeholder="Search..."
+                  onChange={(value) => updateColumnFilter('targetColumn', value)}
+                />
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
+                  width: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
+                  px: 1,
+                  py: 0.45,
+                }}
+              >
+                <ColumnFilterSelect
+                  value={columnFilters.preProcessRule}
+                  options={RULE_FILTER_OPTIONS}
+                  onChange={(value) => updateColumnFilter('preProcessRule', value)}
+                />
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
+                  width: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
+                  px: 1,
+                  py: 0.45,
+                }}
+              >
+                <ColumnFilterInput
+                  value={columnFilters.sourceColumn}
+                  placeholder="Search..."
+                  onChange={(value) => updateColumnFilter('sourceColumn', value)}
+                />
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.typePreview,
+                  width: MAPPING_COLUMN_MIN_WIDTH.typePreview,
+                  px: 1,
+                  py: 0.45,
+                }}
+              >
+                <ColumnFilterInput
+                  value={columnFilters.typePreview}
+                  placeholder="Search..."
+                  onChange={(value) => updateColumnFilter('typePreview', value)}
+                />
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.nlRule,
+                  width: MAPPING_COLUMN_MIN_WIDTH.nlRule,
+                  px: 1,
+                  py: 0.45,
+                }}
+              >
+                <ColumnFilterInput
+                  value={columnFilters.nlRule}
+                  placeholder="Search..."
+                  onChange={(value) => updateColumnFilter('nlRule', value)}
+                />
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.order,
+                  width: MAPPING_COLUMN_MIN_WIDTH.order,
+                  px: 1,
+                  py: 0.45,
+                }}
+              >
+                <ColumnFilterInput
+                  value={columnFilters.order}
+                  placeholder="Search..."
+                  onChange={(value) => updateColumnFilter('order', value)}
+                />
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.description,
+                  width: MAPPING_COLUMN_MIN_WIDTH.description,
+                  px: 1,
+                  py: 0.45,
+                }}
+              >
+                <ColumnFilterInput
+                  value={columnFilters.description}
+                  placeholder="Search..."
+                  onChange={(value) => updateColumnFilter('description', value)}
+                />
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.status,
+                  width: MAPPING_COLUMN_MIN_WIDTH.status,
+                  px: 1,
+                  py: 0.45,
+                }}
+              >
+                <ColumnFilterSelect
+                  value={columnFilters.status}
+                  options={STATUS_FILTER_OPTIONS}
+                  onChange={(value) => updateColumnFilter('status', value)}
+                />
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
+                  width: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
+                  px: 1,
+                  py: 0.45,
+                }}
+              />
             </TableRow>
           </TableHead>
           <TableBody>
-            {sortedMappings.map((row) => {
+            {paginatedMappings.map((row) => {
               const isSelected = selectedMappingIds.includes(row.id);
               const previewType = row.sourceType ?? row.targetType ?? undefined;
               const sourceColumns =
                 row.sourceColumns && row.sourceColumns.length
                   ? row.sourceColumns
                   : parseSourceColumns(row.sourceColumn);
-              const autoDescription = generateMappingDescription({
-                rule: row.rule || 'Direct',
-                sourceColumns,
-                targetColumn: row.targetColumn,
-                expression: row.expression,
-              });
-              const descriptionValue = row.description ?? autoDescription ?? '';
-              const descriptionPlaceholder =
-                autoDescription || 'Add description...';
+              const resolvedRule = resolveMappingRuleSelectValue(row.rule);
+              const descriptionValue = resolveMappingDescription(row, sourceColumns, resolvedRule);
+              const descriptionPlaceholder = 'Add description...';
               return (
                 <TableRow
                   key={row.id}
-                  sx={{
-                    bgcolor: '#fff',
-                    '&.MuiTableRow-root:hover': {
-                      bgcolor: '#fff',
-                    },
-                  }}
+                  sx={MAPPING_TABLE_ROW_SX}
                 >
-                  <FocusCheckboxCell
+                  <AiaCheckboxCell
                     checked={isSelected}
                     onChange={() => toggleMappingSelection(row.id)}
                     width={MAPPING_COLUMN_MIN_WIDTH.checkbox}
@@ -543,12 +945,27 @@ const SourceTargetAttributeMapping = () => {
                     })}
                   />
 
+                  <MappingRuleCell
+                    value={resolveMappingRuleSelectValue(row.rule)}
+                    options={RULE_OPTIONS}
+                    configureValue={PREPROCESS_CONFIGURE_VALUE}
+                    placeholder="Select rule..."
+                    width={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
+                    preProcessDisabled={resolveMappingRuleSelectValue(row.rule) !== 'Custom'}
+                    onRuleChange={(value) => handleRuleChange(row.id, value)}
+                    onPreProcess={() => setPreProcessModalOpen(true, row.id)}
+                    sx={scrollableBodyCellSx}
+                  />
+
                   <MappingSourceColumnsCell
                     value={row.sourceColumn}
                     options={sourceColumnOptions}
+                    disabled={isSourceColumnInputDisabled(row.rule)}
                     onChange={(nextValue) => {
                       const nextColumns = parseSourceColumns(nextValue);
-                      updateMapping(row.id, {
+                      const rule = resolveMappingRuleSelectValue(row.rule);
+                      const updates: Partial<typeof row> = {
                         sourceColumn: nextValue.trim() || null,
                         sourceColumns: nextColumns,
                         status: nextColumns.length > 0 ? 'MAPPED' : 'UNMAPPED',
@@ -556,7 +973,19 @@ const SourceTargetAttributeMapping = () => {
                           sourceColumnOptions.find(
                             (option) => option.value.toLowerCase() === nextColumns[0]?.toLowerCase(),
                           )?.dataType ?? row.sourceType ?? null,
-                      });
+                      };
+
+                      if (!row.descriptionEdited && rule) {
+                        updates.description =
+                          generateMappingDescription({
+                            rule,
+                            sourceColumns: nextColumns,
+                            targetColumn: row.targetColumn,
+                            expression: row.expression,
+                          }) || null;
+                      }
+
+                      updateMapping(row.id, updates);
                     }}
                     width={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
@@ -564,30 +993,17 @@ const SourceTargetAttributeMapping = () => {
                     confidenceReason={row.confidenceReason}
                     candidateSourceColumns={row.candidateSourceColumns}
                     unmatchedReason={row.unmatchedReason}
+                    sx={scrollableBodyCellSx}
                   />
 
                   <MappingTypePreviewCell
                     dataType={previewType}
                     width={MAPPING_COLUMN_MIN_WIDTH.typePreview}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.typePreview}
+                    sx={scrollableBodyCellSx}
                   />
 
-                  <MappingRuleCell
-                    value={row.rule === 'Select...' ? 'Direct' : row.rule || 'Direct'}
-                    options={RULE_OPTIONS}
-                    configureValue={PREPROCESS_CONFIGURE_VALUE}
-                    width={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
-                    minWidth={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
-                    highlighted={
-                      !!row.rule &&
-                      row.rule !== 'Select...' &&
-                      row.rule !== 'Direct'
-                    }
-                    onRuleChange={(value) => handleRuleChange(row.id, value)}
-                    onPreProcess={() => setPreProcessModalOpen(true, row.id)}
-                  />
-
-                  <FocusInputCell
+                  <AiaInputCell
                     placeholder="Add NL rule..."
                     value={row.nlRule ?? ''}
                     onChange={(value) => updateMapping(row.id, { nlRule: value })}
@@ -597,17 +1013,19 @@ const SourceTargetAttributeMapping = () => {
                     minRows={1}
                     maxRows={10}
                     inputSx={multilineCellInputSx}
+                    sx={scrollableBodyCellSx}
                   />
 
-                  <FocusInputCell
+                  <AiaInputCell
                     placeholder="Order..."
                     value={row.loadOrder ?? ''}
                     onChange={(value) => updateMapping(row.id, { loadOrder: value })}
                     width={MAPPING_COLUMN_MIN_WIDTH.order}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.order}
+                    sx={scrollableBodyCellSx}
                   />
 
-                  <FocusInputCell
+                  <AiaInputCell
                     placeholder={descriptionPlaceholder}
                     value={descriptionValue}
                     onChange={(value) =>
@@ -622,20 +1040,51 @@ const SourceTargetAttributeMapping = () => {
                     minRows={1}
                     maxRows={10}
                     inputSx={multilineCellInputSx}
+                    sx={scrollableBodyCellSx}
                   />
 
                   <MappingStatusCell
                     status={row.status}
                     width={MAPPING_COLUMN_MIN_WIDTH.status}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.status}
+                    sx={scrollableBodyCellSx}
+                  />
+
+                  <MappingDataPreviewCell
+                    mapping={row}
+                    width={MAPPING_COLUMN_MIN_WIDTH.dataPreview}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.dataPreview}
+                    sx={scrollableBodyCellSx}
                   />
                 </TableRow>
               );
             })}
+            {!paginatedMappings.length ? (
+              <TableRow>
+                <TableCell colSpan={10} sx={{ py: 4, textAlign: 'center' }}>
+                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>
+                    No mapping rows match the current column filters.
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            ) : null}
           </TableBody>
         </Table>
-        </TableContainer>
-      </Box>
+      </TableContainer>
+
+      <TablePagination
+        component="div"
+        count={filteredMappings.length}
+        page={page}
+        onPageChange={(_, nextPage) => setPage(nextPage)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={(event) => {
+          setRowsPerPage(Number.parseInt(event.target.value, 10));
+          setPage(0);
+        }}
+        rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
+        sx={MAPPING_TABLE_PAGINATION_SX}
+      />
 
       {mappingLoading && (
         <Box

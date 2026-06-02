@@ -1,6 +1,6 @@
 import { TableCell, Typography } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
-import { focusTableCellSx } from '@/components/ui/focus-table';
+import { aiaTableCellSx } from '@/components/ui/aia-table';
 
 type MappingRowIndexCellProps = {
   index: number;
@@ -15,7 +15,7 @@ export const MappingRowIndexCell = ({
   minWidth,
   sx,
 }: MappingRowIndexCellProps) => (
-  <TableCell sx={focusTableCellSx({ width, minWidth, sx })}>
+  <TableCell sx={aiaTableCellSx({ width, minWidth, sx })}>
     <Typography
       sx={{
         fontSize: '0.72rem',

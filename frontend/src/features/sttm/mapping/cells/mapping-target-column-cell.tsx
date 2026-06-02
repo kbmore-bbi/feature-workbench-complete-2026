@@ -1,11 +1,12 @@
-import VerifiedRoundedIcon from '@mui/icons-material/VerifiedRounded';
 import { Box, TableCell, Typography } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
-import { focusTableCellSx } from '@/components/ui/focus-table';
+import { aiaTableCellSx } from '@/components/ui/aia-table';
+import { VerifiedRoundedIcon } from '@/utils/icons';
 
 type MappingTargetColumnCellProps = {
   name: string;
   isMapped?: boolean;
+  showMappedIcon?: boolean;
   width?: number | string;
   minWidth?: number | string;
   sx?: SxProps<Theme>;
@@ -14,11 +15,12 @@ type MappingTargetColumnCellProps = {
 export const MappingTargetColumnCell = ({
   name,
   isMapped = false,
+  showMappedIcon = true,
   width,
   minWidth,
   sx,
 }: MappingTargetColumnCellProps) => (
-  <TableCell sx={focusTableCellSx({ width, minWidth, sx })}>
+  <TableCell sx={aiaTableCellSx({ width, minWidth, sx })}>
     <Box
       sx={{
         display: 'flex',
@@ -41,7 +43,7 @@ export const MappingTargetColumnCell = ({
       >
         {name}
       </Typography>
-      {isMapped ? (
+      {showMappedIcon && isMapped ? (
         <VerifiedRoundedIcon
           aria-label="Mapped"
           sx={{

@@ -10,9 +10,9 @@ import type {
   RuleGroup,
   RuleNode,
 } from "@/features/sttm/types/sttm.types";
-import { FocusButton } from "@/components/ui/focus-button";
-import { FocusSelect } from "@/components/ui/focus-select";
-import { FocusInput } from "@/components/ui/focus-input";
+import { AiaButton } from "@/components/ui/aia-button";
+import { AiaSelect } from "@/components/ui/aia-select";
+import { AiaInput } from "@/components/ui/aia-input";
 import { SqlEditor, SQL_EDITOR_PREVIEW_HEIGHT } from "@/components/sql";
 
 export type { RuleLogic, RuleCondition, RuleGroup, RuleNode };
@@ -566,7 +566,7 @@ export function FilterConditions({
             <Box sx={{ width: 12, color: "#cbd5e1", fontSize: 12 }}>▼</Box>
 
             <Box sx={{ width: cw.groupLogicWidthPx, flexShrink: 0 }}>
-              <FocusSelect
+              <AiaSelect
                 options={[
                   { label: "All", value: "AND" },
                   { label: "Any", value: "OR" },
@@ -596,7 +596,7 @@ export function FilterConditions({
                 transition: "opacity 0.18s ease",
               }}
             >
-              <FocusButton
+              <AiaButton
                 variant="outlined"
                 size="small"
                 rounded="full"
@@ -607,8 +607,8 @@ export function FilterConditions({
                 customColor="#374151"
               >
                 + Condition
-              </FocusButton>
-              <FocusButton
+              </AiaButton>
+              <AiaButton
                 variant="outlined"
                 size="small"
                 rounded="full"
@@ -619,8 +619,8 @@ export function FilterConditions({
                 customColor="#1d4ed8"
               >
                 + Sub-group
-              </FocusButton>
-              <FocusButton
+              </AiaButton>
+              <AiaButton
                 variant="text"
                 size="small"
                 rounded="full"
@@ -628,7 +628,7 @@ export function FilterConditions({
                 customColor="#ef4444"
               >
                 ✕
-              </FocusButton>
+              </AiaButton>
             </Box>
           </Box>
 
@@ -678,7 +678,7 @@ export function FilterConditions({
             minWidth: 0,
           }}
         >
-          <FocusSelect
+          <AiaSelect
             options={allFields}
             value={node.field}
             placeholder="Select field…"
@@ -689,7 +689,7 @@ export function FilterConditions({
         </Box>
 
         <Box sx={{ width: cw.operatorWidthPx, flexShrink: 0 }}>
-          <FocusSelect
+          <AiaSelect
             options={[
               { label: "=", value: "=" },
               { label: "≠", value: "!=" },
@@ -717,7 +717,7 @@ export function FilterConditions({
         {!["IS NULL", "IS NOT NULL"].includes(node.operator.toUpperCase()) ? (
           <>
             <Box sx={{ width: 92, flexShrink: 0 }}>
-              <FocusSelect
+              <AiaSelect
                 options={[
                   { label: "Value", value: "literal" },
                   { label: "Column", value: "field" },
@@ -743,7 +743,7 @@ export function FilterConditions({
               }}
             >
               {node.valueMode === "field" ? (
-                <FocusSelect
+                <AiaSelect
                   options={allFields}
                   value={node.valueField ?? ""}
                   placeholder="Select column…"
@@ -752,7 +752,7 @@ export function FilterConditions({
                   sx={{ maxWidth: "100%", ...selectDensitySx }}
                 />
               ) : (
-                <FocusInput
+                <AiaInput
                   value={node.value}
                   placeholder={["IN", "NOT IN"].includes(node.operator.toUpperCase()) ? "v1, v2, v3" : "value"}
                   onChange={(val) => handleUpdateCondition(node.id, { value: val })}
@@ -768,7 +768,7 @@ export function FilterConditions({
                   and
                 </Typography>
                 <Box sx={{ width: 92, flexShrink: 0 }}>
-                  <FocusSelect
+                  <AiaSelect
                     options={[
                       { label: "Value", value: "literal" },
                       { label: "Column", value: "field" },
@@ -793,7 +793,7 @@ export function FilterConditions({
                   }}
                 >
                   {node.secondaryValueMode === "field" ? (
-                    <FocusSelect
+                    <AiaSelect
                       options={allFields}
                       value={node.secondaryValueField ?? ""}
                       placeholder="Select column…"
@@ -804,7 +804,7 @@ export function FilterConditions({
                       sx={{ maxWidth: "100%", ...selectDensitySx }}
                     />
                   ) : (
-                    <FocusInput
+                    <AiaInput
                       value={node.secondaryValue ?? ""}
                       placeholder="second value"
                       onChange={(val) => handleUpdateCondition(node.id, { secondaryValue: val })}
@@ -829,7 +829,7 @@ export function FilterConditions({
             transition: "opacity 0.18s ease",
           }}
         >
-          <FocusButton
+          <AiaButton
             variant="text"
             size="small"
             rounded="full"
@@ -837,7 +837,7 @@ export function FilterConditions({
             customColor="#ef4444"
           >
             ✕
-          </FocusButton>
+          </AiaButton>
         </Box>
       </Box>
     );
@@ -1017,7 +1017,7 @@ export function FilterConditions({
                   <Box sx={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
                     {idx + 1}
                   </Box>
-                  <FocusSelect
+                  <AiaSelect
                     options={allFields}
                     value={item.field}
                     placeholder="Select field…"
@@ -1025,7 +1025,7 @@ export function FilterConditions({
                     fullWidth
                     sx={{ maxWidth: 320, ...selectDensitySx }}
                   />
-                  <FocusButton
+                  <AiaButton
                     variant="text"
                     size="small"
                     rounded="full"
@@ -1033,7 +1033,7 @@ export function FilterConditions({
                     customColor="#ef4444"
                   >
                     ✕
-                  </FocusButton>
+                  </AiaButton>
                 </Box>
               ))}
             </Box>
@@ -1072,7 +1072,7 @@ export function FilterConditions({
                   <Box sx={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
                     {idx + 1}
                   </Box>
-                  <FocusSelect
+                  <AiaSelect
                     options={allFields}
                     value={item.field}
                     placeholder="Select field…"
@@ -1080,7 +1080,7 @@ export function FilterConditions({
                     fullWidth
                     sx={{ maxWidth: 320, ...selectDensitySx }}
                   />
-                  <FocusSelect
+                  <AiaSelect
                     options={[
                       { label: "Ascending", value: "ASC" },
                       { label: "Descending", value: "DESC" },
@@ -1090,7 +1090,7 @@ export function FilterConditions({
                     fullWidth
                     sx={{ width: 120, ...selectDensitySx }}
                   />
-                  <FocusButton
+                  <AiaButton
                     variant="text"
                     size="small"
                     rounded="full"
@@ -1098,7 +1098,7 @@ export function FilterConditions({
                     customColor="#ef4444"
                   >
                     ✕
-                  </FocusButton>
+                  </AiaButton>
                 </Box>
               ))}
             </Box>

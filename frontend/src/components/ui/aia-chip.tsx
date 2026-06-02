@@ -2,7 +2,7 @@ import { Chip } from '@mui/material';
 import type { MouseEventHandler } from 'react';
 import type { SxProps, Theme } from '@mui/material/styles';
 
-interface FocusChipProps {
+interface AiaChipProps {
   label: string;
   variant?: 'filled' | 'outlined';
   size?: 'small' | 'medium';
@@ -18,7 +18,7 @@ interface FocusChipProps {
   sx?: SxProps<Theme>;
 }
 
-const FocusChip = ({
+const AiaChip = ({
   label,
   color = 'primary',
   variant = 'filled',
@@ -30,7 +30,7 @@ const FocusChip = ({
   onClick,
   onDelete,
   sx,
-}: FocusChipProps) => {
+}: AiaChipProps) => {
   return (
     <Chip
       label={label}
@@ -67,5 +67,5 @@ const FocusChip = ({
   );
 };
 
-export { FocusChip };
-export type { FocusChipProps };
+export { AiaChip };
+export type { AiaChipProps };

@@ -1,7 +1,6 @@
 "use client";
-
-import AccountTreeRoundedIcon from "@mui/icons-material/AccountTreeRounded";
 import { Box, Paper, Typography } from "@mui/material";
+import { AccountTreeRoundedIcon } from '@/utils/icons';
 
 const mappings = [
     {

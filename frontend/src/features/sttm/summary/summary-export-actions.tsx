@@ -1,9 +1,7 @@
 "use client";
-
-import CodeRoundedIcon from "@mui/icons-material/CodeRounded";
-import TableChartOutlinedIcon from "@mui/icons-material/TableChartOutlined";
 import { Box, Button, Stack } from "@mui/material";
 import { MappingProgressIndicator } from "@/features/sttm/shared/mapping-progress-indicator";
+import { CodeRoundedIcon, TableChartOutlinedIcon } from '@/utils/icons';
 
 type SummaryExportActionsProps = {
   onExportExcel?: () => void;

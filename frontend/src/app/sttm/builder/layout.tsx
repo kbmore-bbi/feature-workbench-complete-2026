@@ -1,11 +1,15 @@
 'use client';
-
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SidebarHost } from '@/features/sttm/layout/sidebar-host';
 import { SidebarSlotProvider, useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
 import { usePathname, useRouter } from 'next/navigation';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
+import {
+  getSelectedSourceTables,
+  getSelectedTargetTable,
+} from '@/features/sttm/shared/sttm-selection-utils';
 import { dbService } from '@/services/dbService';
+import { KeyboardDoubleArrowRightRoundedIcon } from '@/utils/icons';
 import {
   Box,
   Button,
@@ -16,8 +20,8 @@ import {
   Stack,
   Typography,
 } from '@mui/material';
-import KeyboardDoubleArrowRightRoundedIcon from '@mui/icons-material/KeyboardDoubleArrowRightRounded';
-import DragIndicatorRoundedIcon from '@mui/icons-material/DragIndicatorRounded';
+
+import { AiaResizeHandle } from '@/components/ui/aia-resize-handle';
 
 type SemanticPrepState = {
   open: boolean;
@@ -49,12 +53,21 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
   const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const proceedToMappingRef = useRef<() => void>(() => {});
   const {
-    sources,
-    targets,
+    fullData,
     derivedSources,
     relationships,
     applySemanticRefresh,
   } = useSttmBuilderContext();
+
+  const selectedSourceTables = useMemo(
+    () => getSelectedSourceTables(fullData?.sources ?? []),
+    [fullData?.sources],
+  );
+
+  const selectedTargetTable = useMemo(
+    () => getSelectedTargetTable(fullData?.targets ?? []),
+    [fullData?.targets],
+  );
 
   useEffect(() => {
     const handlePointerMove = (event: MouseEvent) => {
@@ -81,7 +94,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
     };
   }, [setWidth]);
 
-  const beginResize = (event: React.MouseEvent<HTMLButtonElement>) => {
+  const beginResize = (event: React.MouseEvent<HTMLDivElement>) => {
     resizeStateRef.current = {
       startX: event.clientX,
       startWidth: width,
@@ -98,14 +111,9 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
 
   const canProceedToMapping = useMemo(
     () =>
-      (sources.some((table) => table.isSelected) || derivedSources.some((source) => source.isSelected)) &&
-      targets.some((table) => table.isSelected),
-    [derivedSources, sources, targets],
-  );
-
-  const selectedSourceTables = useMemo(
-    () => sources.filter((table) => table.isSelected),
-    [sources],
+      (selectedSourceTables.length > 0 || derivedSources.some((source) => source.isSelected)) &&
+      Boolean(selectedTargetTable),
+    [derivedSources, selectedSourceTables, selectedTargetTable],
   );
 
   const selectedDerivedSourceIds = useMemo(
@@ -118,8 +126,8 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
       return;
     }
 
-    const selectedTargetTable = targets.find((table) => table.isSelected);
-    if (!selectedTargetTable) {
+    const selectedTarget = selectedTargetTable;
+    if (!selectedTarget) {
       return;
     }
 
@@ -142,7 +150,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
       const refresh = await dbService.refreshSemanticContext({
         selected_source_tables: selectedSourceTables.map((table) => makeTableRef(table.qualifiedName)),
         selected_derived_sources: selectedDerivedSourceIds,
-        target_table: makeTableRef(selectedTargetTable.qualifiedName),
+        target_table: makeTableRef(selectedTarget.qualifiedName),
         relationships: relationships
           .filter((join) => join.leftTableId && join.rightTableId && join.conditions?.length)
           .map((join) => ({
@@ -251,35 +259,15 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
                   />
                 </Box>
               ) : (
-                <Box sx={{ display: 'flex', width: '100%', minWidth: 0 }}>
-                  <Box sx={{ minWidth: 0, flex: 1 }}>
+                <Box sx={{ display: 'flex', width: '100%', minWidth: 0, height: '100%', minHeight: 0 }}>
+                  <Box sx={{ minWidth: 0, flex: 1, height: '100%', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                     <SidebarHost />
                   </Box>
-                  <Box
-                    sx={{
-                      width: 18,
-                      display: 'flex',
-                      alignItems: 'stretch',
-                      justifyContent: 'center',
-                      borderLeft: '1px solid #eef2f7',
-                      backgroundColor: '#fff',
-                      cursor: 'col-resize',
-                    }}
-                  >
-                    <IconButton
-                      size="small"
-                      aria-label="Resize source sidebar"
-                      onMouseDown={beginResize}
-                      sx={{
-                        width: '100%',
-                        borderRadius: 0,
-                        color: '#94a3b8',
-                        '&:hover': { backgroundColor: '#f8fafc', color: '#475569' },
-                      }}
-                    >
-                      <DragIndicatorRoundedIcon sx={{ fontSize: 18 }} />
-                    </IconButton>
-                  </Box>
+                  <AiaResizeHandle
+                    direction="horizontal"
+                    onMouseDown={beginResize}
+                    sx={{ alignSelf: 'stretch', height: '100%' }}
+                  />
                 </Box>
               )}
             </aside>

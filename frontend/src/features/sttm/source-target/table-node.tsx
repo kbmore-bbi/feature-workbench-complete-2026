@@ -1,14 +1,21 @@
 "use client";
-
-import React, { memo, useMemo, useState } from "react";
+import React, { memo, useEffect, useMemo, useState } from "react";
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
-import KeyboardArrowUpRoundedIcon from "@mui/icons-material/KeyboardArrowUpRounded";
-import TableChartIcon from "@mui/icons-material/TableChart";
-import KeyIcon from "@mui/icons-material/Key";
-import LinkIcon from "@mui/icons-material/Link";
-import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
+import {
+  KeyIcon,
+  KeyboardArrowDownRoundedIcon,
+  KeyboardArrowRightRoundedIcon,
+  KeyboardArrowUpRoundedIcon,
+  LinkIcon,
+  TableChartIcon,
+} from '@/utils/icons';
+
+
+
+
+
 import type { Column } from "@/features/sttm/types/sttm.types";
+import { AiaSearchbox } from "@/components/ui/aia-searchbox";
 
 export interface TableNodeData {
   label: string;
@@ -39,6 +46,15 @@ export interface TableNodeData {
   showColumnSearch?: boolean;
   onEdit?: () => void;
   compact?: boolean;
+  expandAllToken?: number;
+  variant?: "default" | "lineage";
+  mappedCount?: number;
+  totalColumns?: number;
+  badgeBg?: string;
+  badgeFg?: string;
+  pillBg?: string;
+  pillBorder?: string;
+  pillFg?: string;
   [key: string]: unknown;
 }
 
@@ -61,8 +77,9 @@ function ColumnLeading({ col }: { col: Column }) {
 
 function TableNodeComponent({ data, selected }: NodeProps) {
   const d = data as unknown as TableNodeData;
+  const isLineage = d.variant === "lineage";
   const [expanded, setExpanded] = useState(false);
-  const [columnsCollapsed, setColumnsCollapsed] = useState(false);
+  const [columnsCollapsed, setColumnsCollapsed] = useState(isLineage);
   const [columnSearch, setColumnSearch] = useState("");
   const selectedColumns = useMemo(() => new Set(d.selectedColumns ?? []), [d.selectedColumns]);
   const highlightedColumns = useMemo(
@@ -78,6 +95,243 @@ function TableNodeComponent({ data, selected }: NodeProps) {
   }, [columnSearch, d.columns, d.globalColumnSearch]);
   const visibleCols = expanded ? filteredColumns : filteredColumns.slice(0, MAX_VISIBLE_COLS);
   const hiddenCount = Math.max(filteredColumns.length - MAX_VISIBLE_COLS, 0);
+  const accentColor = d.accentColor ?? "#2563eb";
+  const mappedCount = d.mappedCount ?? 0;
+  const totalColumns = d.totalColumns ?? d.colCount;
+  const mappingLabel = `${mappedCount}/${totalColumns}`;
+
+  useEffect(() => {
+    if (!d.expandAllToken) {
+      return;
+    }
+    setExpanded(true);
+    setColumnsCollapsed(false);
+  }, [d.expandAllToken]);
+
+  const columnList = (
+    <>
+      {d.showColumnSearch ? (
+        <div className="tnode__search-wrap" onClick={(event) => event.stopPropagation()}>
+          <AiaSearchbox
+            value={columnSearch}
+            onChange={setColumnSearch}
+            placeholder="Search columns"
+            className="tnode__search"
+            sx={{
+              minHeight: 0,
+              py: 0.5,
+              px: 1,
+              backgroundColor: "#f9fafb",
+              border: "1px solid #e5e7eb",
+              "&:focus-within": {
+                backgroundColor: "#ffffff",
+                borderColor: "#cbd5e1",
+                boxShadow: "none",
+              },
+            }}
+            inputSx={{
+              "& .MuiInputBase-input": {
+                fontSize: 12,
+              },
+            }}
+          />
+        </div>
+      ) : null}
+
+      <div className="tnode__cols">
+        {visibleCols.map((col, index) => {
+          const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}-${index}`;
+          const isHighlighted = highlightedColumns.has(String(col.name ?? "").toLowerCase());
+          const isActiveColumn = d.activeColumnName === col.name;
+          return (
+            <div
+              key={columnKey}
+              className="tnode__col"
+              style={{
+                backgroundColor: isActiveColumn
+                  ? "rgba(29, 78, 216, 0.12)"
+                  : isHighlighted
+                    ? "rgba(251, 191, 36, 0.18)"
+                    : undefined,
+                cursor: d.onColumnSelect ? "pointer" : "default",
+              }}
+              onClick={(event) => {
+                if (!d.onColumnSelect || !col.name) {
+                  return;
+                }
+                event.stopPropagation();
+                d.onColumnSelect(col.name);
+              }}
+            >
+              <Handle
+                type="target"
+                position={Position.Left}
+                id={`${columnKey}-target`}
+                className="tnode__handle tnode__handle--left"
+                style={{ top: "50%" }}
+              />
+
+              <div className="tnode__col-inner">
+                <div className="tnode__col-left">
+                  {d.selectableColumns ? (
+                    <input
+                      type="checkbox"
+                      checked={selectedColumns.has(col.name ?? "")}
+                      onChange={(event) =>
+                        d.onToggleColumn?.(col.name ?? "", event.target.checked)
+                      }
+                      onClick={(event) => event.stopPropagation()}
+                      style={{ width: 16, height: 16, margin: 0, accentColor: "#2563eb", flexShrink: 0 }}
+                    />
+                  ) : null}
+                  {d.selectableColumns ? (
+                    col.isPrimaryKey || col.isForeignKey ? (
+                      <span className="tnode__col-key-inline">
+                        <ColumnLeading col={col} />
+                      </span>
+                    ) : null
+                  ) : (
+                    <span className="tnode__col-icon-slot">
+                      <ColumnLeading col={col} />
+                    </span>
+                  )}
+                  <span
+                    className="tnode__col-name"
+                    style={{
+                      color: isActiveColumn
+                        ? "#1d4ed8"
+                        : isHighlighted
+                          ? "#92400e"
+                          : undefined,
+                    }}
+                  >
+                    {col.name}
+                  </span>
+                </div>
+                <span className="tnode__col-type">{col.type}</span>
+              </div>
+
+              <Handle
+                type="source"
+                position={Position.Right}
+                id={`${columnKey}-source`}
+                className="tnode__handle tnode__handle--right"
+                style={{ top: "50%" }}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {hiddenCount > 0 && (
+        <button
+          type="button"
+          className="tnode__more"
+          onClick={(event) => {
+            event.stopPropagation();
+            setExpanded((prev) => !prev);
+          }}
+          style={{ background: "none", border: "none", cursor: "pointer" }}
+        >
+          {expanded ? "Show less" : `+${hiddenCount} more`}
+        </button>
+      )}
+    </>
+  );
+
+  if (isLineage) {
+    return (
+      <div
+        className={`tnode tnode--lineage ${selected ? "tnode--selected" : ""}`}
+        style={{
+          width: d.width ?? 340,
+          cursor: d.onEdit ? "pointer" : "default",
+          borderColor: selected ? "#93c5fd" : accentColor,
+        }}
+        onClick={
+          d.onEdit
+            ? (event) => {
+                event.stopPropagation();
+                d.onEdit?.();
+              }
+            : undefined
+        }
+      >
+        <div className="tnode__lineage-header" style={{ backgroundColor: d.headerBg ?? "#eef6ff" }}>
+          <div className="tnode__lineage-header-inner">
+            <div
+              className="tnode__icon-wrap tnode__icon-wrap--lineage"
+              style={{ backgroundColor: d.iconBg ?? "#dbeafe" }}
+            >
+              <TableChartIcon sx={{ fontSize: 20, color: d.iconColor ?? accentColor }} />
+            </div>
+            <div className="tnode__lineage-text">
+              <div className="tnode__lineage-top-row">
+                <span className="tnode__lineage-meta" style={{ color: accentColor }}>
+                  {d.database} · {d.tag}
+                </span>
+                <div className="tnode__lineage-actions">
+                  <span
+                    className="tnode__lineage-map-badge"
+                    style={{
+                      backgroundColor: d.badgeBg ?? "#dbeafe",
+                      color: d.badgeFg ?? accentColor,
+                    }}
+                  >
+                    {mappingLabel}
+                  </span>
+                  <button
+                    type="button"
+                    className="tnode__lineage-expand"
+                    style={{
+                      borderColor: `${accentColor}33`,
+                      backgroundColor: `${accentColor}12`,
+                      color: accentColor,
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setColumnsCollapsed((previous) => !previous);
+                    }}
+                    aria-label={columnsCollapsed ? "Expand columns" : "Collapse columns"}
+                  >
+                    {columnsCollapsed ? (
+                      <KeyboardArrowRightRoundedIcon sx={{ fontSize: 18 }} />
+                    ) : (
+                      <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18 }} />
+                    )}
+                  </button>
+                </div>
+              </div>
+              <div className="tnode__lineage-name">{d.label}</div>
+            </div>
+          </div>
+        </div>
+
+        <div className="tnode__lineage-body">
+          {columnsCollapsed ? (
+            <div className="tnode__lineage-footer">
+              <span
+                className="tnode__lineage-columns-pill"
+                style={{
+                  backgroundColor: d.pillBg ?? "#f8fbff",
+                  borderColor: d.pillBorder ?? "#bfdbfe",
+                  color: d.pillFg ?? accentColor,
+                }}
+              >
+                <span
+                  className="tnode__lineage-dot"
+                  style={{ backgroundColor: accentColor }}
+                  aria-hidden
+                />
+                {d.colCount} column{d.colCount === 1 ? "" : "s"}
+              </span>
+            </div>
+          ) : (
+            columnList
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div 
@@ -166,121 +420,7 @@ function TableNodeComponent({ data, selected }: NodeProps) {
         </button>
       </div>
 
-      {!columnsCollapsed ? (
-        <>
-          {d.showColumnSearch ? (
-            <div className="tnode__search-wrap" onClick={(event) => event.stopPropagation()}>
-              <div className="tnode__search">
-                <SearchRoundedIcon sx={{ fontSize: 16, color: "#9ca3af", flexShrink: 0 }} />
-                <input
-                  value={columnSearch}
-                  onChange={(event) => setColumnSearch(event.target.value)}
-                  placeholder="Search columns"
-                  className="tnode__search-input"
-                />
-              </div>
-            </div>
-          ) : null}
-
-          <div className="tnode__cols">
-            {visibleCols.map((col, index) => {
-              const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}-${index}`;
-              const isHighlighted = highlightedColumns.has(String(col.name ?? "").toLowerCase());
-              const isActiveColumn = d.activeColumnName === col.name;
-              return (
-                <div
-                  key={columnKey}
-                  className="tnode__col"
-                  style={{
-                    backgroundColor: isActiveColumn
-                      ? "rgba(29, 78, 216, 0.12)"
-                      : isHighlighted
-                        ? "rgba(251, 191, 36, 0.18)"
-                        : undefined,
-                    cursor: d.onColumnSelect ? "pointer" : "default",
-                  }}
-                  onClick={(event) => {
-                    if (!d.onColumnSelect || !col.name) {
-                      return;
-                    }
-                    event.stopPropagation();
-                    d.onColumnSelect(col.name);
-                  }}
-                >
-                  <Handle
-                    type="target"
-                    position={Position.Left}
-                    id={`${columnKey}-target`}
-                    className="tnode__handle tnode__handle--left"
-                    style={{ top: "50%" }}
-                  />
-
-                  <div className="tnode__col-inner">
-                    <div className="tnode__col-left">
-                      {d.selectableColumns ? (
-                        <input
-                          type="checkbox"
-                          checked={selectedColumns.has(col.name ?? "")}
-                          onChange={(event) =>
-                            d.onToggleColumn?.(col.name ?? "", event.target.checked)
-                          }
-                          onClick={(event) => event.stopPropagation()}
-                          style={{ width: 16, height: 16, margin: 0, accentColor: "#2563eb", flexShrink: 0 }}
-                        />
-                      ) : null}
-                      {d.selectableColumns ? (
-                        col.isPrimaryKey || col.isForeignKey ? (
-                          <span className="tnode__col-key-inline">
-                            <ColumnLeading col={col} />
-                          </span>
-                        ) : null
-                      ) : (
-                        <span className="tnode__col-icon-slot">
-                          <ColumnLeading col={col} />
-                        </span>
-                      )}
-                      <span
-                        className="tnode__col-name"
-                        style={{
-                          color: isActiveColumn
-                            ? "#1d4ed8"
-                            : isHighlighted
-                              ? "#92400e"
-                              : undefined,
-                        }}
-                      >
-                        {col.name}
-                      </span>
-                    </div>
-                    <span className="tnode__col-type">{col.type}</span>
-                  </div>
-
-                  <Handle
-                    type="source"
-                    position={Position.Right}
-                    id={`${columnKey}-source`}
-                    className="tnode__handle tnode__handle--right"
-                    style={{ top: "50%" }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-          {hiddenCount > 0 && (
-            <button
-              type="button"
-              className="tnode__more"
-              onClick={(event) => {
-                event.stopPropagation();
-                setExpanded((prev) => !prev);
-              }}
-              style={{ background: "none", border: "none", cursor: "pointer" }}
-            >
-              {expanded ? "Show less" : `+${hiddenCount} more`}
-            </button>
-          )}
-        </>
-      ) : null}
+      {!columnsCollapsed ? columnList : null}
     </div>
   );
 }

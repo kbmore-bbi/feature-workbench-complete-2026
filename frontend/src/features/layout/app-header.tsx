@@ -1,10 +1,10 @@
 "use client";
-
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import DarkModeRoundedIcon from "@mui/icons-material/DarkModeRounded";
-import LightModeRoundedIcon from "@mui/icons-material/LightModeRounded";
-import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
+import { DarkModeRoundedIcon, KeyboardArrowDownRoundedIcon, LightModeRoundedIcon } from '@/utils/icons';
+
+
+
 import { Avatar, Box, IconButton, Tooltip, Typography } from "@mui/material";
 import { useThemeMode } from "@/app/Providers";
 import Link from "next/link";
@@ -13,6 +13,10 @@ import { authService } from "@/services/authService";
 import type { UserSession } from "@/types/user";
 import { CLIENT_CONFIG as config } from "@/config/client.config";
 import { useAppSelector } from "@/store/hooks";
+import {
+  getSelectedSourceTables,
+  getSelectedTargetTable,
+} from "@/features/sttm/shared/sttm-selection-utils";
 import BuilderContentHeader from "@/features/sttm/layout/builder-content-header";
 
 type AppHeaderProps = {
@@ -28,9 +32,10 @@ export default function AppHeader({
   const [session, setSession] = useState<UserSession | null>(null);
   const pathname = usePathname();
   const router = useRouter();
-  const { sources, targets, mappings, derivedSources, relationships } = useAppSelector(
-    (state) => state.sttmBuilder,
-  );
+  const { targets, mappings, derivedSources, relationships, sourceDatabases, targetDatabases } =
+    useAppSelector((state) => state.sttmBuilder);
+  const selectedSourceTables = getSelectedSourceTables(sourceDatabases);
+  const selectedTargetTable = getSelectedTargetTable(targetDatabases);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,17 +76,16 @@ export default function AppHeader({
     pathname === "/sttm/builder/new" || isMappingPage || isSummaryPage;
   const currentStep: 1 | 2 | 3 = isSummaryPage ? 3 : isMappingPage ? 2 : 1;
   const sourceTableCount =
-    sources.filter((table) => table.isSelected).length +
+    selectedSourceTables.length +
     derivedSources.filter((source) => source.isSelected).length;
   const joinCount = relationships.filter(
     (join) => join.leftTableId && join.rightTableId && join.conditions?.length,
   ).length;
-  const tableCount =
-    sourceTableCount + (targets.some((table) => table.isSelected) ? 1 : 0);
+  const tableCount = sourceTableCount + (selectedTargetTable ? 1 : 0);
   const mappedCount = mappings.filter((mapping) => mapping.status === "MAPPED").length;
   const canProceedToMapping =
-    (sources.some((table) => table.isSelected) || derivedSources.some((source) => source.isSelected)) &&
-    targets.some((table) => table.isSelected);
+    (selectedSourceTables.length > 0 || derivedSources.some((source) => source.isSelected)) &&
+    Boolean(selectedTargetTable);
 
   const requestProceedToMapping = () => {
     if (!canProceedToMapping || isMappingPage || isSummaryPage) {

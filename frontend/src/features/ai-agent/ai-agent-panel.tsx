@@ -1,6 +1,6 @@
 "use client";
-
 import React, { useEffect, useMemo, useRef, useState } from "react";
+import { CloseFullscreenIcon, KeyboardArrowDownIcon, KeyboardArrowRightIcon, OpenInFullIcon, SendIcon, SmartToyIcon, TableChartIcon, VolumeUpIcon } from '@/utils/icons';
 import {
   Avatar,
   Box,
@@ -12,14 +12,14 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import SendIcon from "@mui/icons-material/Send";
-import SmartToyIcon from "@mui/icons-material/SmartToy";
-import TableChartIcon from "@mui/icons-material/TableChart";
-import VolumeUpIcon from "@mui/icons-material/VolumeUp";
-import OpenInFullIcon from "@mui/icons-material/OpenInFull";
-import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
-import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
+
+
+
+
+
+
+
+
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 

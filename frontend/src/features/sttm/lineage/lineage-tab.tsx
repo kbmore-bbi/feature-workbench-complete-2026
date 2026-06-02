@@ -1,9 +1,8 @@
 "use client";
-
+import { AutoFixHighRoundedIcon, CloseRoundedIcon, FilterAltRoundedIcon, HubRoundedIcon, NorthEastRoundedIcon } from '@/utils/icons';
 import {
   startTransition,
   useCallback,
-  useDeferredValue,
   useEffect,
   useMemo,
   useRef,
@@ -24,27 +23,25 @@ import {
   useEdgesState,
   useNodesState,
 } from "@xyflow/react";
-import AccountTreeRoundedIcon from "@mui/icons-material/AccountTreeRounded";
-import AutoFixHighRoundedIcon from "@mui/icons-material/AutoFixHighRounded";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import FilterAltRoundedIcon from "@mui/icons-material/FilterAltRounded";
-import HubRoundedIcon from "@mui/icons-material/HubRounded";
-import NorthEastRoundedIcon from "@mui/icons-material/NorthEastRounded";
-import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
-import TableChartRoundedIcon from "@mui/icons-material/TableChartRounded";
+
+
+
+
+
+
+
 import {
   Box,
   Chip,
   Divider,
   IconButton,
-  InputAdornment,
   Paper,
   Stack,
-  TextField,
   Typography,
 } from "@mui/material";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import { TableNode, type TableNodeData } from "@/features/sttm/source-target/table-node";
+import { LineageWorkspaceHeader } from "./lineage-workspace-header";
 import {
   buildLineageGraph,
   buildNodeLevels,
@@ -54,6 +51,8 @@ import {
   readableLineageDepth,
   readableNodeLabel,
   readableOperationLabel,
+  getLineageCardTheme,
+  getNodeMappingProgress,
   summarizeNode,
   type LineageEdgeOperation,
   type LineageGraphEdge,
@@ -62,6 +61,8 @@ import {
 } from "./lineage-utils";
 
 const nodeTypes = { tableNode: TableNode };
+
+const SOURCE_LEGEND_COLORS = ["#8b5cf6", "#1d4ed8", "#2563eb", "#0891b2"];
 
 type LineageFocus =
   | { kind: "overview" }
@@ -267,16 +268,14 @@ function LineageEdgeView({
 const edgeTypes = { lineageEdge: LineageEdgeView };
 
 function estimateNodeWidth(node: LineageGraphNode) {
-  const titleLength = `${node.schema}.${node.label}`.length;
   const longestColumnLength = node.columns.reduce((longest, column) => {
     return Math.max(longest, `${column.name ?? ""}${column.type ? ` ${column.type}` : ""}`.length);
   }, 0);
 
-  const baseWidth = node.kind === "target" ? 390 : node.kind === "derived" ? 370 : 350;
-  const titleWidth = titleLength * 7.2;
+  const baseWidth = 340;
   const columnWidth = longestColumnLength * 6.2 + 128;
 
-  return Math.max(baseWidth, Math.min(470, Math.ceil(Math.max(titleWidth, columnWidth))));
+  return Math.max(baseWidth, Math.min(470, Math.ceil(columnWidth)));
 }
 
 function buildNodePositionMap(
@@ -367,11 +366,11 @@ export default function LineageTab() {
     semanticLineage,
   } = useSttmBuilderContext();
 
-  const [search, setSearch] = useState("");
-  const deferredSearch = useDeferredValue(search);
+  const deferredSearch = "";
   const [focus, setFocus] = useState<LineageFocus>({ kind: "overview" });
   const [selectedTargetColumn, setSelectedTargetColumn] = useState<string | null>(null);
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
+  const [expandAllToken, setExpandAllToken] = useState(0);
 
   const graph = useMemo(
     () =>
@@ -424,10 +423,17 @@ export default function LineageTab() {
 
   const positionedNodes = useMemo<Node<TableNodeData>[]>(() => {
     const positions = buildNodePositionMap(orderedGroups, graph.nodes);
+    let sourceIndex = 0;
 
     return graph.nodes.map((node) => {
       const position = positions.get(node.id) ?? { x: 40, y: 40 };
       const summary = summarizeNode(node, graph.edges);
+      const mappingProgress = getNodeMappingProgress(node);
+      const sourceAccent =
+        node.kind === "source"
+          ? SOURCE_LEGEND_COLORS[sourceIndex++ % SOURCE_LEGEND_COLORS.length]
+          : undefined;
+      const cardTheme = getLineageCardTheme(node, sourceAccent);
 
       return {
         id: node.id,
@@ -438,37 +444,33 @@ export default function LineageTab() {
           label: node.label,
           schema: node.schema,
           database: node.database,
-          tag: node.tag,
-          tagBg: node.kind === "source" ? "#dbeafe" : node.kind === "derived" ? "#ffedd5" : "#d7eef7",
-          tagFg: node.accentColor,
+          tag: node.tag.toUpperCase(),
+          tagBg: cardTheme.badgeBg,
+          tagFg: cardTheme.badgeFg,
           rowCount: node.rowCount,
           colCount: node.colCount,
           columns: node.columns,
           width: estimateNodeWidth(node),
+          variant: "lineage",
+          mappedCount: mappingProgress.mapped,
+          totalColumns: mappingProgress.total,
           showColumnSearch: true,
           globalColumnSearch: deferredSearch,
           highlightedColumns: node.highlightedColumns,
           activeColumnName: node.id === graph.targetNodeId ? selectedTargetColumn : null,
           onColumnSelect: node.id === graph.targetNodeId ? handleTargetColumnSelect : undefined,
-          accentColor: node.accentColor,
+          accentColor: cardTheme.accentColor,
           surfaceTint: "#ffffff",
-          headerBg: node.headerBg,
-          iconBg: node.iconBg,
-          iconColor: node.iconColor,
-          secondaryTag: readableLineageDepth(node),
-          secondaryTagBg:
-            node.kind === "target"
-              ? "#d7eef7"
-              : node.kind === "derived"
-                ? "#fff1de"
-                : "#e0f2fe",
-          secondaryTagFg:
-            node.kind === "target"
-              ? "#003D59"
-              : node.kind === "derived"
-                ? "#b45309"
-                : "#0369a1",
+          headerBg: cardTheme.headerBg,
+          iconBg: cardTheme.iconBg,
+          iconColor: cardTheme.iconColor,
+          badgeBg: cardTheme.badgeBg,
+          badgeFg: cardTheme.badgeFg,
+          pillBg: cardTheme.pillBg,
+          pillBorder: cardTheme.pillBorder,
+          pillFg: cardTheme.pillFg,
           summary,
+          expandAllToken,
         } satisfies TableNodeData,
       } satisfies Node<TableNodeData>;
     });
@@ -480,6 +482,7 @@ export default function LineageTab() {
     handleTargetColumnSelect,
     orderedGroups,
     selectedTargetColumn,
+    expandAllToken,
   ]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(positionedNodes);
@@ -576,8 +579,31 @@ export default function LineageTab() {
     [activeFocus, graph.edges],
   );
 
-  const mappedEdgeCount = graph.edges.filter((edge) => edge.kind === "mapping").length;
-  const joinEdgeCount = graph.edges.filter((edge) => edge.kind !== "mapping").length;
+  const lineageStats = useMemo(
+    () => ({
+      mapped: mappings.filter((mapping) => mapping.status === "MAPPED").length,
+      unmapped: mappings.filter((mapping) => mapping.status !== "MAPPED").length,
+      transformed: mappings.filter((mapping) => {
+        const rule = mapping.rule === "Select..." ? "" : mapping.rule || "";
+        return mapping.status === "MAPPED" && !!rule && rule !== "Direct";
+      }).length,
+    }),
+    [mappings],
+  );
+
+  const lineageLegend = useMemo(() => {
+    let sourceIndex = 0;
+    return graph.nodes
+      .filter((node) => node.kind === "source" || node.kind === "target")
+      .map((node) => ({
+        label: node.label,
+        color:
+          node.kind === "target"
+            ? node.accentColor
+            : SOURCE_LEGEND_COLORS[sourceIndex++ % SOURCE_LEGEND_COLORS.length],
+      }));
+  }, [graph.nodes]);
+
   const focusedMappings = useMemo(
     () => describeFocusedMappings(selectedTargetColumn, graph.edges, graph.nodes),
     [graph.edges, graph.nodes, selectedTargetColumn],
@@ -614,123 +640,11 @@ export default function LineageTab() {
           backgroundColor: "#fff",
         }}
       >
-        <Box
-          sx={{
-            px: 2.25,
-            py: 1.7,
-            borderBottom: "1px solid #e2e8f0",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            gap: 1.5,
-            flexWrap: "wrap",
-          }}
-        >
-          <Box sx={{ minWidth: 0 }}>
-            <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
-              <Box
-                sx={{
-                  width: 38,
-                  height: 38,
-                  borderRadius: "12px",
-                  bgcolor: "#003D59",
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                }}
-              >
-                <AccountTreeRoundedIcon sx={{ fontSize: 20 }} />
-              </Box>
-              <Box>
-                <Typography sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
-                  Live Lineage
-                </Typography>
-                <Typography sx={{ fontSize: 12.5, color: "#64748b" }}>
-                  Source and derived context updates here as the mapping grid changes.
-                </Typography>
-              </Box>
-            </Stack>
-          </Box>
-
-          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", alignItems: "center" }}>
-            {selectedTargetColumn ? (
-              <Chip
-                label={`Tracing ${selectedTargetColumn}`}
-                onDelete={() => setSelectedTargetColumn(null)}
-                sx={{
-                  fontWeight: 800,
-                  bgcolor: "#e0f2fe",
-                  color: "#003D59",
-                }}
-              />
-            ) : null}
-            <Chip label={`${graph.nodes.length} tables`} size="small" sx={{ fontWeight: 700 }} />
-            <Chip label={`${joinEdgeCount} prep paths`} size="small" sx={{ fontWeight: 700 }} />
-            <Chip label={`${mappedEdgeCount} target links`} size="small" sx={{ fontWeight: 700 }} />
-            <Chip
-              label={`${graph.mappedCount} mapped columns`}
-              size="small"
-              sx={{
-                fontWeight: 800,
-                bgcolor: "#dbeafe",
-                color: "#003D59",
-              }}
-            />
-          </Stack>
-        </Box>
-
-        <Box
-          sx={{
-            px: 2.25,
-            py: 1.4,
-            borderBottom: "1px solid #eef2f7",
-            display: "grid",
-            gridTemplateColumns: { xs: "1fr", md: "320px 1fr" },
-            gap: 1.5,
-            alignItems: "center",
-          }}
-        >
-          <TextField
-            size="small"
-            value={search}
-            onChange={(event) => {
-              const nextValue = event.target.value;
-              startTransition(() => setSearch(nextValue));
-            }}
-            placeholder="Search columns across source, derived, and target tables"
-            slotProps={{
-              input: {
-                startAdornment: (
-                  <InputAdornment position="start">
-                    <SearchRoundedIcon sx={{ fontSize: 18, color: "#64748b" }} />
-                  </InputAdornment>
-                ),
-              },
-            }}
-            sx={{
-              "& .MuiOutlinedInput-root": {
-                borderRadius: "12px",
-                backgroundColor: "#fff",
-              },
-            }}
-          />
-
-          <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
-            <LineageOperationChip
-              operation={{ icon: "join", label: "Join", tone: "source" }}
-            />
-            <LineageOperationChip
-              operation={{ icon: "filter", label: "Filter", tone: "derived" }}
-            />
-            <LineageOperationChip
-              operation={{ icon: "direct", label: "Direct", tone: "target" }}
-            />
-            <LineageOperationChip
-              operation={{ icon: "transform", label: "Transform", tone: "derived" }}
-            />
-          </Stack>
-        </Box>
+        <LineageWorkspaceHeader
+          stats={lineageStats}
+          legend={lineageLegend}
+          onExpandAll={() => setExpandAllToken((token) => token + 1)}
+        />
 
         <Box sx={{ flex: 1, minHeight: 0, position: "relative" }}>
           {nodes.length === 0 ? (
@@ -747,13 +661,12 @@ export default function LineageTab() {
               }}
             >
               <Box sx={{ maxWidth: 420 }}>
-                <TableChartRoundedIcon sx={{ fontSize: 28, color: "#94a3b8", mb: 1 }} />
                 <Typography sx={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
                   Lineage will appear after table selection
                 </Typography>
                 <Typography sx={{ fontSize: 13.5, color: "#64748b", mt: 0.75, lineHeight: 1.55 }}>
-                  Once source, derived, and target tables are selected, this canvas will show
-                  joins, derived-source lineage, and target mappings in one place.
+                  Once source and target tables are selected, this canvas will show table joins
+                  and target mappings.
                 </Typography>
               </Box>
             </Box>

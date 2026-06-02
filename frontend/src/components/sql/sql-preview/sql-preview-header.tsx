@@ -1,8 +1,8 @@
 'use client';
-
 import { useCallback, useEffect, useState } from 'react';
 import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material';
-import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
+import { ContentCopyRoundedIcon } from '@/utils/icons';
+
 import { SqlPreviewStatPills, type SqlPreviewStat } from './sql-preview-stat-pills';
 
 const COPY_FEEDBACK_MS = 1500;

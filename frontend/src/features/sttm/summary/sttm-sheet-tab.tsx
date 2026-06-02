@@ -1,179 +1,210 @@
 "use client";
 
-import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
-import FiberManualRecordRoundedIcon from "@mui/icons-material/FiberManualRecordRounded";
+import { useMemo, useState } from "react";
 import {
   Box,
-  Chip,
   Paper,
   Table,
   TableBody,
   TableCell,
   TableContainer,
   TableHead,
+  TablePagination,
   TableRow,
   Typography,
 } from "@mui/material";
 import type { MappingState } from "@/features/sttm/types/sttm.types";
+import {
+  MappingRowIndexCell,
+  MappingStatusCell,
+  MappingTargetColumnCell,
+  MappingTypePreviewCell,
+} from "@/features/sttm/mapping/cells";
+import {
+  MAPPING_TABLE_CONTAINER_SX,
+  MAPPING_TABLE_HEADER_CELL_SX,
+  MAPPING_TABLE_PAGINATION_SX,
+  MAPPING_TABLE_ROW_SX,
+  scrollableMappingTableSx,
+} from "@/features/sttm/mapping/mapping-table-styles";
+import {
+  generateMappingDescription,
+  parseSourceColumns,
+} from "@/features/sttm/mapping/mapping-utils";
 import { formatMappingRule } from "./summary-utils";
+import {
+  SttmSheetDescriptionCell,
+  SttmSheetSourceColumnCell,
+  SttmSheetTransformRuleCell,
+} from "./sttm-sheet-table-cells";
 
 type SttmSheetTabProps = {
   mappings: MappingState[];
 };
 
-const headerCellSx = {
-  color: "#4b5563",
-  fontWeight: 700,
-  fontSize: "0.68rem",
-  letterSpacing: "0.06em",
-  textTransform: "uppercase" as const,
-  borderBottom: "1px solid #e5e7eb",
-  bgcolor: "#fafafa",
-  py: 0.65,
-  whiteSpace: "nowrap" as const,
-};
+const DEFAULT_ROWS_PER_PAGE = 25;
+const ROWS_PER_PAGE_OPTIONS = [10, 25, 50, 100];
 
-function StatusChip({ status }: { status: MappingState["status"] }) {
-  const mapped = status === "MAPPED";
-  return (
-    <Chip
-      label={mapped ? "Mapped" : "Unmapped"}
-      size="small"
-      sx={{
-        height: 22,
-        fontSize: "0.68rem",
-        fontWeight: 700,
-        bgcolor: mapped ? "#dcfce7" : "#ffedd5",
-        color: mapped ? "#166534" : "#c2410c",
-        border: mapped ? "1px solid #bbf7d0" : "1px solid #fed7aa",
-      }}
-    />
-  );
-}
+const STTM_SHEET_COLUMN_WIDTH = {
+  index: 48,
+  targetColumn: 168,
+  transformRule: 140,
+  sourceColumn: 300,
+  type: 112,
+  description: 320,
+  status: 120,
+} as const;
 
-function RuleBadge({ rule }: { rule: string }) {
-  const isDirect = rule === "Direct";
-  if (isDirect) {
-    return (
-      <Typography sx={{ fontSize: "0.78rem", color: "#64748b" }}>
-        Direct
-      </Typography>
-    );
-  }
-
-  return (
-    <Chip
-      label={rule}
-      size="small"
-      sx={{
-        height: 22,
-        fontSize: "0.68rem",
-        fontWeight: 700,
-        bgcolor: "#f5f3ff",
-        color: "#6d28d9",
-      }}
-    />
-  );
-}
+const STTM_SHEET_TABLE_MIN_WIDTH = Object.values(STTM_SHEET_COLUMN_WIDTH).reduce(
+  (total, width) => total + width,
+  0,
+);
 
 export function SttmSheetTab({ mappings }: SttmSheetTabProps) {
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
+
+  const paginatedMappings = useMemo(() => {
+    const start = page * rowsPerPage;
+    return mappings.slice(start, start + rowsPerPage);
+  }, [mappings, page, rowsPerPage]);
+
   return (
-    <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-      <TableContainer
-        component={Paper}
-        elevation={0}
-        sx={{
-          flex: 1,
-          minHeight: 0,
-          border: "none",
-          borderRadius: 0,
-          overflow: "auto",
-        }}
-      >
-        <Table
-          stickyHeader
-          size="small"
-          sx={{
-            minWidth: 980,
-            "& .MuiTableBody-root .MuiTableCell-root": {
-              borderBottom: "1px solid #edf2f7",
-            },
-          }}
-        >
+    <Box
+      sx={{
+        flex: 1,
+        minHeight: 0,
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
+        bgcolor: "#fff",
+      }}
+    >
+      <TableContainer component={Paper} elevation={0} sx={MAPPING_TABLE_CONTAINER_SX}>
+        <Table stickyHeader size="small" sx={scrollableMappingTableSx(STTM_SHEET_TABLE_MIN_WIDTH)}>
+          <colgroup>
+            {Object.values(STTM_SHEET_COLUMN_WIDTH).map((columnWidth, index) => (
+              <col key={`sttm-sheet-col-${index}`} style={{ width: columnWidth }} />
+            ))}
+          </colgroup>
           <TableHead>
             <TableRow>
-              <TableCell sx={{ ...headerCellSx, width: 48 }}>#</TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 160 }}>Target Column</TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 140 }}>Transform Rule</TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 220 }}>Source Column</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: 110 }}>Type</TableCell>
-              <TableCell sx={{ ...headerCellSx, minWidth: 260 }}>Description</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: 110 }} align="right">
+              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, width: STTM_SHEET_COLUMN_WIDTH.index }}>
+                #
+              </TableCell>
+              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.targetColumn }}>
+                Target Column
+              </TableCell>
+              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.transformRule }}>
+                Transform Rule
+              </TableCell>
+              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.sourceColumn }}>
+                Source Column
+              </TableCell>
+              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.type }}>
+                Type
+              </TableCell>
+              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.description }}>
+                Description
+              </TableCell>
+              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.status }}>
                 Status
               </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {mappings.map((row, index) => {
-              const rule = formatMappingRule(row.rule);
+            {paginatedMappings.map((row, index) => {
               const mapped = row.status === "MAPPED";
-              const previewType = row.sourceType ?? row.targetType ?? "—";
+              const rule = formatMappingRule(row.rule);
+              const previewType = row.sourceType ?? row.targetType ?? undefined;
+              const sourceColumns =
+                row.sourceColumns && row.sourceColumns.length
+                  ? row.sourceColumns
+                  : parseSourceColumns(row.sourceColumn);
+              const autoDescription = generateMappingDescription({
+                rule: row.rule || "Direct",
+                sourceColumns,
+                targetColumn: row.targetColumn,
+                expression: row.expression,
+              });
+              const description = row.description ?? autoDescription ?? "";
 
               return (
-                <TableRow key={row.id}>
-                  <TableCell sx={{ color: "#94a3b8", fontSize: "0.78rem", py: 1.1 }}>
-                    {index + 1}
-                  </TableCell>
-                  <TableCell sx={{ py: 1.1 }}>
-                    <Typography sx={{ fontSize: "0.8rem", fontWeight: 600, color: "#111827" }}>
-                      {row.targetColumn}
-                    </Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1.1 }}>
-                    <RuleBadge rule={rule} />
-                  </TableCell>
-                  <TableCell sx={{ py: 1.1 }}>
-                    {mapped && row.sourceColumn ? (
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
-                        <FiberManualRecordRoundedIcon sx={{ fontSize: 10, color: "#22c55e" }} />
-                        <ArrowBackRoundedIcon sx={{ fontSize: 14, color: "#94a3b8", transform: "rotate(180deg)" }} />
-                        <Typography sx={{ fontSize: "0.78rem", color: "#111827", overflowWrap: "anywhere" }}>
-                          {row.sourceColumn}
-                        </Typography>
-                      </Box>
-                    ) : (
-                      <Typography sx={{ fontSize: "0.78rem", color: "#94a3b8" }}>
-                        — not mapped
-                      </Typography>
-                    )}
-                  </TableCell>
-                  <TableCell sx={{ py: 1.1 }}>
-                    <Chip
-                      label={previewType}
-                      size="small"
-                      sx={{
-                        height: 22,
-                        fontSize: "0.65rem",
-                        fontWeight: 700,
-                        bgcolor: "#f3f4f6",
-                        color: "#4b5563",
-                      }}
-                    />
-                  </TableCell>
-                  <TableCell sx={{ py: 1.1 }}>
-                    <Typography sx={{ fontSize: "0.76rem", color: "#475569", lineHeight: 1.45 }}>
-                      {row.description || "—"}
-                    </Typography>
-                  </TableCell>
-                  <TableCell sx={{ py: 1.1 }} align="right">
-                    <StatusChip status={row.status} />
-                  </TableCell>
+                <TableRow key={row.id} sx={MAPPING_TABLE_ROW_SX}>
+                  <MappingRowIndexCell
+                    index={page * rowsPerPage + index + 1}
+                    width={STTM_SHEET_COLUMN_WIDTH.index}
+                    minWidth={STTM_SHEET_COLUMN_WIDTH.index}
+                  />
+
+                  <MappingTargetColumnCell
+                    name={row.targetColumn}
+                    showMappedIcon={false}
+                    width={STTM_SHEET_COLUMN_WIDTH.targetColumn}
+                    minWidth={STTM_SHEET_COLUMN_WIDTH.targetColumn}
+                  />
+
+                  <SttmSheetTransformRuleCell
+                    rule={rule}
+                    width={STTM_SHEET_COLUMN_WIDTH.transformRule}
+                    minWidth={STTM_SHEET_COLUMN_WIDTH.transformRule}
+                  />
+
+                  <SttmSheetSourceColumnCell
+                    value={row.sourceColumn}
+                    sourceType={row.sourceType ?? row.targetType}
+                    mapped={mapped}
+                    width={STTM_SHEET_COLUMN_WIDTH.sourceColumn}
+                    minWidth={STTM_SHEET_COLUMN_WIDTH.sourceColumn}
+                  />
+
+                  <MappingTypePreviewCell
+                    dataType={previewType}
+                    width={STTM_SHEET_COLUMN_WIDTH.type}
+                    minWidth={STTM_SHEET_COLUMN_WIDTH.type}
+                  />
+
+                  <SttmSheetDescriptionCell
+                    description={description}
+                    width={STTM_SHEET_COLUMN_WIDTH.description}
+                    minWidth={STTM_SHEET_COLUMN_WIDTH.description}
+                  />
+
+                  <MappingStatusCell
+                    status={row.status}
+                    width={STTM_SHEET_COLUMN_WIDTH.status}
+                    minWidth={STTM_SHEET_COLUMN_WIDTH.status}
+                    sx={{ overflow: "hidden" }}
+                  />
                 </TableRow>
               );
             })}
+            {!paginatedMappings.length ? (
+              <TableRow>
+                <TableCell colSpan={7} sx={{ py: 4, textAlign: "center" }}>
+                  <Typography sx={{ fontSize: "0.82rem", color: "#64748b" }}>
+                    No mapping rows to display.
+                  </Typography>
+                </TableCell>
+              </TableRow>
+            ) : null}
           </TableBody>
         </Table>
       </TableContainer>
+
+      <TablePagination
+        component="div"
+        count={mappings.length}
+        page={page}
+        onPageChange={(_, nextPage) => setPage(nextPage)}
+        rowsPerPage={rowsPerPage}
+        onRowsPerPageChange={(event) => {
+          setRowsPerPage(Number.parseInt(event.target.value, 10));
+          setPage(0);
+        }}
+        rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
+        sx={MAPPING_TABLE_PAGINATION_SX}
+      />
     </Box>
   );
 }

@@ -1,9 +1,10 @@
 import { Box, TableCell } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
-import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
-import { FocusSelect } from '@/components/ui/focus-select';
-import { FocusButton } from '@/components/ui/focus-button';
-import { focusTableCellSx } from '@/components/ui/focus-table';
+import { AutoFixHighRoundedIcon } from '@/utils/icons';
+
+import { AiaSelect } from '@/components/ui/aia-select';
+import { AiaButton } from '@/components/ui/aia-button';
+import { aiaTableCellSx } from '@/components/ui/aia-table';
 
 type MappingRuleCellProps = {
   value: string;
@@ -11,9 +12,12 @@ type MappingRuleCellProps = {
   onRuleChange: (value: string) => void;
   onPreProcess: () => void;
   configureValue?: string;
+  placeholder?: string;
   highlighted?: boolean;
+  preProcessDisabled?: boolean;
   width?: number | string;
   minWidth?: number | string;
+  sx?: SxProps<Theme>;
 };
 
 const BASE_SELECT_SX: SxProps<Theme> = {
@@ -54,9 +58,12 @@ export const MappingRuleCell = ({
   onRuleChange,
   onPreProcess,
   configureValue,
+  placeholder = 'Select rule...',
   highlighted = false,
+  preProcessDisabled = false,
   width,
   minWidth = 0,
+  sx,
 }: MappingRuleCellProps) => {
   const selectOptions = configureValue
     ? [...options, { label: configureValue, value: configureValue }]
@@ -67,7 +74,7 @@ export const MappingRuleCell = ({
     : BASE_SELECT_SX;
 
   return (
-    <TableCell sx={focusTableCellSx({ width, minWidth }, { overflow: 'visible' })}>
+    <TableCell sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'hidden' })}>
       <Box
         sx={{
           display: 'flex',
@@ -78,39 +85,48 @@ export const MappingRuleCell = ({
         }}
       >
         <Box sx={{ flex: 1, minWidth: 0 }}>
-          <FocusSelect
+          <AiaSelect
             value={value}
             options={selectOptions}
             onChange={(next) => onRuleChange(Array.isArray(next) ? next[0] : next)}
+            placeholder={placeholder}
             size="small"
             fullWidth
             sx={selectSx}
           />
         </Box>
-        <FocusButton
-          variant="outlined"
+        <AiaButton
+          variant="contained"
           size="small"
           rounded="md"
+          disabled={preProcessDisabled}
           startIcon={<AutoFixHighRoundedIcon sx={{ fontSize: 16 }} />}
           onClick={onPreProcess}
+          customColor="#ffffff"
+          customBackgroundColor="#0f172a"
+          customHoverBackgroundColor="#1e293b"
+          customBorderColor="#0f172a"
           sx={{
             height: 36,
             fontSize: '0.75rem',
             fontWeight: 600,
-            color: '#92400e',
-            borderColor: '#fbbf24',
-            bgcolor: '#fffbeb',
             whiteSpace: 'nowrap',
             px: 1.25,
             flexShrink: 0,
+            boxShadow: 'none',
             '&:hover': {
-              bgcolor: '#fef3c7',
-              borderColor: '#f59e0b',
+              boxShadow: 'none',
+            },
+            '&.Mui-disabled': {
+              opacity: 1,
+              backgroundColor: '#f1f5f9',
+              border: '1px solid #f1f5f9',
+              color: '#94a3b8',
             },
           }}
         >
           Pre-process
-        </FocusButton>
+        </AiaButton>
       </Box>
     </TableCell>
   );

@@ -1,11 +1,7 @@
 "use client";
-
-import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
-import AccountTreeRoundedIcon from "@mui/icons-material/AccountTreeRounded";
-import AutorenewRoundedIcon from "@mui/icons-material/AutorenewRounded";
-import TaskAltRoundedIcon from "@mui/icons-material/TaskAltRounded";
 import { Box } from "@mui/material";
 import StatCard from "./StatCard";
+import { AccountTreeRoundedIcon, AutorenewRoundedIcon, FolderRoundedIcon, TaskAltRoundedIcon } from '@/utils/icons';
 
 const stats = [
     {

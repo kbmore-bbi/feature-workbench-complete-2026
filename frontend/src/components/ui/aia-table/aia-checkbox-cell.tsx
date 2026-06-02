@@ -1,25 +1,25 @@
 import { Box, TableCell } from '@mui/material';
-import { FocusCheckbox } from '../focus-checkbox';
-import type { FocusTableCellProps } from './focus-table-cell.types';
-import { focusTableCellSx } from './focus-table-cell.types';
+import { AiaCheckbox } from '../aia-checkbox';
+import type { AiaTableCellProps } from './aia-table-cell.types';
+import { aiaTableCellSx } from './aia-table-cell.types';
 
-type FocusCheckboxCellProps = FocusTableCellProps & {
+type AiaCheckboxCellProps = AiaTableCellProps & {
   checked: boolean;
   onChange?: (checked: boolean) => void;
   indeterminate?: boolean;
 };
 
-export const FocusCheckboxCell = ({
+export const AiaCheckboxCell = ({
   checked,
   onChange,
   indeterminate,
   width,
   minWidth,
   sx,
-}: FocusCheckboxCellProps) => (
+}: AiaCheckboxCellProps) => (
   <TableCell
     padding="none"
-    sx={focusTableCellSx({
+    sx={aiaTableCellSx({
       width: width ?? 64,
       minWidth,
       sx: [
@@ -40,7 +40,7 @@ export const FocusCheckboxCell = ({
         width: '100%',
       }}
     >
-      <FocusCheckbox
+      <AiaCheckbox
         checked={checked}
         indeterminate={indeterminate}
         checkHandler={(nextChecked: boolean) => onChange?.(nextChecked)}

@@ -1,6 +1,6 @@
 import { TableRow } from '@mui/material';
 
-const FocusTableRow = ({
+const AiaTableRow = ({
   children,
 }: {
   children: React.ReactNode;
@@ -10,4 +10,4 @@ const FocusTableRow = ({
   </TableRow>
 );
 
-export { FocusTableRow };
+export { AiaTableRow };

@@ -1,10 +1,10 @@
 import { TableCell } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
-import { FocusChip } from '../focus-chip';
-import type { FocusTableCellProps } from './focus-table-cell.types';
-import { focusTableCellSx } from './focus-table-cell.types';
+import { AiaChip } from '../aia-chip';
+import type { AiaTableCellProps } from './aia-table-cell.types';
+import { aiaTableCellSx } from './aia-table-cell.types';
 
-type FocusChipCellProps = FocusTableCellProps & {
+type AiaChipCellProps = AiaTableCellProps & {
   label?: string;
   color?: 'default' | 'primary' | 'secondary' | 'error' | 'warning' | 'info' | 'success';
   rounded?: boolean;
@@ -13,7 +13,7 @@ type FocusChipCellProps = FocusTableCellProps & {
   chipSx?: SxProps<Theme>;
 };
 
-export const FocusChipCell = ({
+export const AiaChipCell = ({
   label,
   color,
   rounded = true,
@@ -25,10 +25,10 @@ export const FocusChipCell = ({
   minWidth,
   padding,
   sx,
-}: FocusChipCellProps) => (
-  <TableCell align={align} padding={padding} sx={focusTableCellSx({ width, minWidth, sx })}>
+}: AiaChipCellProps) => (
+  <TableCell align={align} padding={padding} sx={aiaTableCellSx({ width, minWidth, sx })}>
     {label ? (
-      <FocusChip
+      <AiaChip
         label={label}
         size={size}
         color={color}

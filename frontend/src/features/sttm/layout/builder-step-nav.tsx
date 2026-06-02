@@ -1,7 +1,6 @@
 "use client";
-
-import KeyboardArrowRightRoundedIcon from "@mui/icons-material/KeyboardArrowRightRounded";
 import { Box, Icon, Typography } from "@mui/material";
+import { KeyboardArrowRightRoundedIcon } from '@/utils/icons';
 
 export type BuilderStepId = 1 | 2 | 3;
 

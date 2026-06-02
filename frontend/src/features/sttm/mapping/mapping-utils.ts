@@ -22,6 +22,191 @@ export function formatSqlType(type?: string) {
   return upper;
 }
 
+const COLUMN_SAMPLE_VALUES: Record<string, string> = {
+  CUSTOMER_ID: '2047',
+  CUSTOMER_KEY: '2047',
+  CUSTOMER_NAME: 'Acme Corp',
+  EMAIL: 'acme@corp.com',
+  COUNTRY_CODE: 'US',
+  ORDER_ID: '10001',
+  ORDER_DATE: '20230115',
+  ORDER_DATE_KEY: '20230115',
+  ORDER_AMOUNT: '1240.50',
+  NET_AMOUNT: '1240.50',
+  QUANTITY: '3',
+  COMMISSION_RATE: '0.10',
+  STATUS: 'shipped',
+  REGION_NAME: 'Northeast',
+  CREATED_DATE: '20230115',
+  ORDER_ITEM_ID: '90001',
+  PRODUCT_ID: '301',
+  LINE_AMOUNT: '49.98',
+  SALES_KEY: '88001',
+  PRODUCT_KEY: '401',
+  SALE_DATE: '2024-02-01',
+  SEGMENT: 'enterprise',
+  COUNTRY: 'United States',
+};
+
+export function getColumnSampleDisplayValue(columnName?: string, dataType?: string): string {
+  const name = String(columnName || '').trim().toUpperCase();
+  if (name && COLUMN_SAMPLE_VALUES[name]) {
+    return COLUMN_SAMPLE_VALUES[name];
+  }
+
+  const formatted = formatSqlType(dataType).toLowerCase();
+  if (formatted.includes('date') || formatted.includes('timestamp')) {
+    return '2024-01-01';
+  }
+  if (
+    formatted.includes('int') ||
+    formatted.includes('number') ||
+    formatted.includes('decimal') ||
+    formatted.includes('float')
+  ) {
+    return '0';
+  }
+  if (name.endsWith('_ID')) {
+    return '1001';
+  }
+  if (name.includes('EMAIL')) {
+    return 'user@example.com';
+  }
+  if (name.includes('NAME')) {
+    return 'Sample';
+  }
+  if (name.includes('STATUS')) {
+    return 'active';
+  }
+  return '—';
+}
+
+export type MappingDataPreviewResult = {
+  sourceValue: string | null;
+  transformedValue: string | null;
+  displayValue: string | null;
+  ruleLabel: string | null;
+  hasTransform: boolean;
+};
+
+function applyPreviewTransform(
+  value: string,
+  rule: string,
+  expression?: string | null,
+): string {
+  const normalizedRule = rule.trim().toUpperCase();
+
+  switch (normalizedRule) {
+    case 'UPPER':
+      return value.toUpperCase();
+    case 'LOWER':
+      return value.toLowerCase();
+    case 'TRIM':
+      return value.trim();
+    case 'DATE_FORMAT': {
+      const digits = value.replace(/\D/g, '');
+      if (digits.length === 8) {
+        return `${digits.slice(0, 4)}-${digits.slice(4, 6)}-${digits.slice(6, 8)}`;
+      }
+      return value;
+    }
+    case 'CAST':
+      return value;
+    case 'COALESCE':
+      return value || '—';
+    case 'SUBSTRING':
+      return value.slice(0, Math.min(4, value.length));
+    case 'REPLACE':
+      return value;
+    case 'NULLIF':
+      return value === '' ? 'NULL' : value;
+    case 'CONCATENATE':
+      return value;
+    case 'CUSTOM':
+      return expression?.trim() ? value : value;
+    default:
+      return value;
+  }
+}
+
+export function getMappingSourceColumnLabel(mapping: MappingState): string | null {
+  const sourceColumns =
+    mapping.sourceColumns && mapping.sourceColumns.length
+      ? mapping.sourceColumns
+      : parseSourceColumns(mapping.sourceColumn);
+  return sourceColumns[0] ?? null;
+}
+
+function toSafePreviewText(value: unknown, maxLength = 160): string | null {
+  if (value == null) {
+    return null;
+  }
+
+  let text: string | null = null;
+  if (typeof value === 'string') {
+    text = value;
+  } else if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    text = String(value);
+  }
+
+  if (!text) {
+    return null;
+  }
+
+  const trimmed = text.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength)}…` : trimmed;
+}
+
+export function buildMappingDataPreview(mapping: MappingState): MappingDataPreviewResult {
+  const sourceColumn = getMappingSourceColumnLabel(mapping);
+  if (!sourceColumn) {
+    return {
+      sourceValue: null,
+      transformedValue: null,
+      displayValue: null,
+      ruleLabel: null,
+      hasTransform: false,
+    };
+  }
+
+  const columnName = sourceColumn.split('.').pop() ?? sourceColumn;
+  const sourceValue = toSafePreviewText(
+    getColumnSampleDisplayValue(
+      columnName,
+      mapping.sourceType ?? mapping.targetType ?? undefined,
+    ),
+  );
+
+  const rule = toSafePreviewText(mapping.rule, 64) ?? 'Direct';
+  const isDirect = rule === 'Direct' || rule === 'Select...';
+
+  if (isDirect) {
+    return {
+      sourceValue,
+      transformedValue: null,
+      displayValue: sourceValue,
+      ruleLabel: null,
+      hasTransform: false,
+    };
+  }
+
+  const transformedValue = toSafePreviewText(
+    applyPreviewTransform(sourceValue ?? '', rule, mapping.expression),
+  );
+
+  return {
+    sourceValue,
+    transformedValue,
+    displayValue: transformedValue,
+    ruleLabel: rule.toUpperCase(),
+    hasTransform: true,
+  };
+}
+
 export function typeChipSx(dataType?: string) {
   const formatted = formatSqlType(dataType);
   const isNumeric =
@@ -110,7 +295,10 @@ export function generateMappingDescription(params: {
   const { rule, sourceColumns, targetColumn, expression } = params;
   const joinedSources = sourceColumns.join(', ');
   const normalizedRule = (rule || '').trim();
-  const isDefault = !normalizedRule || normalizedRule === 'Select...' || normalizedRule === 'Direct';
+
+  if (!normalizedRule || normalizedRule === 'Select...') {
+    return '';
+  }
 
   if (normalizedRule === 'Custom' && expression?.trim()) {
     return sourceColumns.length
@@ -122,7 +310,7 @@ export function generateMappingDescription(params: {
     return '';
   }
 
-  if (isDefault) {
+  if (normalizedRule === 'Direct') {
     return sourceColumns.length === 1
       ? `Direct mapping from ${sourceColumns[0]} to ${targetColumn}.`
       : `Maps ${targetColumn} from ${joinedSources}.`;

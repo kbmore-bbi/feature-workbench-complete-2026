@@ -1,9 +1,9 @@
 'use client';
-
 import { useCallback, useMemo, useState } from 'react';
 import { Box, Typography } from '@mui/material';
-import MenuRoundedIcon from '@mui/icons-material/MenuRounded';
-import { FocusChip } from '@/components/ui/focus-chip';
+import { MenuRoundedIcon } from '@/utils/icons';
+
+import { AiaChip } from '@/components/ui/aia-chip';
 import {
   SQL_FUNCTION_CATEGORIES,
   SQL_FUNCTIONS_BY_CATEGORY,
@@ -164,7 +164,7 @@ export function SqlFunctionLibrary({
         }}
       >
         {quickActions.map((action) => (
-          <FocusChip
+          <AiaChip
             key={action.id}
             label={action.label}
             size="small"
@@ -190,7 +190,7 @@ export function SqlFunctionLibrary({
         }}
       >
         {categoryFunctions.map((fn) => (
-          <FocusChip
+          <AiaChip
             key={fn}
             label={fn}
             size="small"

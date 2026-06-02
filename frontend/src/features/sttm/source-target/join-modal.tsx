@@ -1,13 +1,13 @@
 "use client";
-
 import React, { useEffect, useState } from "react";
 import { Box, IconButton, Typography } from "@mui/material";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import AddCircleOutlineRoundedIcon from "@mui/icons-material/AddCircleOutlineRounded";
-import RemoveCircleOutlineRoundedIcon from "@mui/icons-material/RemoveCircleOutlineRounded";
+import { AddCircleOutlineRoundedIcon, CloseRoundedIcon, RemoveCircleOutlineRoundedIcon } from '@/utils/icons';
+
+
+
 import type { JoinConfig, TableMeta } from "@/features/sttm/types/sttm.types";
-import { FocusButton } from "@/components/ui/focus-button";
-import { FocusSelect } from "@/components/ui/focus-select";
+import { AiaButton } from "@/components/ui/aia-button";
+import { AiaSelect } from "@/components/ui/aia-select";
 import { SqlEditor, SQL_EDITOR_FRAME_SX, SQL_EDITOR_PREVIEW_HEIGHT } from "@/components/sql";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 
@@ -265,7 +265,7 @@ export function JoinModal({
             {(["INNER", "LEFT", "RIGHT", "FULL"] as const).map((t) => {
               const active = joinType === t;
               return (
-                <FocusButton
+                <AiaButton
                   key={t}
                   size="small"
                   variant="outlined"
@@ -277,7 +277,7 @@ export function JoinModal({
                   customHoverBackgroundColor={active ? "#0b1220" : "#f8fafc"}
                 >
                   {t} JOIN
-                </FocusButton>
+                </AiaButton>
               );
             })}
           </Box>
@@ -287,7 +287,7 @@ export function JoinModal({
               <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", letterSpacing: "0.08em", mb: 1 }}>
                 LEFT TABLE
               </Typography>
-              <FocusSelect
+              <AiaSelect
                 options={tableOptions}
                 value={leftTableId}
                 placeholder="Select table"
@@ -308,7 +308,7 @@ export function JoinModal({
               <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", letterSpacing: "0.08em", mb: 1 }}>
                 RIGHT TABLE
               </Typography>
-              <FocusSelect
+              <AiaSelect
                 options={tableOptions}
                 value={rightTableId}
                 placeholder="Select table"
@@ -348,7 +348,7 @@ export function JoinModal({
                     width: "100%",
                   }}
                 >
-                  <FocusSelect
+                  <AiaSelect
                     options={[{ label: "— column —", value: "" }, ...leftColumnOptions]}
                     value={row.leftColumn}
                     placeholder="Column…"
@@ -356,14 +356,14 @@ export function JoinModal({
                     disabled={!leftTableId}
                   />
 
-                  <FocusSelect
+                  <AiaSelect
                     options={operatorOptions}
                     value={row.operator}
                     placeholder="Conditions…"
                     onChange={(val) => updateRow(idx, { operator: String(val) })}
                   />
 
-                  <FocusSelect
+                  <AiaSelect
                     options={[{ label: "— column —", value: "" }, ...rightColumnOptions]}
                     value={row.rightColumn}
                     placeholder="Column…"
@@ -425,10 +425,10 @@ export function JoinModal({
         </Box>
 
         <Box sx={{ px: 3, py: 2.25, borderTop: "1px solid #f1f5f9", display: "flex", justifyContent: "flex-end", gap: 1.5 }}>
-          <FocusButton variant="text" size="small" rounded="full" onClick={onClose} customColor="#64748b">
+          <AiaButton variant="text" size="small" rounded="full" onClick={onClose} customColor="#64748b">
             Cancel
-          </FocusButton>
-          <FocusButton
+          </AiaButton>
+          <AiaButton
             variant="contained"
             size="small"
             rounded="full"
@@ -436,7 +436,7 @@ export function JoinModal({
             disabled={!isFormValid}
           >
             {editingJoin ? "Update Join" : "Add Join"}
-          </FocusButton>
+          </AiaButton>
         </Box>
       </div>
     </div>

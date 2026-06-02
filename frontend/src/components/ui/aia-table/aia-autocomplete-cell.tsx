@@ -2,18 +2,18 @@
 
 import { useCallback, useMemo } from 'react';
 import { Box, TableCell, Tooltip } from '@mui/material';
-import { FocusAutocomplete } from '../focus-auto-complete';
-import type { FocusAutocompleteOption } from '../focus-auto-complete';
-import type { FocusTableCellProps } from './focus-table-cell.types';
-import { focusTableCellSx } from './focus-table-cell.types';
+import { AiaAutocomplete } from '../aia-auto-complete';
+import type { AiaAutocompleteOption } from '../aia-auto-complete';
+import type { AiaTableCellProps } from './aia-table-cell.types';
+import { aiaTableCellSx } from './aia-table-cell.types';
 
-type FocusAutocompleteCellProps = FocusTableCellProps & {
+type AiaAutocompleteCellProps = AiaTableCellProps & {
   value: string | null;
-  options: FocusAutocompleteOption[];
-  onChange: (value: string, matchedOption?: FocusAutocompleteOption | null) => void;
+  options: AiaAutocompleteOption[];
+  onChange: (value: string, matchedOption?: AiaAutocompleteOption | null) => void;
   placeholder?: string;
   disabled?: boolean;
-  groupBy?: (option: FocusAutocompleteOption) => string;
+  groupBy?: (option: AiaAutocompleteOption) => string;
   tooltipLabel?: string;
 };
 
@@ -35,7 +35,7 @@ const AUTOCOMPLETE_INPUT_SX = {
   },
 };
 
-export const FocusAutocompleteCell = ({
+export const AiaAutocompleteCell = ({
   value,
   options,
   onChange,
@@ -48,9 +48,9 @@ export const FocusAutocompleteCell = ({
   minWidth,
   padding,
   sx,
-}: FocusAutocompleteCellProps) => {
+}: AiaAutocompleteCellProps) => {
   const resolvedGroupBy = useCallback(
-    (option: FocusAutocompleteOption) => groupBy?.(option) ?? option.group ?? '',
+    (option: AiaAutocompleteOption) => groupBy?.(option) ?? option.group ?? '',
     [groupBy],
   );
 
@@ -75,7 +75,7 @@ export const FocusAutocompleteCell = ({
   const resolvedTooltip = tooltipLabel ?? trimmedValue;
 
   const autocomplete = (
-    <FocusAutocomplete
+    <AiaAutocomplete
       hideLabel
       freeSolo
       fullWidth
@@ -94,7 +94,7 @@ export const FocusAutocompleteCell = ({
     <TableCell
       align={align}
       padding={padding}
-      sx={focusTableCellSx({ width, minWidth, sx }, { overflow: 'visible' })}
+      sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'visible' })}
     >
       {resolvedTooltip ? (
         <Tooltip

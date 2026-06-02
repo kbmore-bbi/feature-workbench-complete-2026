@@ -1,6 +1,6 @@
 import type { SxProps, Theme } from '@mui/material/styles';
 
-export type FocusTableCellProps = {
+export type AiaTableCellProps = {
   align?: 'left' | 'center' | 'right';
   width?: number | string;
   minWidth?: number | string;
@@ -8,8 +8,8 @@ export type FocusTableCellProps = {
   sx?: SxProps<Theme>;
 };
 
-export function focusTableCellSx(
-  props: FocusTableCellProps = {},
+export function aiaTableCellSx(
+  props: AiaTableCellProps = {},
   extra?: SxProps<Theme>,
 ): SxProps<Theme> {
   return [

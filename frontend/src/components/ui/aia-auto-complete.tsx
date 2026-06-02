@@ -4,26 +4,26 @@ import React, { useCallback, useMemo } from 'react';
 import { Autocomplete, TextField } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
 
-export interface FocusAutocompleteOption {
+export interface AiaAutocompleteOption {
   label: string;
   value: string;
   group?: string;
   dataType?: string;
 }
 
-export interface FocusAutocompleteProps {
+export interface AiaAutocompleteProps {
   label?: string;
   placeholder?: string;
   hideLabel?: boolean;
   value?: string | string[];
-  options?: FocusAutocompleteOption[];
+  options?: AiaAutocompleteOption[];
   onChange?: (value: string | string[]) => void;
   multiple?: boolean;
   size?: 'small' | 'medium';
   disabled?: boolean;
   fullWidth?: boolean;
   freeSolo?: boolean;
-  groupBy?: (option: FocusAutocompleteOption) => string;
+  groupBy?: (option: AiaAutocompleteOption) => string;
   variant?: 'standard' | 'outlined' | 'filled';
   disableUnderline?: boolean;
   inputSx?: Record<string, unknown>;
@@ -33,9 +33,9 @@ export interface FocusAutocompleteProps {
 
 function normalizeOutgoingValue(
   newValue:
-    | FocusAutocompleteOption
-    | FocusAutocompleteOption[]
-    | (FocusAutocompleteOption | string)[]
+    | AiaAutocompleteOption
+    | AiaAutocompleteOption[]
+    | (AiaAutocompleteOption | string)[]
     | string
     | null,
   multiple: boolean,
@@ -48,14 +48,14 @@ function normalizeOutgoingValue(
   if (typeof newValue === 'string') {
     return newValue;
   }
-  return (newValue as FocusAutocompleteOption | null)?.value ?? '';
+  return (newValue as AiaAutocompleteOption | null)?.value ?? '';
 }
 
 function resolveSingleValue(
-  options: FocusAutocompleteOption[],
+  options: AiaAutocompleteOption[],
   raw: string | null | undefined,
   freeSolo: boolean,
-): FocusAutocompleteOption | string | null {
+): AiaAutocompleteOption | string | null {
   const trimmed = raw?.trim() ?? '';
   if (!trimmed) {
     return null;
@@ -67,7 +67,7 @@ function resolveSingleValue(
   return freeSolo ? trimmed : null;
 }
 
-const FocusAutocomplete = ({
+const AiaAutocomplete = ({
   label = '',
   placeholder = '',
   hideLabel = false,
@@ -84,7 +84,7 @@ const FocusAutocomplete = ({
   disableUnderline = false,
   inputSx,
   sx,
-}: FocusAutocompleteProps) => {
+}: AiaAutocompleteProps) => {
   const currentSingleValue = multiple
     ? ''
     : typeof value === 'string'
@@ -102,9 +102,9 @@ const FocusAutocomplete = ({
     (
       _event: React.SyntheticEvent,
       newValue:
-        | FocusAutocompleteOption
-        | FocusAutocompleteOption[]
-        | (FocusAutocompleteOption | string)[]
+        | AiaAutocompleteOption
+        | AiaAutocompleteOption[]
+        | (AiaAutocompleteOption | string)[]
         | string
         | null,
     ) => {
@@ -216,4 +216,4 @@ const FocusAutocomplete = ({
   );
 };
 
-export { FocusAutocomplete };
+export { AiaAutocomplete };

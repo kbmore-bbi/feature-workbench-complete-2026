@@ -36,6 +36,7 @@ import {
   bulkSetDirect as bulkSetDirectAction,
   setPreProcessModalOpen as setPreProcessModalOpenAction,
   setMappingSql as setMappingSqlAction,
+  getSelectedSourceTables,
 } from "@/features/sttm/store/sttm-builder-slice";
 import type {
   DerivedSource,
@@ -125,15 +126,24 @@ export function SttmBuilderProvider({
 
       // Actions — selection
       toggleSource: (tableId: string) => {
+        const nextSelectedNames: string[] = [];
+        for (const db of state.sourceDatabases) {
+          for (const schema of db.schemas) {
+            for (const table of schema.tables) {
+              const isSelected =
+                table.tableId === tableId ? !table.isSelected : table.isSelected;
+              if (isSelected) {
+                nextSelectedNames.push(table.qualifiedName);
+              }
+            }
+          }
+        }
+
         dispatch(toggleSourceAction({ tableId }));
-        // After toggling, refresh source attributes
-        const nextSources = state.sources.map((t) =>
-          t.tableId === tableId ? { ...t, isSelected: !t.isSelected } : t
-        );
-        const selectedNames = nextSources
-          .filter((t) => t.isSelected)
-          .map((t) => t.qualifiedName);
-        dispatch(fetchAttributes({ qualifiedNames: selectedNames, side: "source" }));
+
+        if (nextSelectedNames.length) {
+          dispatch(fetchAttributes({ qualifiedNames: nextSelectedNames, side: "source" }));
+        }
         dispatch(fetchRelationships());
       },
 
@@ -175,7 +185,7 @@ export function SttmBuilderProvider({
       },
 
       // Computed
-      selectedSourceCount: state.sources.filter((t) => t.isSelected).length,
+      selectedSourceCount: getSelectedSourceTables(state.sourceDatabases).length,
       mappingCount: state.mappingSuggestions.filter(
         (item) => item.sourceAttributes.length > 0
       ).length,

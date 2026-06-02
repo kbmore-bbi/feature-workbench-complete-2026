@@ -695,6 +695,73 @@ export function buildOrderedLevelGroups(
   return groups;
 }
 
+export function getNodeMappingProgress(node: LineageGraphNode) {
+  return {
+    mapped: node.highlightedColumns.length,
+    total: node.colCount || node.columns.length,
+  };
+}
+
+export type LineageCardTheme = {
+  accentColor: string;
+  headerBg: string;
+  iconBg: string;
+  iconColor: string;
+  badgeBg: string;
+  badgeFg: string;
+  pillBg: string;
+  pillBorder: string;
+  pillFg: string;
+};
+
+export function getLineageCardTheme(
+  node: LineageGraphNode,
+  sourceAccent?: string,
+): LineageCardTheme {
+  const accent =
+    node.kind === "source" ? (sourceAccent ?? node.accentColor) : node.accentColor;
+
+  if (node.kind === "target") {
+    return {
+      accentColor: "#2563eb",
+      headerBg: "#eef6ff",
+      iconBg: "#dbeafe",
+      iconColor: "#2563eb",
+      badgeBg: "#dbeafe",
+      badgeFg: "#2563eb",
+      pillBg: "#f8fbff",
+      pillBorder: "#bfdbfe",
+      pillFg: "#2563eb",
+    };
+  }
+
+  if (node.kind === "derived") {
+    return {
+      accentColor: accent,
+      headerBg: "#fff7ed",
+      iconBg: "#ffedd5",
+      iconColor: "#d97706",
+      badgeBg: "#ffedd5",
+      badgeFg: "#b45309",
+      pillBg: "#fffaf5",
+      pillBorder: "#fed7aa",
+      pillFg: "#b45309",
+    };
+  }
+
+  return {
+    accentColor: accent,
+    headerBg: "#f5f3ff",
+    iconBg: "#ede9fe",
+    iconColor: accent,
+    badgeBg: "#ede9fe",
+    badgeFg: accent,
+    pillBg: "#faf5ff",
+    pillBorder: "#ddd6fe",
+    pillFg: accent,
+  };
+}
+
 export function summarizeNode(node: LineageGraphNode, edges: LineageGraphEdge[]) {
   const inbound = edges.filter((edge) => edge.target === node.id);
   const outbound = edges.filter((edge) => edge.source === node.id);

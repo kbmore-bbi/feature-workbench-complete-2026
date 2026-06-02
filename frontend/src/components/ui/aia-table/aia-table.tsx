@@ -15,12 +15,12 @@ interface Column {
   align?: 'left' | 'center' | 'right';
 }
 
-interface FocusTableProps {
+interface AiaTableProps {
   columns: Column[];
   children: React.ReactNode;
 }
 
-const FocusTable = ({ columns, children }: FocusTableProps) => {
+const AiaTable = ({ columns, children }: AiaTableProps) => {
   return (
     <TableContainer>
       <Table size="small">
@@ -43,4 +43,4 @@ const FocusTable = ({ columns, children }: FocusTableProps) => {
   );
 };
 
-export { FocusTable };
+export { AiaTable };

@@ -1,6 +1,6 @@
 "use client";
-
 import React, { useEffect, useMemo, useState } from "react";
+import { AddCircleOutlineRoundedIcon, CheckCircleRoundedIcon, CloseRoundedIcon, RadioButtonUncheckedRoundedIcon, TableChartOutlinedIcon } from '@/utils/icons';
 import {
   MarkerType,
   type Connection,
@@ -15,16 +15,16 @@ import {
   InputBase,
   Typography,
 } from "@mui/material";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import AddCircleOutlineRoundedIcon from "@mui/icons-material/AddCircleOutlineRounded";
-import TableChartOutlinedIcon from "@mui/icons-material/TableChartOutlined";
-import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
-import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
+
+
+
+
+
 
 import { dbService } from "@/services/dbService";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
-import { FocusButton } from "@/components/ui/focus-button";
-import { FocusTable } from "@/components/ui/focus-table/focus-table";
+import { AiaButton } from "@/components/ui/aia-button";
+import { AiaTable } from "@/components/ui/aia-table/aia-table";
 import { SqlEditor, SQL_EDITOR_DERIVED_HEIGHT } from "@/components/sql";
 import { FilterConditions, type RuleGroup } from "./filter-conditions";
 import { JoinModal } from "./join-modal";
@@ -1357,14 +1357,14 @@ export function AddDerivedModal({
                     </Box>
                   ) : null}
                   <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-                    <FocusButton
+                    <AiaButton
                       variant="contained"
                       size="small"
                       rounded="full"
                       onClick={handleApplySqlToBuilder}
                     >
                       Apply To Builder
-                    </FocusButton>
+                    </AiaButton>
                   </Box>
                   <Box sx={{ width: '100%', flexShrink: 0 }}>
                     <SqlEditor
@@ -1538,7 +1538,7 @@ export function AddDerivedModal({
                       </Box>
 
                       <Box sx={{ flex: 1, overflow: "auto" }}>
-                          <FocusTable columns={previewColumns}>
+                          <AiaTable columns={previewColumns}>
                             {previewRows.map((row) => (
                               <tr key={row.index} style={{ borderBottom: "1px solid #f1f5f9" }}>
                                 {previewColumns.map((column) => {
@@ -1566,7 +1566,7 @@ export function AddDerivedModal({
                               })}
                             </tr>
                           ))}
-                        </FocusTable>
+                        </AiaTable>
                       </Box>
                     </>
                   )}
@@ -1585,7 +1585,7 @@ export function AddDerivedModal({
                   Add tables from the left, connect matching columns, and choose the columns that should appear in the derived source.
                 </Typography>
               </Box>
-              <FocusButton
+              <AiaButton
                 variant="outlined"
                 size="small"
                 rounded="full"
@@ -1596,7 +1596,7 @@ export function AddDerivedModal({
                 disabled={selectedTables.length < 2}
               >
                 + Add Join
-              </FocusButton>
+              </AiaButton>
             </Box>
 
             <Box
@@ -1713,10 +1713,10 @@ export function AddDerivedModal({
           {selectedColumnEntries.length} columns selected · {joins.length} joins configured
         </Typography>
         <Box sx={{ display: "flex", gap: 1 }}>
-          <FocusButton variant="text" size="small" rounded="full" onClick={onClose} customColor="#64748b">
+          <AiaButton variant="text" size="small" rounded="full" onClick={onClose} customColor="#64748b">
             Cancel
-          </FocusButton>
-          <FocusButton
+          </AiaButton>
+          <AiaButton
             variant="outlined"
             size="small"
             rounded="full"
@@ -1724,8 +1724,8 @@ export function AddDerivedModal({
             disabled={!selectedTableIds.length || isValidating}
           >
             {isValidating ? "Validating..." : "Validate SQL"}
-          </FocusButton>
-          <FocusButton
+          </AiaButton>
+          <AiaButton
             variant="contained"
             size="small"
             rounded="full"
@@ -1740,7 +1740,7 @@ export function AddDerivedModal({
             }
           >
             {isSaving ? "Saving..." : "Add Derived Table"}
-          </FocusButton>
+          </AiaButton>
         </Box>
       </Box>
 

@@ -1,30 +1,28 @@
 'use client';
-
 import React, { useEffect, useMemo, useState } from 'react';
+import { CheckCircleRoundedIcon, CloseRoundedIcon, ExpandMoreIcon, FiberManualRecordIcon, StorageRoundedIcon, VpnKeyRoundedIcon } from '@/utils/icons';
 import {
   Dialog,
   Button,
   Box,
   Typography,
   IconButton,
-  TextField,
   Chip,
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  InputAdornment,
 } from '@mui/material';
-import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
-import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
-import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
-import VpnKeyRoundedIcon from '@mui/icons-material/VpnKeyRounded';
-import StorageRoundedIcon from '@mui/icons-material/StorageRounded';
+
+
+
+
+
+
 import {
   SqlEditor,
   SQL_EDITOR_PANEL_MIN_HEIGHT,
 } from '@/components/sql';
+import { AiaSearchbox } from '@/components/ui/aia-searchbox';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import type { ColumnGroup } from '@/features/sttm/types/sttm.types';
 import { generateMappingDescription, parseSourceColumns } from './mapping-utils';
@@ -498,26 +496,13 @@ export default function PreProcessModal() {
           )}
 
           <Box sx={{ p: 1.5, borderBottom: '1px solid #e5e7eb' }}>
-            <TextField
-              size="small"
-              fullWidth
-              placeholder="Search columns..."
+            <AiaSearchbox
               value={columnSearch}
-              onChange={(e) => setColumnSearch(e.target.value)}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <SearchRoundedIcon sx={{ fontSize: 16, color: '#9ca3af' }} />
-                    </InputAdornment>
-                  ),
-                },
-              }}
-              sx={{
-                '& .MuiOutlinedInput-root': {
-                  bgcolor: '#fff',
+              onChange={setColumnSearch}
+              placeholder="Search columns..."
+              inputSx={{
+                '& .MuiInputBase-input': {
                   fontSize: '0.8rem',
-                  borderRadius: '8px',
                 },
               }}
             />

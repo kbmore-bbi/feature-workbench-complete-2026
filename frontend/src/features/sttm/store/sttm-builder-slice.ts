@@ -29,6 +29,16 @@ import type {
   MappingState,
   PendingAiMappingReview,
 } from "@/features/sttm/types/sttm.types";
+import {
+  getSelectedSourceTables,
+  getSelectedTargetTable,
+} from "@/features/sttm/shared/sttm-selection-utils";
+
+export {
+  collectSelectedSourceQualifiedNames,
+  getSelectedSourceTables,
+  getSelectedTargetTable,
+} from "@/features/sttm/shared/sttm-selection-utils";
 
 // ─── helpers ───────────────────────────────────────────────────────
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -1277,7 +1287,7 @@ export const fetchRelationships = createAsyncThunk(
   "sttmBuilder/fetchRelationships",
   async (_, { getState, rejectWithValue }) => {
     const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
-    const selectedSourceTables = state.sources.filter((table) => table.isSelected);
+    const selectedSourceTables = getSelectedSourceTables(state.sourceDatabases);
 
     if (selectedSourceTables.length < 2) {
       return [];
@@ -1423,8 +1433,8 @@ export const runAutoMap = createAsyncThunk(
   "sttmBuilder/runAutoMap",
   async (_, { dispatch, getState, rejectWithValue }) => {
     const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
-    const selectedSourceTables = state.sources.filter((t) => t.isSelected);
-    const selectedTargetTable = state.targets.find((table) => table.isSelected);
+    const selectedSourceTables = getSelectedSourceTables(state.sourceDatabases);
+    const selectedTargetTable = getSelectedTargetTable(state.targetDatabases);
     if (!selectedSourceTables.length || !state.targetAttributeGroup) return null;
 
     try {
@@ -1497,10 +1507,10 @@ export const sendChatMessage = createAsyncThunk(
     const messageId = createChatMessageId();
     dispatch(assistantStreamStarted({ messageId }));
     const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
-    const selectedTargetTable = state.targets.find((table) => table.isSelected);
-    const selectedSourceTables = state.sources
-      .filter((table) => table.isSelected)
-      .map((table) => makeTableRef(table.qualifiedName));
+    const selectedTargetTable = getSelectedTargetTable(state.targetDatabases);
+    const selectedSourceTables = getSelectedSourceTables(state.sourceDatabases).map((table) =>
+      makeTableRef(table.qualifiedName),
+    );
     const selectedMappingIds = state.selectedMappingIds;
     const scopedAttributes =
       state.targetAttributeGroup?.qualifiedName
@@ -1529,7 +1539,7 @@ export const sendChatMessage = createAsyncThunk(
         ? "L2_ANALYST_READY"
         : "L1_CONTEXT";
     const selectedTableIds = [
-      ...state.sources.filter((table) => table.isSelected).map((table) => table.qualifiedName),
+      ...getSelectedSourceTables(state.sourceDatabases).map((table) => table.qualifiedName),
       ...selectedDerivedSourceIds,
     ];
     const shouldUseStructuredTransformationIntent =
@@ -1759,27 +1769,30 @@ export const sttmBuilderSlice = createSlice({
     },
     toggleSource: (state, action: PayloadAction<{ tableId: string }>) => {
       const { tableId } = action.payload;
-      state.sources = state.sources.map((t) =>
-        t.tableId === tableId ? { ...t, isSelected: !t.isSelected } : t
-      );
+      let toggledSelected: boolean | undefined;
 
-      // Update tree
       for (const db of state.sourceDatabases) {
         for (const sch of db.schemas) {
           for (const t of sch.tables) {
             if (t.tableId === tableId) {
               t.isSelected = !t.isSelected;
+              toggledSelected = t.isSelected;
             }
           }
         }
       }
 
-      // Driving table logic
-      const justSelected = state.sources.find((t) => t.tableId === tableId)?.isSelected;
-      if (justSelected && !state.drivingTableId) {
+      state.sources = state.sources.map((t) =>
+        t.tableId === tableId && toggledSelected !== undefined
+          ? { ...t, isSelected: toggledSelected }
+          : t,
+      );
+
+      const selectedSources = getSelectedSourceTables(state.sourceDatabases);
+      if (toggledSelected && !state.drivingTableId) {
         state.drivingTableId = tableId;
-      } else if (!justSelected && state.drivingTableId === tableId) {
-        state.drivingTableId = state.sources.find((t) => t.isSelected)?.tableId ?? null;
+      } else if (!toggledSelected && state.drivingTableId === tableId) {
+        state.drivingTableId = selectedSources.find((t) => t.isSelected)?.tableId ?? null;
       }
       state.agentThreadId = null;
       state.agentParentMessageId = null;
@@ -2142,20 +2155,25 @@ export const sttmBuilderSlice = createSlice({
         if (!cached && rawTables && db) {
           const schema = db.schemas.find((s) => s.schemaId === schemaId);
           if (schema) {
+            const previousTables = schema.tables;
             schema.tables = rawTables.map(
-              (t: { table_name: string; row_count?: number | null; column_count?: number }) => ({
-              tableId: `${databaseName}.${schemaName}.${t.table_name}`,
-              tableName: t.table_name,
-              qualifiedName: `${databaseName}.${schemaName}.${t.table_name}`,
-              isSelected: false,
-              tag: type === "source" ? "Source" : "Target",
-              rows:
-                t.row_count !== null && t.row_count !== undefined
-                  ? String(t.row_count)
-                  : "--",
-              columns: t.column_count ?? 0,
-              columnItems: [],
-            })
+              (t: { table_name: string; row_count?: number | null; column_count?: number }) => {
+                const qualifiedName = `${databaseName}.${schemaName}.${t.table_name}`;
+                const existing = previousTables.find((item) => item.qualifiedName === qualifiedName);
+                return {
+                  tableId: qualifiedName,
+                  tableName: t.table_name,
+                  qualifiedName,
+                  isSelected: existing?.isSelected ?? false,
+                  tag: type === "source" ? "Source" : "Target",
+                  rows:
+                    t.row_count !== null && t.row_count !== undefined
+                      ? String(t.row_count)
+                      : "--",
+                  columns: t.column_count ?? 0,
+                  columnItems: existing?.columnItems ?? [],
+                };
+              },
             );
             schema.tablesLoaded = true;
           }
@@ -2176,22 +2194,6 @@ export const sttmBuilderSlice = createSlice({
         if (type === "source") {
           state.sources = flatTables;
           state.sourceInfo = { dbName: databaseName, schemaName };
-          state.sourceAttributeGroups = [];
-          state.relationships = [];
-          state.mappingSuggestions = [];
-          state.agentThreadId = null;
-          state.agentParentMessageId = null;
-          state.semanticBundleId = null;
-          state.semanticBundleLabel = null;
-          state.semanticLevel = null;
-          state.semanticStatus = null;
-          state.semanticViewName = null;
-          state.semanticContextSummary = null;
-          state.semanticContextItems = null;
-          state.semanticLineage = [];
-          state.semanticDatahubContext = null;
-          state.datahubStatus = null;
-          state.autoMapStatusMessage = null;
         } else {
           state.targets = flatTables;
           state.targetInfo = { dbName: databaseName, schemaName };
@@ -2219,7 +2221,13 @@ export const sttmBuilderSlice = createSlice({
         if (!action.payload) return;
         const { side, groups } = action.payload;
         if (side === "source") {
-          state.sourceAttributeGroups = groups;
+          const mergedGroups = new Map(
+            state.sourceAttributeGroups.map((group) => [group.qualifiedName, group]),
+          );
+          for (const group of groups) {
+            mergedGroups.set(group.qualifiedName, group);
+          }
+          state.sourceAttributeGroups = Array.from(mergedGroups.values());
           state.sources = mergeColumnsIntoTables(state.sources, groups);
           mergeColumnsIntoBranch(state.sourceDatabases, groups);
         } else {

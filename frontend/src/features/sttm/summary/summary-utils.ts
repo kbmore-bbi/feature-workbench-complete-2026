@@ -12,7 +12,7 @@ export type SummaryMetrics = {
   transformRules: string[];
   sourceTableLabels: string[];
   unmappedColumns: string[];
-  mappedPairs: Array<{ source: string; target: string }>;
+  mappedPairs: Array<{ source: string; target: string; rule: string }>;
 };
 
 export function buildSummaryMetrics(params: {
@@ -59,8 +59,18 @@ export function buildSummaryMetrics(params: {
       .map((row) => ({
         source: row.sourceColumn as string,
         target: row.targetColumn,
+        rule: formatMappingRule(row.rule),
       })),
   };
+}
+
+export function getMappedSourceColumnLabel(sourceColumn: string): string {
+  const trimmed = sourceColumn.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  const name = trimmed.includes(".") ? trimmed.split(".").pop() ?? trimmed : trimmed;
+  return name.toUpperCase();
 }
 
 export function formatMappingRule(rule: string | null | undefined) {

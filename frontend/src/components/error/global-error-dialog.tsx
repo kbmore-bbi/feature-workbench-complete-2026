@@ -1,5 +1,5 @@
 'use client';
-
+import { ErrorOutlineRoundedIcon, InfoOutlinedIcon, WarningAmberRoundedIcon } from '@/utils/icons';
 import {
   Dialog,
   DialogActions,
@@ -10,9 +10,9 @@ import {
   Box,
   Stack,
 } from '@mui/material';
-import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
-import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+
+
+
 import type { AppErrorIcon, AppErrorPayload } from '@/api/errors/app-error';
 
 type GlobalErrorDialogProps = {

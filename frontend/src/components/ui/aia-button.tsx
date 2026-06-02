@@ -3,7 +3,7 @@
 import React from 'react';
 import { Button } from '@mui/material';
 
-interface FocusButtonProps {
+interface AiaButtonProps {
     children?: React.ReactNode;
     className?: string;
 
@@ -35,7 +35,7 @@ const radiusMap = {
     full: '999px',
 };
 
-const FocusButton = ({
+const AiaButton = ({
     children,
     className,
     onClick,
@@ -52,7 +52,7 @@ const FocusButton = ({
     customBorderColor,
     fullWidth = false,
     sx,
-}: FocusButtonProps) => {
+}: AiaButtonProps) => {
 
     const isIconOnly = !children;
 
@@ -93,4 +93,4 @@ const FocusButton = ({
     );
 }
 
-export { FocusButton }
+export { AiaButton }

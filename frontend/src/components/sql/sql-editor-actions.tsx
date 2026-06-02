@@ -1,9 +1,9 @@
 'use client';
-
 import { useCallback, useRef } from 'react';
 import { Box, IconButton, Tooltip } from '@mui/material';
-import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
-import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
+import { ContentCopyRoundedIcon, UploadFileRoundedIcon } from '@/utils/icons';
+
+
 import { SQL_TOOLBAR_ICON_BUTTON_SX } from './sql-styles';
 
 export type SqlEditorActionsProps = {

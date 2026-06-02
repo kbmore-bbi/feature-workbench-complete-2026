@@ -1,7 +1,7 @@
 'use client';
 import Checkbox from '@mui/material/Checkbox';
 
-const FocusCheckbox = (props: any) => {
+const AiaCheckbox = (props: any) => {
     const uncheckedColor = props.uncheckedColor ?? 'black';
     const checkedColor = props.checkedColor ?? uncheckedColor;
     return (
@@ -21,4 +21,4 @@ const FocusCheckbox = (props: any) => {
     )
 }
 
-export { FocusCheckbox };
+export { AiaCheckbox };

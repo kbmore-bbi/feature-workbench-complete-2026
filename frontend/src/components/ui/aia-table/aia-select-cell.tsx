@@ -1,10 +1,10 @@
 import { TableCell } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
-import { FocusSelect } from '../focus-select';
-import type { FocusTableCellProps } from './focus-table-cell.types';
-import { focusTableCellSx } from './focus-table-cell.types';
+import { AiaSelect } from '../aia-select';
+import type { AiaTableCellProps } from './aia-table-cell.types';
+import { aiaTableCellSx } from './aia-table-cell.types';
 
-type FocusSelectCellProps = FocusTableCellProps & {
+type AiaSelectCellProps = AiaTableCellProps & {
   value?: string | string[];
   options?: Array<{ label: string; value: string }>;
   onChange?: (value: string | string[]) => void;
@@ -16,7 +16,7 @@ type FocusSelectCellProps = FocusTableCellProps & {
   selectSx?: SxProps<Theme>;
 };
 
-export const FocusSelectCell = ({
+export const AiaSelectCell = ({
   value,
   options,
   onChange,
@@ -31,13 +31,13 @@ export const FocusSelectCell = ({
   padding,
   sx,
   selectSx,
-}: FocusSelectCellProps) => (
+}: AiaSelectCellProps) => (
   <TableCell
     align={align}
     padding={padding}
-    sx={focusTableCellSx({ width, minWidth, sx }, { overflow: 'visible' })}
+    sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'visible' })}
   >
-    <FocusSelect
+    <AiaSelect
       value={value}
       options={options}
       onChange={onChange}

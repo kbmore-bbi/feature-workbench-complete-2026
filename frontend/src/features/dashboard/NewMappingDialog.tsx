@@ -1,6 +1,6 @@
 "use client";
-
 import { useMemo, useRef, useState } from "react";
+import { AddRoundedIcon, ArrowForwardRoundedIcon, CloseRoundedIcon, GridOnRoundedIcon, TerminalRoundedIcon, ViewKanbanRoundedIcon } from '@/utils/icons';
 import {
   Box,
   Button,
@@ -8,12 +8,12 @@ import {
   Stack,
   Typography,
 } from "@mui/material";
-import AddRoundedIcon from "@mui/icons-material/AddRounded";
-import ArrowForwardRoundedIcon from "@mui/icons-material/ArrowForwardRounded";
-import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
-import GridOnRoundedIcon from "@mui/icons-material/GridOnRounded";
-import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
-import ViewKanbanRoundedIcon from "@mui/icons-material/ViewKanbanRounded";
+
+
+
+
+
+
 
 type MappingCreationMode = "sql" | "excel" | "manual" | null;
 

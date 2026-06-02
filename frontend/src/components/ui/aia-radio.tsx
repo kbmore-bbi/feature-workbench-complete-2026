@@ -2,12 +2,12 @@
 import Radio from '@mui/material/Radio';
 import type { ChangeEvent, MouseEvent } from 'react';
 
-type FocusRadioProps = {
+type AiaRadioProps = {
   checked: boolean;
   checkHandler: (checked: boolean) => void;
 };
 
-const FocusRadio = ({ checked, checkHandler }: FocusRadioProps) => {
+const AiaRadio = ({ checked, checkHandler }: AiaRadioProps) => {
   return (
     <Radio
       size="small"
@@ -23,4 +23,4 @@ const FocusRadio = ({ checked, checkHandler }: FocusRadioProps) => {
   );
 };
 
-export { FocusRadio };
+export { AiaRadio };

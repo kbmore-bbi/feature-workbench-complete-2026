@@ -1,8 +1,8 @@
 "use client";
-
 import Image from "next/image";
-import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
-import EastRoundedIcon from "@mui/icons-material/EastRounded";
+import { EastRoundedIcon, KeyboardArrowDownRoundedIcon } from '@/utils/icons';
+
+
 import { Avatar, Box, Button, Typography } from "@mui/material";
 
 type BuilderHeaderProps = {

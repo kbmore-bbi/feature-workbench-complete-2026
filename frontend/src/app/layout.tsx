@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import '@/theme/theme.css';
-import ThemeProvider from '@/theme/ThemeProvider';
 import Providers from "./Providers";
 import AppHeader from "@/features/layout/app-header";
 import ChatWidget from '@/features/ai-agent/chat-widget';

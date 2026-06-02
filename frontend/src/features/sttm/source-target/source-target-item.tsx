@@ -1,5 +1,4 @@
 'use client';
-
 import { useState } from 'react';
 import Card from '@mui/material/Card';
 import Box from '@mui/material/Box';
@@ -7,13 +6,14 @@ import Typography from '@mui/material/Typography';
 import IconButton from '@mui/material/IconButton';
 import Menu from '@mui/material/Menu';
 import MenuItem from '@mui/material/MenuItem';
-import MoreVertIcon from '@mui/icons-material/MoreVert';
-import CheckIcon from '@mui/icons-material/Check';
-import TableChartOutlinedIcon from '@mui/icons-material/TableChartOutlined';
-import { FocusCheckbox } from '@/components/ui/focus-checkbox';
-import { FocusRadio } from '@/components/ui/focus-radio';
+import { CheckIcon, MoreVertIcon, TableChartOutlinedIcon } from '@/utils/icons';
+
+
+
+import { AiaCheckbox } from '@/components/ui/aia-checkbox';
+import { AiaRadio } from '@/components/ui/aia-radio';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
-import { FocusChip } from '@/components/ui/focus-chip';
+import { AiaChip } from '@/components/ui/aia-chip';
 
 function tagChipPalette(tag: string, isSelected: boolean) {
   if (isSelected) {
@@ -85,14 +85,14 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
       >
         {/* The table icon */}
         {type === 'source' ? (
-          <FocusCheckbox
+          <AiaCheckbox
             checked={isSelected}
             checkHandler={() => selectHandler(item.tableId)}
             uncheckedColor={isSelected ? '#ffffff' : '#111827'}
             checkedColor={isSelected ? '#ffffff' : '#111827'}
           />
         ) : (
-          <FocusRadio
+          <AiaRadio
             checked={isSelected}
             checkHandler={() => selectHandler(item.tableId)}
           />
@@ -117,7 +117,7 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
             >
               {item.tableName}
             </Typography>
-            <FocusChip
+            <AiaChip
               label={tag}
               size="small"
               rounded={false}
@@ -132,7 +132,7 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
               }}
             />
             {isDrivingTable && (
-              <FocusChip
+              <AiaChip
                 label="DRIVING"
                 size="small"
                 rounded={false}

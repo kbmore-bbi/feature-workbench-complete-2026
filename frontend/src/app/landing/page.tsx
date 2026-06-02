@@ -1,14 +1,8 @@
 "use client"; // Required for hooks in App Router
 
-
 import React from 'react';
 import { Box, Typography, Button, Grid, Paper, Stack, Container, IconButton } from '@mui/material';
-import VisibilityIcon from '@mui/icons-material/Visibility';
-import AutoFixHighIcon from '@mui/icons-material/AutoFixHigh';
-import BoltIcon from '@mui/icons-material/Bolt';
-import SmartToyIcon from '@mui/icons-material/SmartToy';
-import CloseIcon from '@mui/icons-material/Close';
-import OpenInFullIcon from '@mui/icons-material/OpenInFull';
+import { AutoFixHighIcon, BoltIcon, CloseIcon, OpenInFullIcon, SmartToyIcon, VisibilityIcon } from '@/utils/icons';
 import { useRouter } from 'next/navigation';
 import Footer from '@/features/layout/app-footer';
 import AppHeader from '@/features/layout/app-header';

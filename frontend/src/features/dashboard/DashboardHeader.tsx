@@ -1,9 +1,12 @@
 "use client";
 
-import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
-import { Box, InputBase, Paper, Typography } from "@mui/material";
+import { useState } from "react";
+import { Box, Typography } from "@mui/material";
+import { AiaSearchbox } from "@/components/ui/aia-searchbox";
 
 export default function DashboardHeader() {
+    const [searchTerm, setSearchTerm] = useState("");
+
     return (
         <Box className="flex h-[84px] items-center justify-between border-b border-[#E8ECF4] px-6">
             <Box>
@@ -15,12 +18,23 @@ export default function DashboardHeader() {
                 </Typography>
             </Box>
 
-            <Paper
-                elevation={0}
-                className="flex h-[42px] w-[240px] items-center gap-2 rounded-full bg-[#F5F7FA] px-4"
-            >
-               
-            </Paper>
+            <AiaSearchbox
+                value={searchTerm}
+                onChange={setSearchTerm}
+                placeholder="Search projects..."
+                fullWidth={false}
+                sx={{
+                    width: 240,
+                    borderRadius: "999px",
+                    backgroundColor: "#F5F7FA",
+                    border: "1px solid transparent",
+                    "&:focus-within": {
+                        backgroundColor: "#ffffff",
+                        borderColor: "#d1d5db",
+                        boxShadow: "none",
+                    },
+                }}
+            />
         </Box>
     );
 }

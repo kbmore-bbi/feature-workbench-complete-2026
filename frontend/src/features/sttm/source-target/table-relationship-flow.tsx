@@ -1,6 +1,6 @@
 "use client";
-
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { AllInclusiveIcon, KeyIcon, LinkIcon } from '@/utils/icons';
 import {
   MarkerType,
   type Connection,
@@ -8,9 +8,9 @@ import {
   useEdgesState,
   useNodesState,
 } from "@xyflow/react";
-import AllInclusiveIcon from "@mui/icons-material/AllInclusive";
-import KeyIcon from "@mui/icons-material/Key";
-import LinkIcon from "@mui/icons-material/Link";
+
+
+
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import type { Column, DerivedSource, JoinConfig, TableMeta } from "@/features/sttm/types/sttm.types";

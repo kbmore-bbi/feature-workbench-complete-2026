@@ -31,7 +31,7 @@ export function MappingProgressIndicator({ mappedCount, totalCount }: MappingPro
             whiteSpace: "nowrap",
           }}
         >
-          {mappedCount}/{totalCount}
+          {mappedCount}/{totalCount} rows
         </Typography>
         <LinearProgress
           variant="determinate"

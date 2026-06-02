@@ -1,10 +1,10 @@
 "use client";
-
 import { useState } from "react";
-import DashboardRoundedIcon from "@mui/icons-material/DashboardRounded";
-import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
-import AccountTreeRoundedIcon from "@mui/icons-material/AccountTreeRounded";
-import KeyboardArrowDownRoundedIcon from "@mui/icons-material/KeyboardArrowDownRounded";
+import { AccountTreeRoundedIcon, DashboardRoundedIcon, FolderRoundedIcon, KeyboardArrowDownRoundedIcon } from '@/utils/icons';
+
+
+
+
 import { Box, Button, Typography } from "@mui/material";
 import { useRouter } from "next/navigation";
 import NewMappingDialog from "./NewMappingDialog";

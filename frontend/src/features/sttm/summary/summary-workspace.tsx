@@ -1,12 +1,16 @@
 "use client";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
+import {
+  AccountTreeOutlinedIcon,
+  KeyboardDoubleArrowRightRoundedIcon,
+  TableChartOutlinedIcon,
+  TerminalRoundedIcon,
+} from '@/utils/icons';
 
-import { useMemo, useState } from "react";
-import AccountTreeOutlinedIcon from "@mui/icons-material/AccountTreeOutlined";
-import TerminalRoundedIcon from "@mui/icons-material/TerminalRounded";
-import TableChartOutlinedIcon from "@mui/icons-material/TableChartOutlined";
-import { Box } from "@mui/material";
+import { Box, IconButton } from "@mui/material";
+import { AiaResizeHandle } from "@/components/ui/aia-resize-handle";
 import { MappingSqlPreview } from "@/components/sql";
-import LineageTab from "@/features/sttm/lineage/lineage-tab";
+import { SttmLineageWorkspacePanel } from "@/features/sttm/lineage/sttm-lineage-workspace-panel";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import {
   buildMappingInsertSql,
@@ -20,6 +24,11 @@ import { buildSummaryMetrics } from "./summary-utils";
 import { SttmSheetTab } from "./sttm-sheet-tab";
 
 type SummaryTab = "sttm-sheet" | "sql-preview" | "data-lineage";
+
+const MIN_AI_SUMMARY_WIDTH = 280;
+const MAX_AI_SUMMARY_WIDTH = 420;
+const COLLAPSED_AI_SUMMARY_WIDTH = 54;
+const DEFAULT_AI_SUMMARY_WIDTH = 320;
 
 function countFilterConditions(
   groups: Array<{ type?: string; children?: unknown[] }>,
@@ -50,6 +59,41 @@ export function SummaryWorkspace() {
   } = useSttmBuilderContext();
 
   const [tab, setTab] = useState<SummaryTab>("sttm-sheet");
+  const [aiSummaryCollapsed, setAiSummaryCollapsed] = useState(false);
+  const [aiSummaryWidth, setAiSummaryWidth] = useState(DEFAULT_AI_SUMMARY_WIDTH);
+  const aiSummaryResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
+
+  useEffect(() => {
+    const handlePointerMove = (event: MouseEvent) => {
+      const state = aiSummaryResizeRef.current;
+      if (!state) {
+        return;
+      }
+      const nextWidth = Math.min(
+        MAX_AI_SUMMARY_WIDTH,
+        Math.max(MIN_AI_SUMMARY_WIDTH, state.startWidth + (event.clientX - state.startX)),
+      );
+      setAiSummaryWidth(nextWidth);
+    };
+
+    const handlePointerUp = () => {
+      aiSummaryResizeRef.current = null;
+    };
+
+    window.addEventListener("mousemove", handlePointerMove);
+    window.addEventListener("mouseup", handlePointerUp);
+    return () => {
+      window.removeEventListener("mousemove", handlePointerMove);
+      window.removeEventListener("mouseup", handlePointerUp);
+    };
+  }, []);
+
+  const beginAiSummaryResize = (event: MouseEvent<HTMLDivElement>) => {
+    aiSummaryResizeRef.current = {
+      startX: event.clientX,
+      startWidth: aiSummaryWidth,
+    };
+  };
 
   const selectedTargetQualifiedName =
     targets.find((table) => table.isSelected)?.qualifiedName ?? null;
@@ -156,8 +200,87 @@ export function SummaryWorkspace() {
       />
 
       <Box sx={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+        {tab !== "data-lineage" ? (
+        <Box
+          sx={{
+            display: "flex",
+            width: aiSummaryCollapsed ? COLLAPSED_AI_SUMMARY_WIDTH : aiSummaryWidth,
+            minWidth: aiSummaryCollapsed ? COLLAPSED_AI_SUMMARY_WIDTH : MIN_AI_SUMMARY_WIDTH,
+            maxWidth: aiSummaryCollapsed ? COLLAPSED_AI_SUMMARY_WIDTH : MAX_AI_SUMMARY_WIDTH,
+            flexShrink: 0,
+            borderRight: "1px solid #e5e7eb",
+            overflow: "hidden",
+            bgcolor: "#fafafa",
+            minHeight: 0,
+            height: "100%",
+          }}
+        >
+          {aiSummaryCollapsed ? (
+            <Box
+              sx={{
+                width: "100%",
+                height: "100%",
+                display: "flex",
+                flexDirection: "column",
+                alignItems: "flex-start",
+                justifyContent: "flex-end",
+                pb: 1.25,
+                pl: 0.75,
+              }}
+            >
+              <IconButton
+                size="small"
+                aria-label="Expand AI summary"
+                onClick={() => setAiSummaryCollapsed(false)}
+                sx={{
+                  width: 32,
+                  height: 32,
+                  p: 0,
+                  color: "#475569",
+                  border: "1px solid #dbe2ea",
+                  borderRadius: "50%",
+                  backgroundColor: "#fff",
+                  "&:hover": {
+                    backgroundColor: "#f8fafc",
+                  },
+                }}
+              >
+                <KeyboardDoubleArrowRightRoundedIcon sx={{ fontSize: 18 }} />
+              </IconButton>
+            </Box>
+          ) : (
+            <Box sx={{ display: "flex", width: "100%", minWidth: 0, minHeight: 0, flex: 1 }}>
+              <Box
+                sx={{
+                  minWidth: 0,
+                  flex: 1,
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  overflow: "hidden",
+                }}
+              >
+                <AiSummaryPanel
+                  metrics={metrics}
+                  targetQualifiedName={selectedTargetQualifiedName}
+                  narrative={narrative}
+                  onCollapse={() => setAiSummaryCollapsed(true)}
+                />
+              </Box>
+              <AiaResizeHandle
+                direction="horizontal"
+                onMouseDown={beginAiSummaryResize}
+                sx={{ alignSelf: "stretch", height: "100%" }}
+              />
+            </Box>
+          )}
+        </Box>
+        ) : null}
+
         <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <SummaryStatsRow metrics={metrics} targetQualifiedName={selectedTargetQualifiedName} />
+          {tab !== "data-lineage" ? (
+            <SummaryStatsRow metrics={metrics} targetQualifiedName={selectedTargetQualifiedName} />
+          ) : null}
 
           {tab === "sttm-sheet" ? <SttmSheetTab mappings={mappings} /> : null}
           {tab === "sql-preview" ? (
@@ -172,18 +295,8 @@ export function SummaryWorkspace() {
               generatedSql={generatedSql}
             />
           ) : null}
-          {tab === "data-lineage" ? (
-            <Box sx={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
-              <LineageTab />
-            </Box>
-          ) : null}
+          {tab === "data-lineage" ? <SttmLineageWorkspacePanel /> : null}
         </Box>
-
-        <AiSummaryPanel
-          metrics={metrics}
-          targetQualifiedName={selectedTargetQualifiedName}
-          narrative={narrative}
-        />
       </Box>
     </Box>
   );

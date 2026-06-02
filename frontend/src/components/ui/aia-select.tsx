@@ -18,7 +18,7 @@ interface Option {
     value: string;
 }
 
-interface FocusSelectProps {
+interface AiaSelectProps {
     label?: string;
     value?: string | string[];
     options?: Option[];
@@ -47,7 +47,7 @@ const MenuProps = {
     },
 };
 
-const FocusSelect = ({
+const AiaSelect = ({
     label = '',
     value,
     options = [],
@@ -58,7 +58,7 @@ const FocusSelect = ({
     size = 'small',
     fullWidth = true,
     sx,
-}: FocusSelectProps) => {
+}: AiaSelectProps) => {
     const handleChange = (
         event: SelectChangeEvent<string | string[]>,
         _child: React.ReactNode
@@ -134,4 +134,4 @@ const FocusSelect = ({
     );
 };
 
-export { FocusSelect };
+export { AiaSelect };

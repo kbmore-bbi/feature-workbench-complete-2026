@@ -1,38 +1,30 @@
 "use client";
-
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
+import { AccountTreeOutlinedIcon, ChecklistRtlRoundedIcon, KeyboardDoubleArrowRightRoundedIcon, TerminalRoundedIcon } from '@/utils/icons';
+import { MappingDataPreviewIcon, MappingDataPreviewTable } from '@/features/sttm/mapping/data-preview';
 import {
   Box,
   CircularProgress,
   IconButton,
-  Paper,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  Typography,
 } from '@mui/material';
-import ChecklistRtlRoundedIcon from '@mui/icons-material/ChecklistRtlRounded';
-import TerminalRoundedIcon from '@mui/icons-material/TerminalRounded';
-import AccountTreeOutlinedIcon from '@mui/icons-material/AccountTreeOutlined';
-import TableRowsRoundedIcon from '@mui/icons-material/TableRowsRounded';
-import DragIndicatorRoundedIcon from '@mui/icons-material/DragIndicatorRounded';
-import KeyboardDoubleArrowRightRoundedIcon from '@mui/icons-material/KeyboardDoubleArrowRightRounded';
+
+
+
+
+
+import { AiaResizeHandle } from '@/components/ui/aia-resize-handle';
 import { useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
 import SourceTargetAttributeList from '@/features/sttm/mapping/source-target-attribute-list';
 import SourceTargetAttributeMapping from '@/features/sttm/mapping/source-target-attribute-mapping';
 import PreProcessModal from '@/features/sttm/mapping/pre-process-modal';
-import LineageTab from '@/features/sttm/lineage/lineage-tab';
+import { SttmLineageWorkspacePanel } from '@/features/sttm/lineage/sttm-lineage-workspace-panel';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import { useAppDispatch } from '@/store/hooks';
 import { fetchAttributes } from '@/features/sttm/store/sttm-builder-slice';
-import { dbService } from '@/services/dbService';
+import { collectSelectedSourceQualifiedNames } from '@/features/sttm/shared/sttm-selection-utils';
 import {
   buildMappingInsertSql,
-  buildMappingSelectSql,
   buildSourceQueryPreviewSql,
 } from '@/features/sttm/mapping/mapping-utils';
 import { MappingSqlPreview } from '@/components/sql';
@@ -60,26 +52,48 @@ function countFilterConditions(
 }
 
 export default function MappingPage() {
+  const [isClient, setIsClient] = useState(false);
+
+  useEffect(() => {
+    setIsClient(true);
+  }, []);
+
+  if (!isClient) {
+    return (
+      <Box
+        sx={{
+          flex: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          bgcolor: '#fff',
+          minHeight: 320,
+        }}
+      >
+        <CircularProgress size={28} />
+      </Box>
+    );
+  }
+
+  return <MappingPageContent />;
+}
+
+function MappingPageContent() {
   const router = useRouter();
   const { setContent, collapsed, setCollapsed, width, setWidth } = useSidebarSlot();
   const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const dispatch = useAppDispatch();
   const [activeTab, setActiveTab] = useState<MappingTab>('mapping');
-  const [previewColumns, setPreviewColumns] = useState<Array<{ name: string; dataType: string }>>([]);
-  const [previewRows, setPreviewRows] = useState<Array<Record<string, unknown>>>([]);
-  const [previewLoading, setPreviewLoading] = useState(false);
-  const [previewError, setPreviewError] = useState<string | null>(null);
   const {
     mappings,
     targetAttributeGroup,
     initializeMappings,
+    fullData,
     sources,
     targets,
     loadState,
     relationships,
     derivedSources,
-    drivingTableId,
-    sourceAttributeGroups,
     sourceFilterSql,
     sourceFilterGroups,
     sourceQuerySql,
@@ -150,7 +164,7 @@ export default function MappingPage() {
     };
   }, [setWidth]);
 
-  const beginResize = (event: React.MouseEvent<HTMLButtonElement>) => {
+  const beginResize = (event: React.MouseEvent<HTMLDivElement>) => {
     resizeStateRef.current = {
       startX: event.clientX,
       startWidth: width,
@@ -238,12 +252,10 @@ export default function MappingPage() {
 
   const selectedSourceKey = useMemo(
     () =>
-      sources
-        .filter((table) => table.isSelected)
-        .map((table) => table.qualifiedName)
+      collectSelectedSourceQualifiedNames(fullData?.sources ?? [])
         .sort()
         .join('|'),
-    [sources],
+    [fullData?.sources],
   );
 
   const selectedTargetKey =
@@ -293,18 +305,6 @@ export default function MappingPage() {
     ],
   );
 
-  const previewSql = useMemo(
-    () =>
-      buildMappingSelectSql({
-        mappings,
-        sourceQuerySql,
-        sourceFilterSql,
-        sourceGroupBySql,
-        sourceOrderBySql,
-      }),
-    [mappings, sourceFilterSql, sourceGroupBySql, sourceOrderBySql, sourceQuerySql],
-  );
-
   const sourceQueryPreviewSql = useMemo(
     () =>
       buildSourceQueryPreviewSql({
@@ -315,118 +315,6 @@ export default function MappingPage() {
       }),
     [sourceFilterSql, sourceGroupBySql, sourceOrderBySql, sourceQuerySql],
   );
-
-  useEffect(() => {
-    if (activeTab !== 'data-preview') {
-      return;
-    }
-    if (!previewSql.trim() || previewSql.startsWith('--')) {
-      const resetTimer = window.setTimeout(() => {
-        setPreviewColumns([]);
-        setPreviewRows([]);
-        setPreviewError(null);
-        setPreviewLoading(false);
-      }, 0);
-      return () => window.clearTimeout(resetTimer);
-    }
-
-    const selectedSourceTables = sources
-      .filter((table) => table.isSelected)
-      .map((table) => {
-        const [database, schema, tableName] = table.qualifiedName.split('.', 3);
-        return { database, schema, table: tableName };
-      });
-
-    const requestPayload = {
-      derived_source_name: 'sttm_mapping_preview',
-      sql_text: previewSql,
-      source_tables: selectedSourceTables,
-      parent_derived_source_ids: derivedSources.filter((source) => source.isSelected).map((source) => source.id),
-      driving_table: drivingTableId
-        ? (() => {
-            const [database, schema, table] = drivingTableId.split('.', 3);
-            return { database, schema, table };
-          })()
-        : null,
-      relationships: relationships
-        .filter((join) => join.leftTableId && join.rightTableId && join.conditions?.length)
-        .map((join) => {
-          const [leftDatabase, leftSchema, leftTable] = String(join.leftTableId).split('.', 3);
-          const [rightDatabase, rightSchema, rightTable] = String(join.rightTableId).split('.', 3);
-          return {
-            id: join.id ?? undefined,
-            left_table: { database: leftDatabase, schema: leftSchema, table: leftTable },
-            right_table: { database: rightDatabase, schema: rightSchema, table: rightTable },
-            join_type: join.joinType ?? 'INNER',
-            constraint_name: join.constraintName ?? null,
-            source: join.source ?? 'USER_DEFINED',
-            locked: join.locked ?? false,
-            conditions: (join.conditions ?? [])
-              .filter((condition) => condition.leftColumn && condition.rightColumn)
-              .map((condition) => ({
-                left_column: String(condition.leftColumn),
-                right_column: String(condition.rightColumn),
-                operator: condition.operator ?? '=',
-              })),
-          };
-        }),
-      selected_columns_by_table: Object.fromEntries(
-        sourceAttributeGroups
-          .map((group) => [
-            group.qualifiedName,
-            group.columns.map((column) => String(column.name)).filter(Boolean),
-          ])
-          .filter(([, columns]) => columns.length > 0),
-      ),
-    };
-
-    let cancelled = false;
-    const startTimer = window.setTimeout(() => {
-      if (!cancelled) {
-        setPreviewLoading(true);
-        setPreviewError(null);
-      }
-    }, 0);
-
-    dbService
-      .validateDerivedSource(requestPayload)
-      .then((result) => {
-        if (cancelled) return;
-        setPreviewColumns(
-          (result.preview_columns ?? []).map((column) => ({
-            name: column.name,
-            dataType: column.data_type,
-          })),
-        );
-        setPreviewRows(
-          (result.preview_rows ?? []).map((row) => row.values ?? {}),
-        );
-      })
-      .catch((error) => {
-        if (cancelled) return;
-        setPreviewError(error instanceof Error ? error.message : 'Unable to preview mapped data.');
-        setPreviewColumns([]);
-        setPreviewRows([]);
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setPreviewLoading(false);
-        }
-      });
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(startTimer);
-    };
-  }, [
-    activeTab,
-    derivedSources,
-    drivingTableId,
-    previewSql,
-    relationships,
-    sourceAttributeGroups,
-    sources,
-  ]);
 
   useEffect(() => {
     const handleRunValidation = () => setActiveTab('sql-preview');
@@ -442,7 +330,7 @@ export default function MappingPage() {
       icon: <TerminalRoundedIcon sx={{ fontSize: 17 }} />,
       badge: mappedCount > 0 ? mappedCount : undefined,
     },
-    { key: 'data-preview', label: 'Data Preview', icon: <TableRowsRoundedIcon sx={{ fontSize: 17 }} /> },
+    { key: 'data-preview', label: 'Data Preview', icon: <MappingDataPreviewIcon /> },
     { key: 'data-lineage', label: 'Data Lineage', icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
   ];
 
@@ -468,6 +356,7 @@ export default function MappingPage() {
           overflow: 'hidden',
         }}
       >
+        {activeTab === 'mapping' ? (
         <Box
           sx={{
             display: 'flex',
@@ -477,17 +366,22 @@ export default function MappingPage() {
             flexShrink: 0,
             borderRight: '1px solid #e5e7eb',
             overflow: 'hidden',
-            bgcolor: '#fff',
+            bgcolor: 'var(--color-surface)',
+            minHeight: 0,
+            height: '100%',
           }}
         >
           {collapsed ? (
             <Box
               sx={{
                 width: '100%',
+                height: '100%',
                 display: 'flex',
+                flexDirection: 'column',
                 alignItems: 'flex-start',
-                justifyContent: 'center',
-                py: 1.25,
+                justifyContent: 'flex-end',
+                pb: 1.25,
+                pl: 0.75,
               }}
             >
               <IconButton
@@ -495,8 +389,12 @@ export default function MappingPage() {
                 aria-label="Expand source sidebar"
                 onClick={() => setCollapsed(false)}
                 sx={{
+                  width: 32,
+                  height: 32,
+                  p: 0,
                   color: '#475569',
                   border: '1px solid #dbe2ea',
+                  borderRadius: '50%',
                   backgroundColor: '#fff',
                   '&:hover': {
                     backgroundColor: '#f8fafc',
@@ -512,6 +410,7 @@ export default function MappingPage() {
                 sx={{
                   minWidth: 0,
                   flex: 1,
+                  height: '100%',
                   display: 'flex',
                   flexDirection: 'column',
                   overflow: 'hidden',
@@ -519,34 +418,15 @@ export default function MappingPage() {
               >
                 <SourceTargetAttributeList embedded />
               </Box>
-              <Box
-                sx={{
-                  width: 18,
-                  display: 'flex',
-                  alignItems: 'stretch',
-                  justifyContent: 'center',
-                  borderLeft: '1px solid #eef2f7',
-                  backgroundColor: '#fff',
-                  cursor: 'col-resize',
-                }}
-              >
-                <IconButton
-                  size="small"
-                  aria-label="Resize source sidebar"
-                  onMouseDown={beginResize}
-                  sx={{
-                    width: '100%',
-                    borderRadius: 0,
-                    color: '#94a3b8',
-                    '&:hover': { backgroundColor: '#f8fafc', color: '#475569' },
-                  }}
-                >
-                  <DragIndicatorRoundedIcon sx={{ fontSize: 18 }} />
-                </IconButton>
-              </Box>
+              <AiaResizeHandle
+                direction="horizontal"
+                onMouseDown={beginResize}
+                sx={{ alignSelf: 'stretch', height: '100%' }}
+              />
             </Box>
           )}
         </Box>
+        ) : null}
 
         <Box
           sx={{
@@ -559,7 +439,16 @@ export default function MappingPage() {
           }}
         >
         {activeTab === 'mapping' ? (
-          <Box sx={{ minWidth: 0, flex: 1, overflow: 'hidden' }}>
+          <Box
+            sx={{
+              minWidth: 0,
+              flex: 1,
+              minHeight: 0,
+              overflow: 'hidden',
+              display: 'flex',
+              flexDirection: 'column',
+            }}
+          >
             <SourceTargetAttributeMapping />
           </Box>
         ) : null}
@@ -577,73 +466,18 @@ export default function MappingPage() {
         ) : null}
 
         {activeTab === 'data-preview' ? (
-          <Box sx={{ flex: 1, width: '100%', minWidth: 0, minHeight: 0, overflow: 'auto', p: 2, backgroundColor: '#fff' }}>
-            <Paper
-              elevation={0}
-              sx={{ border: '1px solid #e5e7eb', borderRadius: 3, overflow: 'hidden', width: '100%' }}
-            >
-              <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Typography sx={{ fontSize: '0.85rem', fontWeight: 800, color: '#111827' }}>
-                  Result preview
-                </Typography>
-                <Typography sx={{ fontSize: '0.76rem', color: '#64748b' }}>
-                  {previewRows.length} sample rows
-                </Typography>
-              </Box>
-              {previewLoading ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                  <CircularProgress size={28} />
-                </Box>
-              ) : previewError ? (
-                <Box sx={{ p: 2.5 }}>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#b91c1c' }}>
-                    {previewError}
-                  </Typography>
-                </Box>
-              ) : previewColumns.length === 0 ? (
-                <Box sx={{ p: 2.5 }}>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>
-                    Map at least one attribute to preview sample output rows.
-                  </Typography>
-                </Box>
-              ) : (
-                <Box sx={{ overflow: 'auto' }}>
-                  <Table size="small" stickyHeader>
-                    <TableHead>
-                      <TableRow>
-                        {previewColumns.map((column) => (
-                          <TableCell key={column.name} sx={{ fontWeight: 800, whiteSpace: 'nowrap' }}>
-                            <Box sx={{ display: 'grid', gap: 0.25 }}>
-                              <Typography sx={{ fontSize: '0.76rem', fontWeight: 800, color: '#111827' }}>
-                                {column.name}
-                              </Typography>
-                              <Typography sx={{ fontSize: '0.68rem', color: '#94a3b8' }}>
-                                {column.dataType}
-                              </Typography>
-                            </Box>
-                          </TableCell>
-                        ))}
-                      </TableRow>
-                    </TableHead>
-                    <TableBody>
-                      {previewRows.map((row, index) => (
-                        <TableRow key={`preview-row-${index}`} hover>
-                          {previewColumns.map((column) => (
-                            <TableCell key={`${index}-${column.name}`} sx={{ fontSize: '0.78rem', color: '#334155' }}>
-                              {String(row[column.name] ?? '')}
-                            </TableCell>
-                          ))}
-                        </TableRow>
-                      ))}
-                    </TableBody>
-                  </Table>
-                </Box>
-              )}
-            </Paper>
-          </Box>
+          <MappingDataPreviewTable
+            mappings={mappings}
+            targetLabel={
+              targetAttributeGroup?.table ??
+              selectedTargetQualifiedName?.split('.').pop() ??
+              null
+            }
+            mappedCount={mappedCount}
+          />
         ) : null}
         {activeTab === 'data-lineage' ? (
-          <LineageTab />
+          <SttmLineageWorkspacePanel />
         ) : null}
         </Box>
       </Box>

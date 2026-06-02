@@ -5,7 +5,7 @@ import { FormControl, TextField } from '@mui/material';
 import type { TextFieldVariants } from '@mui/material/TextField';
 import type { SxProps, Theme } from '@mui/material/styles';
 
-interface FocusInputProps {
+interface AiaInputProps {
     label?: string;
     value?: string;
     onChange?: (value: string) => void;
@@ -26,7 +26,7 @@ interface FocusInputProps {
     sx?: SxProps<Theme>;
 }
 
-const FocusInput = ({
+const AiaInput = ({
     label = '',
     value,
     onChange,
@@ -40,7 +40,7 @@ const FocusInput = ({
     maxRows,
     variant = 'outlined',
     sx,
-}: FocusInputProps) => {
+}: AiaInputProps) => {
     const handleChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         onChange?.(event.target.value);
     };
@@ -72,4 +72,4 @@ const FocusInput = ({
     );
 };
 
-export { FocusInput };
+export { AiaInput };

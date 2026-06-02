@@ -1,13 +1,13 @@
 "use client";
-
 import React from "react";
 import SourceTargetList from "./source-target-list";
-import { Box, Typography, Paper, InputBase, Button, Stack } from "@mui/material";
-import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
-import FilterListRoundedIcon from "@mui/icons-material/FilterListRounded";
-import AddIcon from "@mui/icons-material/Add";
+import { Box, Typography, Button, Stack } from "@mui/material";
+import { AddIcon, FilterListRoundedIcon } from '@/utils/icons';
+
+
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
-import { FocusButton } from "@/components/ui/focus-button";
+import { AiaButton } from "@/components/ui/aia-button";
+import { AiaSearchbox } from "@/components/ui/aia-searchbox";
 import { AddDerivedModal } from "./add-derived-modal";
 
 /** Shared with search field + Filters control */
@@ -22,17 +22,6 @@ const fieldChromeActive = {
   backgroundColor: "#ffffff",
   borderColor: "#d1d5db",
   boxShadow: "0 0 0 1px rgba(15, 23, 42, 0.06)",
-} as const;
-
-const searchFieldSx = {
-  display: "flex",
-  alignItems: "center",
-  gap: 1,
-  px: 1.5,
-  py: 0.75,
-  flex: 1,
-  ...fieldChrome,
-  "&:focus-within": fieldChromeActive,
 } as const;
 
 const filtersControlSx = {
@@ -64,6 +53,7 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
     dismissPendingDerivedSourceDraft,
   } = useSttmBuilderContext();
   const [isDerivedModalOpen, setIsDerivedModalOpen] = React.useState(false);
+  const [searchTerm, setSearchTerm] = React.useState("");
 
   React.useEffect(() => {
     if (type === "source" && derivedSourceDraftRequested && pendingDerivedSourceDraft) {
@@ -182,30 +172,21 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
           mb: 1.25,
         }}
       >
-        <Paper elevation={0} sx={{ ...searchFieldSx, mb: 0, flex: 1 }}>
-          <SearchRoundedIcon sx={{ color: "#9ca3af", fontSize: 20, flexShrink: 0 }} />
-          <InputBase
-            placeholder="Search tables, schemas, or tags..."
-            fullWidth
-            sx={{
-              fontSize: 14,
-              color: "#111827",
-              "& .MuiInputBase-input::placeholder": {
-                color: "#9ca3af",
-                opacity: 1,
-              },
-            }}
-          />
-        </Paper>
+        <AiaSearchbox
+          value={searchTerm}
+          onChange={setSearchTerm}
+          placeholder="search tables or tags"
+          sx={{ flex: 1, mb: 0 }}
+        />
 
-        <Button
+        {/* <Button
           variant="text"
           size="small"
           startIcon={<FilterListRoundedIcon sx={{ fontSize: 18, color: "#6b7280" }} />}
           sx={filtersControlSx}
         >
           Filters
-        </Button>
+        </Button> */}
       </Box>
 
       {type === "source" && (
@@ -222,7 +203,7 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
               >
                 ADD SOURCE:
               </Typography>
-              <FocusButton
+              <AiaButton
                 size="small"
                 variant="outlined"
                 rounded="full"
@@ -234,7 +215,7 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
                 onClick={() => setIsDerivedModalOpen(true)}
               >
                 Add Derived
-              </FocusButton>
+              </AiaButton>
             </Box>
             {drivingTableDetails && (
               <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
@@ -253,7 +234,7 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
 
       <Box>
         <Stack spacing={0.5}>
-          <SourceTargetList type={type} />
+          <SourceTargetList type={type} searchTerm={searchTerm} />
         </Stack>
       </Box>
 

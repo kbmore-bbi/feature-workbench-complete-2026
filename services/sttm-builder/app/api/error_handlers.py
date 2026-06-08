@@ -14,11 +14,12 @@ logger = logging.getLogger(__name__)
 
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
     """Handles all AppError subclasses — maps code, status, and details to JSON."""
+    trace_id = getattr(request.state, "trace_id", None)
     return JSONResponse(
         status_code=exc.status_code,
         content=ErrorResponse(
             code=exc.code,
-            message=exc.message,
+            message=f"{exc.message} [trace_id={trace_id}]" if trace_id else exc.message,
             details=[ErrorDetail(**d) for d in exc.details],
             error=ApiError(
                 title=exc.message,
@@ -72,7 +73,11 @@ async def unhandled_error_handler(request: Request, exc: Exception) -> JSONRespo
         status_code=500,
         content=ErrorResponse(
             code=ErrorCode.INTERNAL_ERROR,
-            message="An unexpected error occurred.",
+            message=(
+                f"An unexpected error occurred. [trace_id={getattr(request.state, 'trace_id', '')}]"
+                if getattr(request.state, "trace_id", None)
+                else "An unexpected error occurred."
+            ),
             error=ApiError(
                 title="An unexpected error occurred.",
                 status=500,

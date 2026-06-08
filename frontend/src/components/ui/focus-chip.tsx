@@ -11,6 +11,7 @@ interface FocusChipProps {
   rounded?: boolean;
   customColor?: string;
   customBackgroundColor?: string
+  onClick?: () => void;
   onDelete?: () => void;
   sx?: SxProps<Theme>;
 }
@@ -23,6 +24,7 @@ const FocusChip = ({
   rounded = true,
   customBackgroundColor,
   customColor,
+  onClick,
   onDelete,
   sx
 }: FocusChipProps) => {
@@ -32,6 +34,7 @@ const FocusChip = ({
       color={color}
       variant={variant}
       size={size}
+      onClick={onClick}
       onDelete={onDelete}
       sx={{
         borderRadius: rounded ? "999px" : "4px",

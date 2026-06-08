@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Dialog,
   Button,
@@ -19,157 +19,20 @@ import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
-import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
-import VpnKeyRoundedIcon from '@mui/icons-material/VpnKeyRounded';
 import FunctionsRoundedIcon from '@mui/icons-material/FunctionsRounded';
+import VpnKeyRoundedIcon from '@mui/icons-material/VpnKeyRounded';
 import StorageRoundedIcon from '@mui/icons-material/StorageRounded';
-import TerminalRoundedIcon from '@mui/icons-material/TerminalRounded';
+import {
+  SqlEditor,
+  SQL_FUNCTION_CATEGORIES,
+  SQL_FUNCTIONS_BY_CATEGORY,
+  SQL_QUICK_ACTIONS,
+  SQL_EDITOR_PANEL_MIN_HEIGHT,
+  type SqlFunctionCategoryId,
+} from '@/components/sql';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import type { ColumnGroup } from '@/features/sttm/types/sttm.types';
-import { buildPreProcessSql } from './pre-process-sql';
 import { generateMappingDescription, parseSourceColumns } from './mapping-utils';
-
-type FunctionTab = 'string' | 'numeric' | 'date' | 'conversion' | 'logic' | 'window';
-
-const FUNCTION_TABS: { id: FunctionTab; label: string }[] = [
-  { id: 'string', label: 'String' },
-  { id: 'numeric', label: 'Numeric' },
-  { id: 'date', label: 'Date' },
-  { id: 'conversion', label: 'Conversion' },
-  { id: 'logic', label: 'Logic' },
-  { id: 'window', label: 'Window +' },
-];
-
-const QUICK_ACTIONS = ['CAST()', 'COALESCE()', 'CONCAT()', 'CASE WHEN ...'];
-
-const FUNCTION_LIBRARY: Record<FunctionTab, string[]> = {
-  string: [
-    'UPPER()', 'LOWER()', 'TRIM()', 'LTRIM()',
-    'RTRIM()', 'SUBSTRING()', 'REPLACE()',
-    'CONCAT()', 'LENGTH()', 'REGEXP_REPLACE()',
-    'LPAD()', 'RPAD()', 'INITCAP()',
-  ],
-  numeric: [
-    'ROUND()', 'FLOOR()', 'CEIL()', 'ABS()',
-    'MOD()', 'POWER()', 'SQRT()', 'SIGN()',
-    'TRUNC()',
-  ],
-  date: [
-    'CURRENT_DATE()', 'CURRENT_TIMESTAMP()', 'DATEADD()',
-    'DATEDIFF()', 'DATE_TRUNC()', 'EXTRACT()',
-    'TO_DATE()', 'TO_TIMESTAMP()',
-    'DATE_FORMAT()', 'NOW()', 'DATE_ADD()', 'DATE_SUB()',
-    'YEAR()', 'MONTH()', 'DAY()', 'CURRENT_DATE',
-  ],
-  conversion: [
-    'CAST()', 'TRY_CAST()', 'TO_VARCHAR()', 'TO_NUMBER()',
-    'TO_BOOLEAN()', 'COALESCE()', 'NULLIF()', 'IFF()', 'DECODE()',
-    'CONVERT()', 'ISNULL()', 'TO_CHAR()', 'NVL()',
-  ],
-  logic: [
-    'CASE WHEN ...', 'IFF()', 'COALESCE()', 'NULLIF()',
-    'NVL()', 'AND', 'OR', 'NOT',
-    'IIF()', 'DECODE()', 'GREATEST()', 'LEAST()',
-  ],
-  window: [
-    'ROW_NUMBER() OVER()', 'RANK() OVER()', 'DENSE_RANK() OVER()',
-    'LAG() OVER()', 'LEAD() OVER()', 'SUM() OVER()', 'COUNT() OVER()',
-    'NTILE() OVER()', 'FIRST_VALUE() OVER()', 'LAST_VALUE() OVER()',
-    'AVG() OVER()', 'MIN() OVER()', 'MAX() OVER()',
-    'PERCENT_RANK() OVER()', 'CUME_DIST() OVER()',
-  ],
-};
-
-const SQL_KEYWORDS = new Set([
-  'SELECT', 'FROM', 'WHERE', 'JOIN', 'INNER', 'LEFT', 'RIGHT', 'OUTER', 'FULL', 'CROSS',
-  'ON', 'AS', 'AND', 'OR', 'NOT', 'IN', 'IS', 'NULL', 'BY', 'ORDER', 'GROUP', 'HAVING',
-  'CASE', 'WHEN', 'THEN', 'ELSE', 'END', 'DISTINCT', 'UNION', 'ALL', 'OVER', 'PARTITION',
-  'LIMIT', 'OFFSET', 'ASC', 'DESC', 'LIKE', 'BETWEEN', 'EXISTS', 'INTO', 'WITH', 'USING',
-  'TRUE', 'FALSE',
-]);
-
-type SqlTokenType =
-  | 'comment'
-  | 'string'
-  | 'number'
-  | 'keyword'
-  | 'function'
-  | 'identifier'
-  | 'punctuation'
-  | 'space'
-  | 'other';
-
-type SqlToken = { type: SqlTokenType; value: string };
-
-const SQL_TOKEN_COLORS: Record<SqlTokenType, string> = {
-  comment: '#6b7280',
-  string: '#86efac',
-  number: '#fbbf24',
-  keyword: '#f87171',
-  function: '#fb7185',
-  identifier: '#e5e7eb',
-  punctuation: '#cbd5e1',
-  space: 'inherit',
-  other: '#e5e7eb',
-};
-
-const SQL_TOKEN_PATTERN =
-  /(--[^\n]*|\/\*[\s\S]*?\*\/)|('(?:[^'\\]|\\.)*'|"(?:[^"\\]|\\.)*")|(\b\d+(?:\.\d+)?\b)|([A-Za-z_][\w]*(?:\.[A-Za-z_][\w]*)*)|([=<>!+\-*/(),;.])|(\s+)|([^\s])/g;
-
-function tokenizeSql(sql: string): SqlToken[] {
-  const tokens: SqlToken[] = [];
-  if (!sql) return tokens;
-  SQL_TOKEN_PATTERN.lastIndex = 0;
-  let match: RegExpExecArray | null;
-  while ((match = SQL_TOKEN_PATTERN.exec(sql)) !== null) {
-    const [, comment, str, num, word, punct, space, other] = match;
-    if (comment != null) {
-      tokens.push({ type: 'comment', value: comment });
-    } else if (str != null) {
-      tokens.push({ type: 'string', value: str });
-    } else if (num != null) {
-      tokens.push({ type: 'number', value: num });
-    } else if (word != null) {
-      const upper = word.toUpperCase();
-      const nextChar = sql[match.index + word.length];
-      if (SQL_KEYWORDS.has(upper)) {
-        tokens.push({ type: 'keyword', value: word });
-      } else if (nextChar === '(' && !word.includes('.')) {
-        tokens.push({ type: 'function', value: word });
-      } else {
-        tokens.push({ type: 'identifier', value: word });
-      }
-    } else if (punct != null) {
-      tokens.push({ type: 'punctuation', value: punct });
-    } else if (space != null) {
-      tokens.push({ type: 'space', value: space });
-    } else {
-      tokens.push({ type: 'other', value: other ?? '' });
-    }
-  }
-  return tokens;
-}
-
-function HighlightedSql({ text }: { text: string }) {
-  const tokens = useMemo(() => tokenizeSql(text), [text]);
-  if (!text) return null;
-  return (
-    <>
-      {tokens.map((token, idx) => (
-        <span
-          key={idx}
-          style={{
-            color: SQL_TOKEN_COLORS[token.type],
-            fontWeight:
-              token.type === 'keyword' || token.type === 'function' ? 600 : 400,
-          }}
-        >
-          {token.value}
-        </span>
-      ))}
-    </>
-  );
-}
 
 function tableAlias(tableName: string) {
   return tableName.toLowerCase();
@@ -236,19 +99,13 @@ export default function PreProcessModal() {
     updateMapping,
     sourceAttributeGroups,
     relationships,
-    sources,
-    drivingTableId,
-    derivedSources,
   } = useSttmBuilderContext();
 
   const [expression, setExpression] = useState('');
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [columnSearch, setColumnSearch] = useState('');
-  const [functionTab, setFunctionTab] = useState<FunctionTab>('string');
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
-  const [copyFeedback, setCopyFeedback] = useState<string | null>(null);
-  const editorRef = useRef<HTMLTextAreaElement | null>(null);
-  const overlayRef = useRef<HTMLDivElement | null>(null);
+  const [functionTab, setFunctionTab] = useState<SqlFunctionCategoryId>('string');
 
   const activeMapping = mappings.find((m) => m.id === activeMappingId);
   const joinCount = relationships.length;
@@ -276,7 +133,6 @@ export default function PreProcessModal() {
       setSelectedColumns([]);
     }
     setColumnSearch('');
-    setCopyFeedback(null);
   }, [activeMapping, isPreProcessModalOpen]);
 
   useEffect(() => {
@@ -288,12 +144,6 @@ export default function PreProcessModal() {
       ),
     );
   }, [isPreProcessModalOpen, sourceAttributeGroups]);
-
-  useEffect(() => {
-    if (!copyFeedback) return;
-    const timeout = setTimeout(() => setCopyFeedback(null), 1500);
-    return () => clearTimeout(timeout);
-  }, [copyFeedback]);
 
   const handleClose = () => {
     setPreProcessModalOpen(false);
@@ -330,7 +180,6 @@ export default function PreProcessModal() {
     } else {
       setExpression((prev) => prev + (prev && !prev.endsWith(' ') ? ' ' : '') + text);
     }
-    requestAnimationFrame(() => editorRef.current?.focus());
   };
 
   const toggleColumnSelection = (group: ColumnGroup, columnName: string) => {
@@ -368,42 +217,6 @@ export default function PreProcessModal() {
     return selectedColumns.some((item) => item.toLowerCase() === lower);
   };
 
-  const generatedSql = useMemo(() => {
-    if (!activeMapping) return '';
-    return buildPreProcessSql({
-      expression,
-      targetColumn: activeMapping.targetColumn,
-      sourceAttributeGroups,
-      relationships,
-      sources,
-      drivingTableId,
-      derivedSources,
-    });
-  }, [
-    activeMapping,
-    expression,
-    sourceAttributeGroups,
-    relationships,
-    sources,
-    drivingTableId,
-    derivedSources,
-  ]);
-
-  const expressionLineNumbers = useMemo(() => {
-    const count = Math.max(1, expression.split('\n').length);
-    return Array.from({ length: count }, (_, i) => i + 1);
-  }, [expression]);
-
-  const handleCopy = async () => {
-    if (!generatedSql) return;
-    try {
-      await navigator.clipboard.writeText(generatedSql);
-      setCopyFeedback('Copied');
-    } catch {
-      setCopyFeedback('Copy failed');
-    }
-  };
-
   const filteredGroups = useMemo(() => {
     const query = columnSearch.trim().toLowerCase();
     if (!query) return groupedSources;
@@ -430,25 +243,25 @@ export default function PreProcessModal() {
       ? selectedColumns.join(', ')
       : activeMapping?.sourceColumn || 'not mapped';
 
+  const joinSubtitle =
+    joinCount > 0 ? `${joinCount} join${joinCount === 1 ? '' : 's'} from Step 1` : undefined;
+
   return (
     <Dialog
       open={isPreProcessModalOpen}
       onClose={handleClose}
-      maxWidth={false}
+      maxWidth="xl"
       fullWidth
       sx={{
         '& .MuiDialog-paper': {
-          width: 'min(1280px, 96vw)',
-          height: 'min(740px, 92vh)',
-          maxWidth: 'none',
-          borderRadius: '12px',
+          height: '90vh',
+          borderRadius: '16px',
           overflow: 'hidden',
           display: 'flex',
           flexDirection: 'column',
         },
       }}
     >
-      {/* Header */}
       <Box
         sx={{
           px: 2.5,
@@ -570,12 +383,10 @@ export default function PreProcessModal() {
         </Box>
       </Box>
 
-      {/* Body */}
-      <Box sx={{ flex: 1, display: 'flex', minHeight: 0, overflow: 'hidden' }}>
-        {/* Source Tables */}
+      <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
         <Box
           sx={{
-            width: 270,
+            width: 300,
             flexShrink: 0,
             borderRight: '1px solid #e5e7eb',
             display: 'flex',
@@ -857,246 +668,26 @@ export default function PreProcessModal() {
           sx={{
             flex: 1,
             minWidth: 0,
+            minHeight: 0,
             display: 'flex',
-            flexDirection: 'column',
-            bgcolor: '#0b1220',
-            color: '#e5e7eb',
+            p: 3,
+            bgcolor: '#f8fafc',
+            overflow: 'hidden',
           }}
         >
-          <Box
-            sx={{
-              px: 2,
-              py: 1.25,
-              borderBottom: '1px solid #1f2937',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              gap: 1,
-            }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-              <FiberManualRecordIcon sx={{ fontSize: 10, color: '#22c55e' }} />
-              <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#fff' }}>
-                SQL Preview
-              </Typography>
-              {joinCount > 0 && (
-                <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>
-                  {joinCount} join{joinCount === 1 ? '' : 's'} from Step 1
-                </Typography>
-              )}
-            </Box>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-              {copyFeedback && (
-                <Typography sx={{ fontSize: '0.7rem', color: '#86efac', fontWeight: 600 }}>
-                  {copyFeedback}
-                </Typography>
-              )}
-              <Button
-                size="small"
-                startIcon={<ContentCopyRoundedIcon sx={{ fontSize: 14 }} />}
-                onClick={handleCopy}
-                disabled={!generatedSql}
-                sx={{
-                  color: '#cbd5e1',
-                  textTransform: 'none',
-                  fontSize: '0.74rem',
-                  fontWeight: 600,
-                  border: '1px solid #334155',
-                  borderRadius: '8px',
-                  px: 1.25,
-                  py: 0.25,
-                  '&:hover': { bgcolor: '#1f2937', borderColor: '#475569' },
-                  '&.Mui-disabled': { color: '#475569', borderColor: '#1f2937' },
-                }}
-              >
-                Copy
-              </Button>
-            </Box>
-          </Box>
-
-          {/* Expression Editor */}
-          <Box sx={{ px: 2, pt: 1.5 }}>
-            <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1, mb: 0.75 }}>
-              <Typography
-                sx={{
-                  fontSize: '0.7rem',
-                  fontWeight: 700,
-                  color: '#9ca3af',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                Expression
-              </Typography>
-              <Typography sx={{ fontSize: '0.7rem', color: '#6b7280' }}>
-                — type or click a column / function
-              </Typography>
-            </Box>
-
-            <Box
-              sx={{
-                display: 'flex',
-                borderRadius: '8px',
-                border: '1px solid #1f2937',
-                bgcolor: '#020617',
-                overflow: 'hidden',
-              }}
-            >
-              <Box
-                sx={{
-                  width: 32,
-                  flexShrink: 0,
-                  bgcolor: '#0b1220',
-                  borderRight: '1px solid #1f2937',
-                  py: 1.25,
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                  fontSize: '0.75rem',
-                  lineHeight: 1.6,
-                  color: '#475569',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                }}
-              >
-                {expressionLineNumbers.map((line) => (
-                  <Box key={line}>{line}</Box>
-                ))}
-              </Box>
-              <Box sx={{ position: 'relative', flex: 1, minWidth: 0 }}>
-                <Box
-                  ref={overlayRef}
-                  aria-hidden
-                  sx={{
-                    position: 'absolute',
-                    inset: 0,
-                    overflow: 'hidden',
-                    px: 1.5,
-                    py: 1.25,
-                    pointerEvents: 'none',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    fontSize: '0.82rem',
-                    lineHeight: 1.6,
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    color: '#e5e7eb',
-                  }}
-                >
-                  {expression ? <HighlightedSql text={expression} /> : null}
-                </Box>
-                <Box
-                  component="textarea"
-                  ref={editorRef}
-                  value={expression}
-                  onChange={(e) => setExpression(e.target.value)}
-                  onScroll={(e) => {
-                    if (overlayRef.current) {
-                      overlayRef.current.scrollTop = e.currentTarget.scrollTop;
-                      overlayRef.current.scrollLeft = e.currentTarget.scrollLeft;
-                    }
-                  }}
-                  placeholder={`-- Type or click a column from the left panel\n-- e.g. UPPER(a.NAME)   or   ROW_NUMBER() OVER(ORDER BY a.DATE_KEY)`}
-                  spellCheck={false}
-                  sx={{
-                    position: 'relative',
-                    width: '100%',
-                    minHeight: 120,
-                    resize: 'none',
-                    border: 'none',
-                    bgcolor: 'transparent',
-                    color: 'transparent',
-                    caretColor: '#e5e7eb',
-                    WebkitTextFillColor: 'transparent',
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    fontSize: '0.82rem',
-                    lineHeight: 1.6,
-                    px: 1.5,
-                    py: 1.25,
-                    outline: 'none',
-                    boxSizing: 'border-box',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    '&::placeholder': {
-                      color: '#475569',
-                      WebkitTextFillColor: '#475569',
-                    },
-                    '&::selection': {
-                      bgcolor: 'rgba(96, 165, 250, 0.35)',
-                      WebkitTextFillColor: 'transparent',
-                    },
-                  }}
-                />
-              </Box>
-            </Box>
-          </Box>
-
-          {/* Compiled SQL */}
-          <Box
-            sx={{
-              px: 2,
-              pt: 1.75,
-              pb: 2,
-              flex: 1,
-              minHeight: 0,
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 1,
-            }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-              <TerminalRoundedIcon sx={{ fontSize: 14, color: '#9ca3af' }} />
-              <Typography
-                sx={{
-                  fontSize: '0.7rem',
-                  fontWeight: 700,
-                  color: '#9ca3af',
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                }}
-              >
-                Compiled SQL
-              </Typography>
-            </Box>
-
-            <Box
-              sx={{
-                flex: 1,
-                minHeight: 0,
-                borderRadius: '8px',
-                bgcolor: 'transparent',
-                overflow: 'auto',
-              }}
-            >
-              {generatedSql ? (
-                <Box
-                  component="pre"
-                  sx={{
-                    m: 0,
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    fontSize: '0.82rem',
-                    color: '#cbd5e1',
-                    whiteSpace: 'pre-wrap',
-                    wordBreak: 'break-word',
-                    lineHeight: 1.65,
-                  }}
-                >
-                  <HighlightedSql text={generatedSql} />
-                </Box>
-              ) : (
-                <Typography
-                  sx={{
-                    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    fontSize: '0.78rem',
-                    color: '#475569',
-                    fontStyle: 'italic',
-                  }}
-                >
-                  -- Write an expression in the editor above
-                </Typography>
-              )}
-            </Box>
-          </Box>
+          <SqlEditor
+            value={expression}
+            onChange={setExpression}
+            title="SQL Preview"
+            subtitle={joinSubtitle}
+            placeholder={`-- Type or click a column from the left panel\n-- e.g. UPPER(a.NAME)   or   ROW_NUMBER() OVER(ORDER BY a.DATE_KEY)`}
+            showFunctionLibrary
+            showCopy
+            fillHeight
+            minHeight={SQL_EDITOR_PANEL_MIN_HEIGHT}
+            maxHeight="100%"
+            sx={{ width: '100%', flex: 1, minHeight: 0 }}
+          />
         </Box>
 
         {/* Function Library */}
@@ -1137,7 +728,7 @@ export default function PreProcessModal() {
                 borderRadius: '10px',
               }}
             >
-              {FUNCTION_TABS.map((tab) => {
+              {SQL_FUNCTION_CATEGORIES.map((tab) => {
                 const isActive = functionTab === tab.id;
                 return (
                   <Box
@@ -1180,12 +771,12 @@ export default function PreProcessModal() {
               borderBottom: '1px solid #f1f5f9',
             }}
           >
-            {QUICK_ACTIONS.map((action) => (
+            {SQL_QUICK_ACTIONS.map((action) => (
               <Chip
-                key={action}
-                label={action}
+                key={action.id}
+                label={action.label}
                 size="small"
-                onClick={() => insertText(action, action.includes('()'))}
+                onClick={() => insertText(action.snippet, action.wrapExisting ?? action.snippet.includes('()'))}
                 sx={{
                   height: 26,
                   borderRadius: '999px',
@@ -1215,7 +806,7 @@ export default function PreProcessModal() {
               gap: 0.5,
             }}
           >
-            {FUNCTION_LIBRARY[functionTab].map((fn) => (
+            {SQL_FUNCTIONS_BY_CATEGORY[functionTab].map((fn) => (
               <Chip
                 key={fn}
                 label={fn}

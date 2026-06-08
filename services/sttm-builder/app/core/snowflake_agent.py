@@ -32,9 +32,11 @@ class SnowflakeAgentClient:
         *,
         host: str | None = None,
         auth_mode: str = "oauth_bearer",
+        request_timeout: float | None = None,
     ) -> None:
         self._token = token
         self.model = model or os.getenv("SNOWFLAKE_AGENT_ORCHESTRATION_MODEL", self._DEFAULT_MODEL)
+        self._timeout = request_timeout or float(os.getenv("SNOWFLAKE_AGENT_TIMEOUT_SECONDS", "240"))
         resolved_host = (host or os.getenv("SNOWFLAKE_HOST", "")).strip()
         if not resolved_host:
             raise SnowflakeAgentError("SNOWFLAKE_HOST is not set for Cortex Agent requests.")
@@ -52,12 +54,14 @@ class SnowflakeAgentClient:
         agent: str | None = None,
         thread_id: str | None = None,
         parent_message_id: int | None = None,
+        request_timeout: float | None = None,
     ) -> tuple[str, str]:
         text, resolved_thread_id, _ = self.run_detailed(
             messages,
             agent=agent,
             thread_id=thread_id,
             parent_message_id=parent_message_id,
+            request_timeout=request_timeout,
         )
         return text, resolved_thread_id
 
@@ -87,7 +91,7 @@ class SnowflakeAgentClient:
         endpoint = self._build_endpoint(agent)
 
         try:
-            with httpx.Client(timeout=240.0) as client:
+            with httpx.Client(timeout=self._timeout) as client:
                 with client.stream(
                     "POST",
                     f"{self._base_url}{endpoint}",
@@ -112,6 +116,7 @@ class SnowflakeAgentClient:
         agent: str | None = None,
         thread_id: str | None = None,
         parent_message_id: int | None = None,
+        request_timeout: float | None = None,
     ) -> tuple[str, str, dict[str, Any] | None]:
         """
         Send *messages* to the Cortex Agent and return
@@ -142,7 +147,7 @@ class SnowflakeAgentClient:
         endpoint = self._build_endpoint(agent)
 
         try:
-            with httpx.Client(timeout=240.0) as client:
+            with httpx.Client(timeout=request_timeout or self._timeout) as client:
                 response = client.post(
                     f"{self._base_url}{endpoint}",
                     headers=headers,

@@ -52,7 +52,7 @@ class DerivedSourceService:
 
     @property
     def _table_name(self) -> str:
-        parts = self._settings.snowflake_derived_sources_table.split(".")
+        parts = self._settings.qualify_metadata_object_name(self._settings.snowflake_derived_sources_table).split(".")
         if len(parts) != 3:
             raise AppValidationError(
                 "SNOWFLAKE_DERIVED_SOURCES_TABLE must be a fully-qualified DATABASE.SCHEMA.TABLE name."
@@ -314,6 +314,31 @@ class DerivedSourceService:
             created_by=current_user,
             is_active=True,
         )
+
+    def update_semantic_metadata(
+        self,
+        *,
+        source_ids: list[str],
+        semantic_bundle_id: str | None,
+        semantic_view_name: str | None,
+        semantic_level: str | None,
+    ) -> None:
+        if not source_ids:
+            return
+        self.ensure_table_exists()
+        ids_sql = ", ".join(self._quote_literal(source_id) for source_id in source_ids if source_id)
+        if not ids_sql:
+            return
+        self._session.sql(
+            f"""
+            UPDATE {self._table_name}
+            SET SEMANTIC_BUNDLE_ID = {self._quote_literal(semantic_bundle_id or "")},
+                SEMANTIC_VIEW_NAME = {self._quote_literal(semantic_view_name or "")},
+                SEMANTIC_LEVEL = {self._quote_literal(semantic_level or "")},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE DERIVED_SOURCE_ID IN ({ids_sql})
+            """
+        ).collect()
 
     def _current_user(self) -> str:
         try:

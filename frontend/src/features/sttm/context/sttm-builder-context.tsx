@@ -1,8 +1,12 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import { usePathname } from "next/navigation";
+import { dbService } from "@/services/dbService";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import type { RootState } from "@/store/store";
 import {
+  evaluateAssistantSignals,
   fetchDatabases,
   fetchSchemas,
   fetchTables,
@@ -11,6 +15,8 @@ import {
   fetchRelationships,
   runAutoMap as runAutoMapThunk,
   sendChatMessage as sendChatMessageThunk,
+  submitChatFeedback as submitChatFeedbackThunk,
+  respondToAssistantSignal as respondToAssistantSignalThunk,
   toggleSource as toggleSourceAction,
   selectTarget as selectTargetAction,
   clearSources as clearSourcesAction,
@@ -36,6 +42,9 @@ import {
   bulkSetDirect as bulkSetDirectAction,
   setPreProcessModalOpen as setPreProcessModalOpenAction,
   setMappingSql as setMappingSqlAction,
+  setMappingPreviewSql as setMappingPreviewSqlAction,
+  setMappingSqlVariant as setMappingSqlVariantAction,
+  updateAssistantPreferences as updateAssistantPreferencesThunk,
 } from "@/features/sttm/store/sttm-builder-slice";
 import type {
   DerivedSource,
@@ -51,14 +60,174 @@ export function SttmBuilderProvider({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.sttmBuilder);
+  const lastAssistantSignalSignature = useRef<string | null>(null);
+  const signalEvaluationTimerRef = useRef<number | null>(null);
+  const signalEvaluationInFlightRef = useRef(false);
+  const queuedAssistantSignalSignatureRef = useRef<string | null>(null);
+
+  const currentAssistantPage = useMemo(() => {
+    if (pathname.includes("/summary")) return "summary";
+    if (pathname.includes("/mapping")) return "mapping";
+    return "builder";
+  }, [pathname]);
+
+  const currentAssistantSurface = currentAssistantPage === "mapping" ? "MAPPING" : "SOURCE_SELECTION";
 
   // Load databases on mount
   useEffect(() => {
     dispatch(fetchDatabases());
     dispatch(fetchDerivedSources());
   }, [dispatch]);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.removeItem("sttm-builder-session-v1");
+      window.sessionStorage.removeItem("sttm-builder-session-v2");
+    } catch (error) {
+      console.warn("Unable to clear STTM builder draft session.", error);
+    }
+  }, []);
+
+  const assistantSignalSignature = useMemo(() => {
+    const selectedSources = state.sources
+      .filter((table) => table.isSelected)
+      .map((table) => table.qualifiedName)
+      .sort();
+    const selectedDerived = state.derivedSources
+      .filter((source) => source.isSelected)
+      .map((source) => source.id)
+      .sort();
+    const selectedTarget = state.targets.find((table) => table.isSelected)?.qualifiedName ?? null;
+    const relationshipSignature = state.relationships
+      .map((join) =>
+        [
+          join.leftTableId ?? "",
+          join.rightTableId ?? "",
+          join.joinType ?? "INNER",
+          (join.conditions ?? [])
+            .map((condition) => `${condition.leftColumn ?? ""}${condition.operator ?? "="}${condition.rightColumn ?? ""}`)
+            .join("&"),
+        ].join("|"),
+      )
+      .sort();
+
+    return JSON.stringify({
+      page: currentAssistantPage,
+      surface: currentAssistantSurface,
+      selectedSources,
+      selectedDerived,
+      selectedTarget,
+      drivingTableId: state.drivingTableId,
+      semanticBundleId: state.semanticBundleId,
+      semanticViewName: state.semanticViewName,
+      relationshipSignature,
+      mappedCount: state.mappings.filter((item) => item.status === "MAPPED").length,
+      unmappedCount: state.mappings.filter((item) => item.status !== "MAPPED").length,
+      selectedMappingCount: state.selectedMappingIds.length,
+    });
+  }, [
+    state.sources,
+    state.derivedSources,
+    state.targets,
+    state.drivingTableId,
+    state.semanticBundleId,
+    state.semanticViewName,
+    state.relationships,
+    state.mappings,
+    state.selectedMappingIds,
+    currentAssistantPage,
+    currentAssistantSurface,
+  ]);
+
+  const buildAssistantActivityType = () => {
+    if (currentAssistantPage === "mapping") {
+      return state.relationships.length > 0 ? "mapping_join_ready" : "mapping_context_changed";
+    }
+    if (state.relationships.length > 0) {
+      return "relationship_changed";
+    }
+    if (state.derivedSources.some((source) => source.isSelected)) {
+      return "derived_source_selected";
+    }
+    return "selection_changed";
+  };
+
+  const runAssistantSignalEvaluation = (signature: string) => {
+    signalEvaluationInFlightRef.current = true;
+    void dispatch(
+      evaluateAssistantSignals({
+        page: currentAssistantPage,
+        surface: currentAssistantSurface,
+        activityType: buildAssistantActivityType(),
+      }),
+    ).finally(() => {
+      signalEvaluationInFlightRef.current = false;
+      const queuedSignature = queuedAssistantSignalSignatureRef.current;
+      if (!queuedSignature || queuedSignature === signature) {
+        queuedAssistantSignalSignatureRef.current = null;
+        return;
+      }
+      queuedAssistantSignalSignatureRef.current = null;
+      lastAssistantSignalSignature.current = queuedSignature;
+      runAssistantSignalEvaluation(queuedSignature);
+    });
+  };
+
+  useEffect(() => {
+    if (!state.loadState.initial || state.loadState.initial === "loading") {
+      return;
+    }
+    if (currentAssistantPage === "mapping" && state.loadState.attributes === "loading") {
+      return;
+    }
+    if (!state.assistantPreferences.feedback_enabled && !state.assistantPreferences.recommendations_enabled) {
+      return;
+    }
+    const hasSignalContext =
+      state.sources.some((table) => table.isSelected) ||
+      state.derivedSources.some((source) => source.isSelected) ||
+      state.relationships.length > 0 ||
+      !!state.targets.find((table) => table.isSelected) ||
+      !!state.targetAttributeGroup ||
+      state.selectedMappingIds.length > 0 ||
+      state.mappings.length > 0;
+    if (!hasSignalContext) {
+      return;
+    }
+    if (assistantSignalSignature === lastAssistantSignalSignature.current) {
+      return;
+    }
+    lastAssistantSignalSignature.current = assistantSignalSignature;
+    if (signalEvaluationTimerRef.current !== null) {
+      window.clearTimeout(signalEvaluationTimerRef.current);
+    }
+    signalEvaluationTimerRef.current = window.setTimeout(() => {
+      if (signalEvaluationInFlightRef.current) {
+        queuedAssistantSignalSignatureRef.current = assistantSignalSignature;
+        signalEvaluationTimerRef.current = null;
+        return;
+      }
+      runAssistantSignalEvaluation(assistantSignalSignature);
+      signalEvaluationTimerRef.current = null;
+    }, 900);
+    return () => {
+      if (signalEvaluationTimerRef.current !== null) {
+        window.clearTimeout(signalEvaluationTimerRef.current);
+        signalEvaluationTimerRef.current = null;
+      }
+    };
+  }, [
+    assistantSignalSignature,
+    dispatch,
+    state.assistantPreferences.feedback_enabled,
+    state.assistantPreferences.recommendations_enabled,
+    state.loadState.attributes,
+    state.loadState.initial,
+    currentAssistantPage,
+  ]);
 
   const value = useMemo<ContextValue>(() => {
     // Compose fullData from the two branches in Redux
@@ -85,10 +254,16 @@ export function SttmBuilderProvider({
       mappingSuggestions: state.mappingSuggestions,
       mappingLoading: state.mappingLoading,
       autoMapStatusMessage: state.autoMapStatusMessage,
+      autoMapProcessingIds: state.autoMapProcessingIds,
 
       // Chat
       chatMessages: state.chatMessages,
       chatLoading: state.chatLoading,
+      assistantSignals: state.assistantSignals,
+      assistantInferences: state.assistantInferences,
+      assistantPreferences: state.assistantPreferences,
+      assistantUnreadCount: state.assistantUnreadCount,
+      mappingIntent: state.mappingIntent,
       semanticBundleId: state.semanticBundleId,
       semanticBundleLabel: state.semanticBundleLabel,
       semanticLevel: state.semanticLevel,
@@ -158,6 +333,98 @@ export function SttmBuilderProvider({
       sendChatMessage: (message: string) => {
         dispatch(sendChatMessageThunk(message));
       },
+      submitChatFeedback: ({ messageId, rating, comment }) => {
+        const targetMessage = state.chatMessages.find((item) => item.id === messageId);
+        dispatch(
+          submitChatFeedbackThunk({
+            messageId,
+            rating,
+            comment: comment ?? null,
+            requestId: targetMessage?.requestId ?? null,
+            conversationId: targetMessage?.conversationId ?? state.agentThreadId,
+          }),
+        );
+      },
+      refreshAssistantSignals: () => {
+        dispatch(
+          evaluateAssistantSignals({
+            page: currentAssistantPage,
+            surface: currentAssistantSurface,
+            activityType: buildAssistantActivityType(),
+          }),
+        );
+      },
+      requestSemanticRefresh: async () => {
+        const selectedSourceTables = state.sources
+          .filter((table) => table.isSelected)
+          .map((table) => ({ database: table.qualifiedName.split(".", 3)[0], schema: table.qualifiedName.split(".", 3)[1], table: table.qualifiedName.split(".", 3)[2] }));
+        const selectedDerivedSourceIds = state.derivedSources
+          .filter((source) => source.isSelected)
+          .map((source) => source.id);
+        if (!selectedSourceTables.length && !selectedDerivedSourceIds.length) {
+          return;
+        }
+        const selectedTargetTable = state.targets.find((table) => table.isSelected);
+        void dbService.refreshSemanticContext({
+          selected_source_tables: selectedSourceTables,
+          selected_derived_sources: selectedDerivedSourceIds,
+          target_table: selectedTargetTable
+            ? { database: selectedTargetTable.qualifiedName.split(".", 3)[0], schema: selectedTargetTable.qualifiedName.split(".", 3)[1], table: selectedTargetTable.qualifiedName.split(".", 3)[2] }
+            : null,
+          relationships: state.relationships
+            .filter((join) => join.leftTableId && join.rightTableId && join.conditions?.length)
+            .map((join) => ({
+              left_table: { database: (join.leftTableId as string).split(".", 3)[0], schema: (join.leftTableId as string).split(".", 3)[1], table: (join.leftTableId as string).split(".", 3)[2] },
+              right_table: { database: (join.rightTableId as string).split(".", 3)[0], schema: (join.rightTableId as string).split(".", 3)[1], table: (join.rightTableId as string).split(".", 3)[2] },
+              constraint_name: join.constraintName ?? null,
+              join_type: join.joinType ?? "INNER",
+              source: join.source ?? "USER_DEFINED",
+              locked: join.locked ?? false,
+              conditions: (join.conditions ?? []).map((condition) => ({
+                left_column: condition.leftColumn,
+                right_column: condition.rightColumn,
+                operator: condition.operator ?? "=",
+              })),
+          })),
+          requested_level: selectedTargetTable ? "L3_MAPPING_ENRICHED" : "L2_ANALYST_READY",
+          force: false,
+        })
+          .then((refresh) => {
+            dispatch(applySemanticRefreshAction(refresh));
+            dispatch(
+              evaluateAssistantSignals({
+                page: currentAssistantPage,
+                surface: currentAssistantSurface,
+                activityType: "semantic_context_refreshed",
+              }),
+            );
+          })
+          .catch((error) => {
+            console.warn("Semantic refresh request did not complete in the background.", error);
+          });
+      },
+      respondToAssistantSignal: ({ signalId, status, optionSelected, rating, comment }) => {
+        dispatch(
+          respondToAssistantSignalThunk({
+            signalId,
+            status,
+            optionSelected: optionSelected ?? null,
+            rating: rating ?? null,
+            comment: comment ?? null,
+          }),
+        );
+      },
+      updateAssistantPreferences: (settings) => {
+        dispatch(updateAssistantPreferencesThunk(settings)).then(() => {
+          dispatch(
+            evaluateAssistantSignals({
+              page: currentAssistantPage,
+              surface: currentAssistantSurface,
+              activityType: "settings_changed",
+            }),
+          );
+        });
+      },
       openPendingDerivedSourceDraft: () => {
         dispatch(openPendingDerivedSourceDraftAction());
       },
@@ -214,6 +481,8 @@ export function SttmBuilderProvider({
       mappings: state.mappings,
       selectedMappingIds: state.selectedMappingIds,
       mappingSql: state.mappingSql,
+      mappingPreviewSql: state.mappingPreviewSql,
+      mappingSqlVariant: state.mappingSqlVariant,
       isPreProcessModalOpen: state.isPreProcessModalOpen,
       activeMappingId: state.activeMappingId,
       pendingAiMappingReviews: state.pendingAiMappingReviews,
@@ -228,6 +497,8 @@ export function SttmBuilderProvider({
       bulkSetDirect: (ids) => dispatch(bulkSetDirectAction({ ids })),
       setPreProcessModalOpen: (open, mappingId) => dispatch(setPreProcessModalOpenAction({ open, mappingId })),
       setMappingSql: (sql) => dispatch(setMappingSqlAction({ sql })),
+      setMappingPreviewSql: (sql) => dispatch(setMappingPreviewSqlAction({ sql })),
+      setMappingSqlVariant: (variant) => dispatch(setMappingSqlVariantAction({ variant })),
     };
   }, [state, dispatch]);
 

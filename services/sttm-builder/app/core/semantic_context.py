@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Iterable
 from datetime import datetime, timezone
 from typing import Any
@@ -84,13 +85,26 @@ class SemanticContextService:
             target_table=request.target_table,
             relationships=normalized_relationships,
         )
-        bundle_id = f"sem_{bundle_hash[:16]}"
+        selection_key = self._bundle_selection_key(
+            selected_source_tables=selected_source_tables,
+            selected_derived_sources=selected_derived_ids,
+            target_table=request.target_table,
+        )
+        stable_bundle_id = f"sem_{hashlib.sha256(selection_key.encode('utf-8')).hexdigest()[:16]}"
         bundle_label = self._bundle_label(
             selected_source_tables=selected_source_tables,
             derived_records=[],
             target_table=request.target_table,
         )
-        existing = self.get_bundle(bundle_id=bundle_id) if storage_available else None
+        existing = (
+            self.get_bundle(bundle_id=stable_bundle_id)
+            or self._find_bundle_for_selection(
+                selected_source_tables=selected_source_tables,
+                derived_source_ids=selected_derived_ids,
+                target_table=request.target_table,
+            )
+        ) if storage_available else None
+        bundle_id = str(existing.get("bundle_id") or stable_bundle_id) if existing else stable_bundle_id
 
         derived_records = self._derived_source_service.get_sources_by_ids(selected_derived_ids)
         bundle_label = self._bundle_label(
@@ -135,7 +149,7 @@ class SemanticContextService:
             SemanticLevel.L3_MAPPING_ENRICHED,
         }
         ):
-            semantic_refresh_tables = self._analyst_source_tables(selected_source_tables)
+            semantic_refresh_tables = self._analyst_source_tables(selected_source_tables, derived_records)
             if agent_client is not None and semantic_refresh_tables:
                 try:
                     self._semantic_model_service.ensure_tables(
@@ -179,12 +193,17 @@ class SemanticContextService:
             SemanticLevel.L2_ANALYST_READY,
             SemanticLevel.L3_MAPPING_ENRICHED,
         }:
-            semantic_view_name = self._semantic_view_name(bundle_id)
+            semantic_view_name = self._semantic_view_name(
+                bundle_id=bundle_id,
+                selected_source_tables=selected_source_tables,
+                derived_records=derived_records,
+                target_table=request.target_table,
+            )
             if existing_view_is_usable:
                 semantic_view_name = existing["semantic_view_name"]
             else:
                 try:
-                    analyst_source_tables = self._analyst_source_tables(selected_source_tables)
+                    analyst_source_tables = self._analyst_source_tables(selected_source_tables, derived_records)
                     if not analyst_source_tables:
                         raise ValueError("analyst-ready promotion requires at least one raw source table")
                     semantic_view_name, analyst_tool_name = self._promote_semantic_view(
@@ -202,24 +221,16 @@ class SemanticContextService:
                     semantic_view_name = existing["semantic_view_name"] if existing else None
                     analyst_tool_name = existing.get("analyst_tool_name") if existing else None
                     notes.append(f"semantic view promotion failed: {exc}")
-        should_sync_analyst_tool = bool(
-            semantic_view_name
-            and (
-                not promoted
-                and (
-                    request.force
-                    or not analyst_tool_name
-                    or not existing
-                    or str(existing.get("semantic_view_name") or "") != semantic_view_name
-                )
-            )
-        )
+        should_sync_analyst_tool = bool(semantic_view_name)
 
         if should_sync_analyst_tool and semantic_view_name:
             try:
                 synced_tool_name = self._sync_builder_agent_analyst_tool(
                     bundle_id=bundle_id,
                     semantic_view_name=semantic_view_name,
+                    selected_source_tables=selected_source_tables,
+                    derived_records=derived_records,
+                    target_table=request.target_table,
                 )
                 analyst_tool_name = synced_tool_name or analyst_tool_name
                 if storage_available and analyst_tool_name:
@@ -268,6 +279,7 @@ class SemanticContextService:
             self._upsert_bundle(
                 bundle_id=bundle_id,
                 bundle_hash=bundle_hash,
+                selection_key=selection_key,
                 bundle_label=bundle_label,
                 target_table=request.target_table,
                 source_tables=selected_source_tables,
@@ -280,6 +292,26 @@ class SemanticContextService:
                 stale_reason="; ".join(notes) or None,
                 datahub_context=datahub_context,
             )
+            if selected_derived_ids:
+                try:
+                    self._derived_source_service.update_semantic_metadata(
+                        source_ids=selected_derived_ids,
+                        semantic_bundle_id=bundle_id,
+                        semantic_view_name=semantic_view_name,
+                        semantic_level=achieved_level.value,
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning("Failed to update derived-source semantic metadata for %s: %s", bundle_id, exc)
+                    notes.append("derived-source semantic metadata update failed")
+            try:
+                self._delete_duplicate_bundles_for_selection(
+                    bundle_id=bundle_id,
+                    selected_source_tables=selected_source_tables,
+                    derived_source_ids=selected_derived_ids,
+                    target_table=request.target_table,
+                )
+            except Exception as exc:  # pragma: no cover - best effort
+                logger.warning("Failed to clean duplicate semantic bundles for %s: %s", bundle_id, exc)
 
         return SemanticContextBundleResponse(
             bundle_id=bundle_id,
@@ -302,8 +334,9 @@ class SemanticContextService:
         *,
         bundle_id: str | None = None,
         bundle_hash: str | None = None,
+        selection_key: str | None = None,
     ) -> dict[str, Any] | None:
-        if not bundle_id and not bundle_hash:
+        if not bundle_id and not bundle_hash and not selection_key:
             return None
         try:
             self.ensure_storage_exists()
@@ -314,6 +347,8 @@ class SemanticContextService:
             predicates.append(f"SEMANTIC_BUNDLE_ID = {_quote_literal(bundle_id)}")
         if bundle_hash:
             predicates.append(f"BUNDLE_HASH = {_quote_literal(bundle_hash)}")
+        if selection_key:
+            predicates.append(f"SELECTION_KEY = {_quote_literal(selection_key)}")
         try:
             rows = self._session.sql(
                 f"""
@@ -337,6 +372,7 @@ class SemanticContextService:
                 CREATE TABLE IF NOT EXISTS {self._bundle_table} (
                     SEMANTIC_BUNDLE_ID STRING,
                     BUNDLE_HASH STRING,
+                    SELECTION_KEY STRING,
                     BUNDLE_LABEL STRING,
                     TARGET_TABLE VARIANT,
                     SOURCE_TABLES VARIANT,
@@ -353,6 +389,9 @@ class SemanticContextService:
                     UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
                 )
                 """
+            ).collect()
+            self._session.sql(
+                f"ALTER TABLE {self._bundle_table} ADD COLUMN IF NOT EXISTS SELECTION_KEY STRING"
             ).collect()
             self._session.sql(
                 f"ALTER TABLE {self._bundle_table} ADD COLUMN IF NOT EXISTS BUNDLE_LABEL STRING"
@@ -554,6 +593,9 @@ class SemanticContextService:
         analyst_tool_name = self._sync_builder_agent_analyst_tool(
             bundle_id=bundle_id,
             semantic_view_name=semantic_view_name,
+            selected_source_tables=selected_source_tables,
+            derived_records=derived_records,
+            target_table=target_table,
         )
         self._persist_semantic_view_metadata(
             bundle_id=bundle_id,
@@ -577,9 +619,9 @@ class SemanticContextService:
         target_table: TableRef | None,
         semantic_level: SemanticLevel,
     ) -> str:
-        analyst_source_tables = self._analyst_source_tables(selected_source_tables)
+        analyst_source_tables = self._analyst_source_tables(selected_source_tables, derived_records)
         if not analyst_source_tables:
-            raise ValueError("semantic view promotion requires at least one raw source table")
+            raise ValueError("semantic view promotion requires at least one raw or derived-backed source table")
         table_records = self._semantic_model_service.get_table_records(self._session, analyst_source_tables)
         table_records_by_name = {
             f"{record['database']}.{record['schema_name']}.{record['table_name']}": record
@@ -656,6 +698,18 @@ class SemanticContextService:
                     }
                     for item in relationship_columns
                 ]
+                left_unique, right_unique = right_unique, left_unique
+                left_cols = {item["left_column"] for item in relationship_columns}
+                right_cols = {item["right_column"] for item in relationship_columns}
+
+            if right_cols and not right_cols.issubset(right_unique):
+                logger.info(
+                    "Skipping semantic-view relationship %s -> %s because referenced columns are not unique: %s",
+                    left_ref.qualified_name,
+                    right_ref.qualified_name,
+                    sorted(right_cols),
+                )
+                continue
             yaml_relationships.append(
                 {
                     "name": f"rel_{index}_{left_name.lower()}_{right_name.lower()}",
@@ -698,20 +752,24 @@ class SemanticContextService:
         time_dimensions: list[dict[str, Any]] = []
         facts: list[dict[str, Any]] = []
         for attribute in attributes:
+            semantic_role = str(attribute.get("semantic_role") or "").strip().lower()
+            entity_description = _semantic_view_entity_description(attribute)
             entity = {
                 "name": attribute["name"],
-                "description": attribute.get("description") or attribute.get("summary") or attribute["name"],
+                "description": entity_description,
                 "expr": attribute["name"],
                 "data_type": attribute["data_type"],
             }
             if attribute.get("is_primary_key"):
                 entity["unique"] = True
-            if _is_time_type(attribute["data_type"]):
+            if semantic_role == "time_dimension" or _is_time_type(attribute["data_type"]):
                 time_dimensions.append(entity)
-            elif _is_numeric_type(attribute["data_type"]) and not (
-                attribute.get("is_primary_key")
-                or attribute.get("is_foreign_key")
-                or _looks_like_identifier(attribute["name"])
+            elif semantic_role == "metric" or (
+                _is_numeric_type(attribute["data_type"]) and not (
+                    attribute.get("is_primary_key")
+                    or attribute.get("is_foreign_key")
+                    or _looks_like_identifier(attribute["name"])
+                )
             ):
                 facts.append(entity)
             else:
@@ -870,6 +928,9 @@ class SemanticContextService:
         *,
         bundle_id: str,
         semantic_view_name: str,
+        selected_source_tables: list[TableRef],
+        derived_records: list[Any],
+        target_table: TableRef | None,
     ) -> str:
         agent_name = self._settings.resolved_sttm_builder_agent
         rows = self._session.sql(f"DESCRIBE AGENT {agent_name}").collect()
@@ -894,6 +955,46 @@ class SemanticContextService:
         if not isinstance(tool_resources, dict):
             raise ValueError("Agent spec tool_resources section is not a mapping")
 
+        desired_tool_name = _analyst_tool_name(
+            selected_source_tables=selected_source_tables,
+            derived_records=derived_records,
+            target_table=target_table,
+            bundle_id=bundle_id,
+        )
+        desired_tool_prefix = desired_tool_name.rsplit("__", 1)[0]
+
+        removable_tool_names: set[str] = set()
+        for tool_name, resource in list(tool_resources.items()):
+            normalized_tool_name = str(tool_name)
+            if not normalized_tool_name.startswith("ANALYST_STTM_"):
+                continue
+            if normalized_tool_name == desired_tool_name:
+                continue
+            if normalized_tool_name.startswith(desired_tool_prefix):
+                removable_tool_names.add(normalized_tool_name)
+                continue
+            resource_view = ""
+            if isinstance(resource, dict):
+                resource_view = str(resource.get("semantic_view") or "").strip()
+            if not resource_view or not self._semantic_view_exists(resource_view):
+                removable_tool_names.add(normalized_tool_name)
+                continue
+            removable_tool_names.add(normalized_tool_name)
+
+        if removable_tool_names:
+            for tool_name in removable_tool_names:
+                tool_resources.pop(tool_name, None)
+            tools = [
+                tool
+                for tool in tools
+                if not (
+                    isinstance(tool, dict)
+                    and isinstance(tool.get("tool_spec"), dict)
+                    and str(tool["tool_spec"].get("name") or "") in removable_tool_names
+                )
+            ]
+            spec["tools"] = tools
+
         existing_tool_name = None
         for tool_name, resource in tool_resources.items():
             if not isinstance(resource, dict):
@@ -901,6 +1002,21 @@ class SemanticContextService:
             if str(resource.get("semantic_view") or "") == semantic_view_name:
                 existing_tool_name = str(tool_name)
                 break
+
+        if existing_tool_name:
+            if existing_tool_name != desired_tool_name:
+                tool_resources.pop(existing_tool_name, None)
+                tools = [
+                    tool
+                    for tool in tools
+                    if not (
+                        isinstance(tool, dict)
+                        and isinstance(tool.get("tool_spec"), dict)
+                        and str(tool["tool_spec"].get("name") or "") == existing_tool_name
+                    )
+                ]
+                spec["tools"] = tools
+                existing_tool_name = None
 
         if existing_tool_name:
             tool_present = any(
@@ -927,12 +1043,11 @@ class SemanticContextService:
             self._replace_agent_from_spec(agent_name=agent_name, profile=str(profile), spec=spec)
             return existing_tool_name
 
-        tool_name = f"ANALYST_{bundle_id.upper()}"
         tools.append(
             {
                 "tool_spec": {
                     "type": "cortex_analyst_text_to_sql",
-                    "name": tool_name,
+                    "name": desired_tool_name,
                     "description": (
                         f"Uses Cortex Analyst over semantic view {semantic_view_name} "
                         f"for analytical questions on {self._bundle_label_from_id(bundle_id)}."
@@ -946,9 +1061,19 @@ class SemanticContextService:
                 "type": "warehouse",
                 "warehouse": self._settings.snowflake_warehouse,
             }
-        tool_resources[tool_name] = resource
+        tool_resources[desired_tool_name] = resource
         self._replace_agent_from_spec(agent_name=agent_name, profile=str(profile), spec=spec)
-        return tool_name
+        return desired_tool_name
+
+    def _semantic_view_exists(self, semantic_view_name: str) -> bool:
+        normalized = str(semantic_view_name or "").strip()
+        if not normalized:
+            return False
+        try:
+            self._session.sql(f"DESCRIBE SEMANTIC VIEW {normalized}").collect()
+        except Exception:
+            return False
+        return True
 
     def _replace_agent_from_spec(
         self,
@@ -988,6 +1113,11 @@ class SemanticContextService:
                         "data_type": str(item.get("data_type") or "VARCHAR"),
                         "description": item.get("description") or item.get("summary"),
                         "summary": item.get("summary"),
+                        "business_meaning": item.get("business_meaning"),
+                        "semantic_role": item.get("semantic_role"),
+                        "default_aggregation": item.get("default_aggregation"),
+                        "constraints": item.get("constraints") or [],
+                        "semantic_notes": item.get("semantic_notes") or [],
                         "is_primary_key": _constraints_include(item.get("constraints"), "PRIMARY_KEY"),
                         "is_foreign_key": _has_foreign_key(item.get("constraints")),
                     }
@@ -1002,6 +1132,11 @@ class SemanticContextService:
                     "data_type": column.data_type,
                     "description": column.name,
                     "summary": column.name,
+                    "business_meaning": None,
+                    "semantic_role": None,
+                    "default_aggregation": None,
+                    "constraints": [],
+                    "semantic_notes": [],
                     "is_primary_key": column.is_primary_key,
                     "is_foreign_key": False,
                 }
@@ -1015,6 +1150,11 @@ class SemanticContextService:
                 "data_type": column.data_type,
                 "description": column.column_name,
                 "summary": column.column_name,
+                "business_meaning": None,
+                "semantic_role": None,
+                "default_aggregation": None,
+                "constraints": [],
+                "semantic_notes": [],
                 "is_primary_key": column.is_primary_key,
                 "is_foreign_key": column.is_foreign_key,
             }
@@ -1053,11 +1193,127 @@ class SemanticContextService:
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
+    def _bundle_selection_key(
+        self,
+        *,
+        selected_source_tables: Iterable[TableRef],
+        selected_derived_sources: Iterable[str],
+        target_table: TableRef | None,
+    ) -> str:
+        payload = {
+            "source_tables": sorted(table.qualified_name for table in selected_source_tables),
+            "selected_derived_sources": sorted(selected_derived_sources),
+            "target_table": target_table.qualified_name if target_table else None,
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    def _find_bundle_for_selection(
+        self,
+        *,
+        selected_source_tables: list[TableRef],
+        derived_source_ids: list[str],
+        target_table: TableRef | None,
+    ) -> dict[str, Any] | None:
+        expected_sources = sorted(table.qualified_name for table in selected_source_tables)
+        expected_derived = sorted(derived_source_ids)
+        expected_target = target_table.qualified_name if target_table else None
+        try:
+            rows = self._session.sql(
+                f"""
+                SELECT *
+                FROM {self._bundle_table}
+                ORDER BY LAST_GENERATED_AT DESC
+                LIMIT 250
+                """
+            ).collect()
+        except Exception:
+            return None
+        for row in rows:
+            data = self._bundle_row_to_dict(row.as_dict())
+            actual_sources = sorted(
+                f"{item.get('database')}.{item.get('schema')}.{item.get('table')}"
+                for item in (data.get("source_tables") or [])
+                if isinstance(item, dict) and item.get("database") and item.get("schema") and item.get("table")
+            )
+            actual_target = None
+            target_payload = data.get("target_table")
+            if (
+                isinstance(target_payload, dict)
+                and target_payload.get("database")
+                and target_payload.get("schema")
+                and target_payload.get("table")
+            ):
+                actual_target = (
+                    f"{target_payload.get('database')}.{target_payload.get('schema')}.{target_payload.get('table')}"
+                )
+            actual_derived = sorted(str(value) for value in (data.get("derived_source_ids") or []))
+            if (
+                actual_sources == expected_sources
+                and actual_derived == expected_derived
+                and actual_target == expected_target
+            ):
+                return data
+        return None
+
+    def _delete_duplicate_bundles_for_selection(
+        self,
+        *,
+        bundle_id: str,
+        selected_source_tables: list[TableRef],
+        derived_source_ids: list[str],
+        target_table: TableRef | None,
+    ) -> None:
+        expected_sources = sorted(table.qualified_name for table in selected_source_tables)
+        expected_derived = sorted(derived_source_ids)
+        expected_target = target_table.qualified_name if target_table else None
+        rows = self._session.sql(
+            f"""
+            SELECT *
+            FROM {self._bundle_table}
+            ORDER BY LAST_GENERATED_AT DESC
+            LIMIT 250
+            """
+        ).collect()
+        duplicate_ids: list[str] = []
+        for row in rows:
+            data = self._bundle_row_to_dict(row.as_dict())
+            row_bundle_id = str(data.get("bundle_id") or "")
+            if not row_bundle_id or row_bundle_id == bundle_id:
+                continue
+            actual_sources = sorted(
+                f"{item.get('database')}.{item.get('schema')}.{item.get('table')}"
+                for item in (data.get("source_tables") or [])
+                if isinstance(item, dict) and item.get("database") and item.get("schema") and item.get("table")
+            )
+            actual_target = None
+            target_payload = data.get("target_table")
+            if (
+                isinstance(target_payload, dict)
+                and target_payload.get("database")
+                and target_payload.get("schema")
+                and target_payload.get("table")
+            ):
+                actual_target = (
+                    f"{target_payload.get('database')}.{target_payload.get('schema')}.{target_payload.get('table')}"
+                )
+            actual_derived = sorted(str(value) for value in (data.get("derived_source_ids") or []))
+            if (
+                actual_sources == expected_sources
+                and actual_derived == expected_derived
+                and actual_target == expected_target
+            ):
+                duplicate_ids.append(row_bundle_id)
+        for duplicate_id in duplicate_ids:
+            self._session.sql(
+                f"DELETE FROM {self._bundle_table} WHERE SEMANTIC_BUNDLE_ID = {_quote_literal(duplicate_id)}"
+            ).collect()
+
     def _upsert_bundle(
         self,
         *,
         bundle_id: str,
         bundle_hash: str,
+        selection_key: str,
         bundle_label: str,
         target_table: TableRef | None,
         source_tables: list[TableRef],
@@ -1078,6 +1334,7 @@ class SemanticContextService:
               SELECT
                 {_quote_literal(bundle_id)} AS SEMANTIC_BUNDLE_ID,
                 {_quote_literal(bundle_hash)} AS BUNDLE_HASH,
+                {_quote_literal(selection_key)} AS SELECTION_KEY,
                 {_quote_literal(bundle_label)} AS BUNDLE_LABEL,
                 PARSE_JSON({_json_literal(target_table.model_dump(mode="json") if target_table else None)}) AS TARGET_TABLE,
                 PARSE_JSON({_json_literal([table.model_dump(mode="json") for table in source_tables])}) AS SOURCE_TABLES,
@@ -1093,6 +1350,7 @@ class SemanticContextService:
             ON target.SEMANTIC_BUNDLE_ID = source.SEMANTIC_BUNDLE_ID
             WHEN MATCHED THEN UPDATE SET
               BUNDLE_HASH = source.BUNDLE_HASH,
+              SELECTION_KEY = source.SELECTION_KEY,
               BUNDLE_LABEL = source.BUNDLE_LABEL,
               TARGET_TABLE = source.TARGET_TABLE,
               SOURCE_TABLES = source.SOURCE_TABLES,
@@ -1110,6 +1368,7 @@ class SemanticContextService:
             WHEN NOT MATCHED THEN INSERT (
               SEMANTIC_BUNDLE_ID,
               BUNDLE_HASH,
+              SELECTION_KEY,
               BUNDLE_LABEL,
               TARGET_TABLE,
               SOURCE_TABLES,
@@ -1127,6 +1386,7 @@ class SemanticContextService:
             ) VALUES (
               source.SEMANTIC_BUNDLE_ID,
               source.BUNDLE_HASH,
+              source.SELECTION_KEY,
               source.BUNDLE_LABEL,
               source.TARGET_TABLE,
               source.SOURCE_TABLES,
@@ -1152,6 +1412,7 @@ class SemanticContextService:
         return {
             "bundle_id": row.get("SEMANTIC_BUNDLE_ID"),
             "bundle_hash": row.get("BUNDLE_HASH"),
+            "selection_key": row.get("SELECTION_KEY") or None,
             "bundle_label": row.get("BUNDLE_LABEL")
             or _bundle_label_from_payload(source_tables, derived_source_ids, target_table),
             "target_table": target_table,
@@ -1176,21 +1437,49 @@ class SemanticContextService:
         )
 
     def _derived_source_tables(self, derived_records: list[Any]) -> list[TableRef]:
-        return []
+        tables: dict[str, TableRef] = {}
+        for record in derived_records:
+            for table in record.base_source_tables or []:
+                if isinstance(table, TableRef):
+                    tables[table.qualified_name.upper()] = table
+        return [tables[key] for key in sorted(tables)]
 
     @staticmethod
     def _derived_table_ref(record: Any) -> TableRef:
         return TableRef(database="DERIVED", schema="DERIVED", table=record.derived_source_id)
 
     @staticmethod
-    def _analyst_source_tables(selected_source_tables: list[TableRef]) -> list[TableRef]:
-        return list(selected_source_tables)
+    def _analyst_source_tables(
+        selected_source_tables: list[TableRef],
+        derived_records: list[Any],
+    ) -> list[TableRef]:
+        tables: dict[str, TableRef] = {
+            table.qualified_name.upper(): table for table in selected_source_tables
+        }
+        for record in derived_records:
+            for table in getattr(record, "base_source_tables", []) or []:
+                if isinstance(table, TableRef):
+                    tables[table.qualified_name.upper()] = table
+        return [tables[key] for key in sorted(tables)]
 
-    def _semantic_view_name(self, bundle_id: str) -> str:
+    def _semantic_view_name(
+        self,
+        *,
+        bundle_id: str,
+        selected_source_tables: list[TableRef],
+        derived_records: list[Any],
+        target_table: TableRef | None,
+    ) -> str:
+        readable = _semantic_asset_suffix(
+            selected_source_tables=selected_source_tables,
+            derived_records=derived_records,
+            target_table=target_table,
+            bundle_id=bundle_id,
+        )
         return (
             f"{self._settings.resolved_metadata_database}."
             f"{self._settings.resolved_metadata_schema}."
-            f"SV_{bundle_id.upper()}"
+            f"SV_STTM_{readable}"
         )
 
     def _bundle_label(
@@ -1388,6 +1677,62 @@ def _has_foreign_key(constraints: Any) -> bool:
     return False
 
 
+def _semantic_view_entity_description(attribute: dict[str, Any]) -> str:
+    base = (
+        str(attribute.get("business_meaning") or "").strip()
+        or str(attribute.get("description") or "").strip()
+        or str(attribute.get("summary") or "").strip()
+        or str(attribute.get("name") or "").strip()
+    )
+    notes: list[str] = []
+    semantic_role = str(attribute.get("semantic_role") or "").strip().lower()
+    if attribute.get("is_primary_key"):
+        notes.append("Primary key.")
+    elif attribute.get("is_foreign_key"):
+        notes.append("Foreign key.")
+    elif semantic_role:
+        notes.append(f"Semantic role: {semantic_role.replace('_', ' ')}.")
+
+    constraints = attribute.get("constraints") or []
+    for item in constraints:
+        if isinstance(item, dict) and str(item.get("type") or "").upper() == "FOREIGN_KEY":
+            refs = item.get("references") or {}
+            ref_table = str(refs.get("table") or "").strip()
+            ref_column = str(refs.get("column") or "").strip()
+            if ref_table and ref_column:
+                notes.append(f"References {ref_table}.{ref_column}.")
+            elif ref_table:
+                notes.append(f"References {ref_table}.")
+
+    semantic_notes = [
+        str(item).strip()
+        for item in (attribute.get("semantic_notes") or [])
+        if isinstance(item, str) and item.strip()
+    ]
+    pii_note = next(
+        (
+            note
+            for note in semantic_notes
+            if "sensitive" in note.lower() or "pii" in note.lower() or "mask" in note.lower()
+        ),
+        None,
+    )
+    if pii_note:
+        notes.append(pii_note.rstrip(".") + ".")
+
+    for note in semantic_notes:
+        if note == pii_note:
+            continue
+        lowered = note.lower()
+        if "candidate for derived" in lowered or "aggregation should" in lowered or "latest-record" in lowered:
+            notes.append(note.rstrip(".") + ".")
+            break
+
+    if not notes:
+        return base
+    return f"{base} {' '.join(notes)}".strip()
+
+
 def _is_numeric_type(data_type: str) -> bool:
     normalized = data_type.upper()
     return any(
@@ -1438,3 +1783,37 @@ def _bundle_label_from_payload(
     if isinstance(target_table, dict) and target_table.get("table"):
         label = f"{label} -> {target_table['table']}"
     return label
+
+
+def _semantic_asset_suffix(
+    *,
+    selected_source_tables: list[TableRef],
+    derived_records: list[Any],
+    target_table: TableRef | None,
+    bundle_id: str,
+) -> str:
+    raw_names = [table.table for table in selected_source_tables]
+    raw_names.extend(
+        str(record.derived_source_name or record.derived_source_id or "")
+        for record in derived_records
+    )
+    source_slug = _slugify_identifier("_".join([name for name in raw_names[:2] if name]), limit=17) or "WORKSET"
+    target_slug = _slugify_identifier(target_table.table if target_table else "", limit=17) or "CONTEXT"
+    return f"{source_slug}__TO__{target_slug}__{bundle_id[-8:].upper()}"
+
+
+def _analyst_tool_name(
+    *,
+    selected_source_tables: list[TableRef],
+    derived_records: list[Any],
+    target_table: TableRef | None,
+    bundle_id: str,
+) -> str:
+    return f"ANALYST_STTM_{_semantic_asset_suffix(selected_source_tables=selected_source_tables, derived_records=derived_records, target_table=target_table, bundle_id=bundle_id)}"
+
+
+def _slugify_identifier(value: str, *, limit: int = 48) -> str:
+    normalized = re.sub(r"[^A-Za-z0-9]+", "_", value.strip()).strip("_").upper()
+    if not normalized:
+        return ""
+    return normalized[:limit].rstrip("_")

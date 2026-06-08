@@ -1,5 +1,6 @@
 import api from '../api/axiosInstance';
 import {
+  type MappingIntent,
   type RelationshipContextItem,
   type SemanticLevel,
   type SemanticContextItem,
@@ -18,6 +19,7 @@ import {
   mockWorkbenchInfo,
 } from './mock/workbenchMockData';
 import { mockDelay, throwMockError, useMockDb } from './mock/mockConfig';
+import { extractSseChunk } from './streaming/sse';
 
 export type { RelationshipContextItem, TableRef, TargetAttributeItem };
 
@@ -25,6 +27,7 @@ export type WorkbenchRequest = {
   interface: STTMIntent;
   thread_id?: string | null;
   parent_message_id?: number | null;
+  session_id?: string | null;
   attributes?: TargetAttributeItem[] | null;
   source_tables?: TableRef[] | null;
   message?: string | null;
@@ -40,6 +43,7 @@ export type WorkbenchRequest = {
   semantic_view_name?: string | null;
   derived_source_lineage?: Array<Record<string, unknown>> | null;
   datahub_context?: Record<string, unknown> | null;
+  mapping_intent?: MappingIntent | null;
 };
 
 const operationByIntent: Record<STTMIntent, STTMOperation> = {
@@ -63,6 +67,7 @@ function toEnvelope(payload: WorkbenchRequest): STTMBuilderEnvelopeRequest {
     {
       thread_id: payload.thread_id ?? null,
       parent_message_id: payload.parent_message_id ?? null,
+      session_id: payload.session_id ?? null,
       source_tables: nullableNonEmptyArray(payload.source_tables),
       driving_table: payload.driving_table ?? null,
       relationships: payload.relationships ?? null,
@@ -76,6 +81,7 @@ function toEnvelope(payload: WorkbenchRequest): STTMBuilderEnvelopeRequest {
       semantic_view_name: payload.semantic_view_name ?? null,
       derived_source_lineage: payload.derived_source_lineage ?? null,
       datahub_context: payload.datahub_context ?? null,
+      mapping_intent: payload.mapping_intent ?? null,
     },
   ) as STTMBuilderEnvelopeRequest;
 }
@@ -159,11 +165,10 @@ export const workbenchService = {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary !== -1) {
-        const chunk = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const parsed = parseChunk(chunk);
+      let extracted = extractSseChunk(buffer);
+      while (extracted !== null) {
+        const parsed = parseChunk(extracted.chunk);
+        buffer = extracted.remaining;
         if (parsed) {
           yield parsed as
             | { event: "status"; data: Record<string, unknown> }
@@ -172,7 +177,7 @@ export const workbenchService = {
             | { event: "final"; data: STTMBuilderEnvelopeResponse }
             | { event: "error"; data: { message?: string; code?: string } };
         }
-        boundary = buffer.indexOf("\n\n");
+        extracted = extractSseChunk(buffer);
       }
     }
 

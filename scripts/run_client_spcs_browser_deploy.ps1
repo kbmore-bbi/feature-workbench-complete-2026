@@ -34,6 +34,12 @@ if ($ForceRecreateConnection) {
 
 & (Join-Path $PSScriptRoot "configure_client_snow_connection.ps1") @configureArgs
 
+$dbtRepoArgs = @{
+    EnvFile = $EnvFile
+}
+
+& (Join-Path $PSScriptRoot "bootstrap_dbt_repo_infra.ps1") @dbtRepoArgs
+
 $bootstrapMetadataArgs = @{
     EnvFile = $EnvFile
 }

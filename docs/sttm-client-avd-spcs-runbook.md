@@ -148,16 +148,19 @@ Local backend auth mode used on AVD:
 ## 5. Scripts included in repo
 
 ### Local / AVD
+- `start-ai-workbench.ps1`
 - `start-ai-workbench-dev.ps1`
 - `scripts/start_sttm_backend_local.ps1`
 - `scripts/bootstrap_client_spcs_tools.ps1`
 - `scripts/configure_client_snow_connection.ps1`
+- `scripts/bootstrap_dbt_repo_infra.ps1`
 - `scripts/bootstrap_sttm_metadata_infra.ps1`
 - `scripts/bootstrap_sttm_metadata_infra.py`
 
 ### SPCS deploy
 - `scripts/deploy_spcs_client_snow.ps1`
 - `scripts/run_client_spcs_browser_deploy.ps1`
+- `scripts/bootstrap_dbt_repo_infra.sh`
 - `scripts/deploy_spcs_client_snow.sh`
 - `scripts/run_client_spcs_browser_deploy.sh`
 
@@ -208,6 +211,46 @@ This package contained the infra/backend side, including:
 
 ### Important baseline note
 The zip packages already contained the client bootstrap/deploy scripts, but they were the earlier packaged versions. The AVD troubleshooting work then modified some of those files manually on the client machine in order to get bring-up working.
+
+## 5B. Current 2026-06-03 handoff packages
+
+Current source-only handoff zips are generated under:
+
+- `release-packages/20260603/`
+
+Files:
+
+- `bbi-mig-ai-workbench-20260603-part1-root-and-launchers.zip`
+- `bbi-mig-ai-workbench-20260603-part2-frontend-source.zip`
+- `bbi-mig-ai-workbench-20260603-part3-backend-service.zip`
+- `bbi-mig-ai-workbench-20260603-part4-infra-scripts-docs.zip`
+
+These packages intentionally exclude local runtime artifacts such as:
+
+- `frontend/node_modules`
+- `frontend/.next`
+- `frontend/.next-*`
+- `services/sttm-builder/.venv`
+- local client tool virtualenvs
+
+That keeps the upload size low and avoids shipping machine-specific build output.
+
+### Important launcher note
+- `start-ai-workbench.ps1` and `start-ai-workbench-dev.ps1` only start the local backend and frontend.
+- They do **not** create Snowflake metadata tables, procedures, stages, or Cortex agents.
+- `scripts/bootstrap_dbt_repo_infra.ps1` is the optional script that creates:
+  - the DBT Git API integration
+  - the DBT Git secret
+  - the `DBT_REPO` Snowflake Git repository object
+  - the DBT repo fetch and supporting file format
+- `scripts/bootstrap_sttm_metadata_infra.ps1` is the script that creates:
+  - metadata tables
+  - stored procedures
+  - semantic cache and table-context procedures
+  - DBT tool procedures (`SP_DBT_*`)
+  - stage uploads for skills
+  - Cortex agents including `AGT_WORKBENCH_CONVERSATION`, `AGT_SEMANTIC_MODEL`, and `AGT_DBT_CONVERSION`
+  - restored Cortex Analyst tools on `AGT_STTM_BUILDER` for promoted semantic bundles when bundle metadata already exists
 
 ---
 
@@ -510,9 +553,10 @@ The main remaining non-repeatable areas are:
 1. Prepare `infra/snowflake/env/client.env`
 2. Bootstrap Snow CLI tools
 3. Configure Snow connection
-4. Bootstrap metadata schema/tables/procedures/agents
-5. Validate local backend if needed
-6. Build and deploy service to SPCS
+4. Bootstrap the DBT repo objects if AGT_DBT_CONVERSION will be used
+5. Bootstrap metadata schema/tables/procedures/agents
+6. Start the local app if you want an AVD localhost smoke test
+7. Build and deploy service to SPCS
 
 ### Typical commands
 Windows / PowerShell:
@@ -520,7 +564,9 @@ Windows / PowerShell:
 ```powershell
 .\scripts\bootstrap_client_spcs_tools.ps1
 .\scripts\configure_client_snow_connection.ps1
+.\scripts\bootstrap_dbt_repo_infra.ps1
 .\scripts\bootstrap_sttm_metadata_infra.ps1
+.\start-ai-workbench.ps1
 .\scripts\deploy_spcs_client_snow.ps1
 ```
 
@@ -534,8 +580,9 @@ That wrapper now performs:
 
 1. tool bootstrap
 2. Snow connection setup
-3. metadata bootstrap
-4. SPCS deploy
+3. DBT repo bootstrap when configured
+4. metadata bootstrap
+5. SPCS deploy
 
 ### What `deploy_spcs_client_snow.ps1` does
 - validates `client.env`
@@ -630,3 +677,24 @@ This means:
 - the branch is close
 - and the repo now matches the successful AVD bootstrap flow much more closely
 - but the local auth/chat polish still needs one more cleanup pass before final handoff
+### 6.4 Metadata namespace drift from legacy fully-qualified env values
+**Symptom**
+- app errors referenced `FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA` even after changing:
+  - `SNOWFLAKE_DATABASE`
+  - `SNOWFLAKE_SCHEMA`
+
+**Cause**
+- older env files and defaults could still contain fully-qualified object names pinned to the legacy namespace
+- changing only the top-level database/schema was not always enough in older builds
+
+**Current behavior**
+- the current repo rebases legacy default metadata object names onto the active:
+  - `SNOWFLAKE_DATABASE`
+  - `SNOWFLAKE_SCHEMA`
+- this includes table names, search service names, and agent names such as:
+  - `AGT_STTM_BUILDER`
+  - `AGT_WORKBENCH_CONVERSATION`
+
+**Recommendation**
+- still keep the env file internally consistent and update any explicit client overrides where possible
+- but the current code no longer falls back to the legacy `FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA` namespace just because an older fully-qualified env value is present

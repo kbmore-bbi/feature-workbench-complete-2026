@@ -10,6 +10,7 @@ import {
   InputBase,
   Paper,
   Stack,
+  TextField,
   Typography,
 } from "@mui/material";
 import SendIcon from "@mui/icons-material/Send";
@@ -20,6 +21,10 @@ import OpenInFullIcon from "@mui/icons-material/OpenInFull";
 import CloseFullscreenIcon from "@mui/icons-material/CloseFullscreen";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowRightIcon from "@mui/icons-material/KeyboardArrowRight";
+import ThumbUpAltOutlinedIcon from "@mui/icons-material/ThumbUpAltOutlined";
+import ThumbDownAltOutlinedIcon from "@mui/icons-material/ThumbDownAltOutlined";
+import TipsAndUpdatesOutlinedIcon from "@mui/icons-material/TipsAndUpdatesOutlined";
+import HelpOutlineOutlinedIcon from "@mui/icons-material/HelpOutlineOutlined";
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 
@@ -266,6 +271,27 @@ function MessageContent({ content }: { content: string }) {
   return <Box sx={{ display: "grid", gap: 1.25 }}>{blocks}</Box>;
 }
 
+function buildSignalUnderstandingText(signal: {
+  attributes?: Record<string, unknown>;
+}) {
+  const value = signal.attributes?.current_understanding;
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return null;
+}
+
+function shouldSuppressSignalForCurrentState(
+  signal: {
+    attributes?: Record<string, unknown>;
+  },
+  relationshipCount: number,
+) {
+  if (relationshipCount === 0) return false;
+  const actionType = typeof signal.attributes?.action_type === "string" ? signal.attributes.action_type : "";
+  return actionType === "refresh_semantic_context";
+}
+
 function TracePanel({
   messageId,
   steps,
@@ -353,6 +379,8 @@ export default function AIAgentPanel({
   onToggleExpanded?: () => void;
 }) {
   const {
+    assistantSignals,
+    relationships,
     chatLoading,
     chatMessages,
     datahubStatus,
@@ -363,16 +391,21 @@ export default function AIAgentPanel({
     openPendingDerivedSourceDraft,
     pendingDerivedSourceDraft,
     pendingAiMappingReviews,
-    relationships,
     semanticBundleLabel,
     semanticLevel,
     semanticStatus,
     semanticViewName,
     selectedSourceCount,
+    respondToAssistantSignal,
+    requestSemanticRefresh,
     sendChatMessage,
+    submitChatFeedback,
   } = useSttmBuilderContext();
   const [draft, setDraft] = useState("");
   const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
+  const [pendingFeedback, setPendingFeedback] = useState<Record<string, { rating: number; comment: string }>>({});
+  const [pendingSignalResponses, setPendingSignalResponses] = useState<Record<string, { optionSelected?: string | null; rating?: number | null; comment: string }>>({});
+  const [signalActionBusyId, setSignalActionBusyId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const statsLabel = useMemo(() => {
@@ -386,6 +419,16 @@ export default function AIAgentPanel({
   );
   const activeReview = pendingAiMappingReviews[0] ?? null;
   const isTransformationReview = !!activeReview?.preprocessingRule;
+  const activeSignal = useMemo(
+    () =>
+      assistantSignals.find(
+        (signal) =>
+          signal.status !== "dismissed" &&
+          signal.status !== "responded" &&
+          !shouldSuppressSignalForCurrentState(signal, relationships.length),
+      ) ?? null,
+    [assistantSignals, relationships.length],
+  );
 
   const handleSend = () => {
     const message = draft.trim();
@@ -407,6 +450,11 @@ export default function AIAgentPanel({
     setDraft("");
   };
 
+  const handleQuickAction = (message: string) => {
+    if (chatLoading) return;
+    sendChatMessage(message);
+  };
+
   useEffect(() => {
     const node = messagesRef.current;
     if (!node) return;
@@ -418,6 +466,230 @@ export default function AIAgentPanel({
       ...current,
       [messageId]: !current[messageId],
     }));
+  };
+
+  const startFeedback = (messageId: string, rating: number) => {
+    setPendingFeedback((current) => ({
+      ...current,
+      [messageId]: {
+        rating,
+        comment: current[messageId]?.comment ?? "",
+      },
+    }));
+  };
+
+  const changeFeedbackComment = (messageId: string, comment: string) => {
+    setPendingFeedback((current) => {
+      const existing = current[messageId];
+      if (!existing) return current;
+      return {
+        ...current,
+        [messageId]: {
+          ...existing,
+          comment,
+        },
+      };
+    });
+  };
+
+  const submitPendingFeedback = (messageId: string) => {
+    const pending = pendingFeedback[messageId];
+    if (!pending) return;
+    submitChatFeedback({
+      messageId,
+      rating: pending.rating,
+      comment: pending.comment.trim() || null,
+    });
+    setPendingFeedback((current) => {
+      const next = { ...current };
+      delete next[messageId];
+      return next;
+    });
+  };
+
+  const skipFeedbackComment = (messageId: string) => {
+    const pending = pendingFeedback[messageId];
+    if (!pending) return;
+    submitChatFeedback({
+      messageId,
+      rating: pending.rating,
+      comment: null,
+    });
+    setPendingFeedback((current) => {
+      const next = { ...current };
+      delete next[messageId];
+      return next;
+    });
+  };
+
+  const startSignalRating = (signalId: string, rating: number) => {
+    setPendingSignalResponses((current) => ({
+      ...current,
+      [signalId]: {
+        rating,
+        optionSelected: current[signalId]?.optionSelected ?? null,
+        comment: current[signalId]?.comment ?? "",
+      },
+    }));
+  };
+
+  const selectSignalOption = (signalId: string, optionSelected: string) => {
+    setPendingSignalResponses((current) => ({
+      ...current,
+      [signalId]: {
+        rating: current[signalId]?.rating ?? null,
+        optionSelected,
+        comment: current[signalId]?.comment ?? "",
+      },
+    }));
+  };
+
+  const changeSignalComment = (signalId: string, comment: string) => {
+    setPendingSignalResponses((current) => ({
+      ...current,
+      [signalId]: {
+        rating: current[signalId]?.rating ?? null,
+        optionSelected: current[signalId]?.optionSelected ?? null,
+        comment,
+      },
+    }));
+  };
+
+  const submitSignalResponse = (signalId: string) => {
+    const pending = pendingSignalResponses[signalId];
+    respondToAssistantSignal({
+      signalId,
+      status: "responded",
+      optionSelected: pending?.optionSelected ?? null,
+      rating: pending?.rating ?? null,
+      comment: pending?.comment?.trim() || null,
+    });
+    setPendingSignalResponses((current) => {
+      const next = { ...current };
+      delete next[signalId];
+      return next;
+    });
+  };
+
+  const dismissSignal = (signalId: string) => {
+    respondToAssistantSignal({ signalId, status: "dismissed" });
+    setPendingSignalResponses((current) => {
+      const next = { ...current };
+      delete next[signalId];
+      return next;
+    });
+  };
+
+  const confirmSignalOption = (signalId: string, optionSelected: string) => {
+    respondToAssistantSignal({
+      signalId,
+      status: "responded",
+      optionSelected,
+    });
+    setPendingSignalResponses((current) => {
+      const next = { ...current };
+      delete next[signalId];
+      return next;
+    });
+  };
+
+  const explainSignal = async (signal: (typeof assistantSignals)[number], optionLabel?: string) => {
+    const signalTables =
+      Array.isArray(signal.entity_ids) && signal.entity_ids.length >= 2
+        ? signal.entity_ids.slice(0, 2)
+        : [];
+    const fallbackPrompt =
+      signalTables.length >= 2
+        ? `Explain the relationship between ${signalTables[0]} and ${signalTables[1]} in simple business terms and tell me whether it looks reliable for mapping.`
+        : "Explain the relationship between the selected tables in simple business terms and tell me whether it looks reliable for mapping.";
+    const suggestedPrompt =
+      typeof signal.attributes?.suggested_prompt === "string" && signal.attributes.suggested_prompt.trim()
+        ? signal.attributes.suggested_prompt.trim()
+        : fallbackPrompt;
+    const currentUnderstanding = buildSignalUnderstandingText(signal);
+    const explanationPrompt = currentUnderstanding
+      ? `${suggestedPrompt}\n\nThis is your current understanding so far:\n${currentUnderstanding}\n\nPlease explain this in simple business terms, tell me what looks reliable, and call out the specific assumption or join detail the user should confirm or correct.`
+      : suggestedPrompt;
+    sendChatMessage(explanationPrompt);
+    respondToAssistantSignal({
+      signalId: signal.signal_id,
+      status: "acknowledged",
+      optionSelected: optionLabel ?? "Ask AI to explain first",
+    });
+  };
+
+  const applySignalAction = async (signal: (typeof assistantSignals)[number]) => {
+    const actionType = typeof signal.attributes?.action_type === "string" ? signal.attributes.action_type : "";
+    if (actionType === "refresh_semantic_context") {
+      try {
+        setSignalActionBusyId(signal.signal_id);
+        await requestSemanticRefresh();
+        respondToAssistantSignal({
+          signalId: signal.signal_id,
+          status: "acknowledged",
+          optionSelected: "Refresh semantic context",
+        });
+      } finally {
+        setSignalActionBusyId(null);
+      }
+      return;
+    }
+    if (actionType === "explain_relationship") {
+      await explainSignal(signal, "Explain this relationship");
+    }
+  };
+
+  const handleSignalOption = async (signal: (typeof assistantSignals)[number], option: string) => {
+    const normalized = option.trim().toLowerCase();
+    if (normalized === "refresh semantic context" || normalized === "build stronger context") {
+      await applySignalAction(signal);
+      return;
+    }
+    if (
+      normalized === "ask ai to explain first" ||
+      normalized === "explain this relationship" ||
+      normalized === "explain this join"
+    ) {
+      await explainSignal(signal, option);
+      return;
+    }
+    if (normalized === "dismiss" || normalized === "not now") {
+      dismissSignal(signal.signal_id);
+      return;
+    }
+    if (normalized === "looks right") {
+      confirmSignalOption(signal.signal_id, option);
+      return;
+    }
+    if (normalized === "needs correction") {
+      const currentUnderstanding = buildSignalUnderstandingText(signal);
+      setPendingSignalResponses((current) => ({
+        ...current,
+        [signal.signal_id]: {
+          rating: current[signal.signal_id]?.rating ?? null,
+          optionSelected: option,
+          comment: current[signal.signal_id]?.comment ?? "",
+        },
+      }));
+      sendChatMessage(
+        currentUnderstanding
+          ? `This current understanding needs correction:\n${currentUnderstanding}\n\nPlease ask me what looks wrong, what the right business meaning is, and what join or relationship should be used instead.`
+          : "I think the current join needs correction. Please ask me what looks wrong and help me capture the right business relationship.",
+      );
+      return;
+    }
+    if (normalized === "i will type it manually" || normalized === "i want to describe it") {
+      setPendingSignalResponses((current) => ({
+        ...current,
+        [signal.signal_id]: {
+          rating: current[signal.signal_id]?.rating ?? null,
+          optionSelected: option,
+          comment: current[signal.signal_id]?.comment ?? "",
+        },
+      }));
+      return;
+    }
+    selectSignalOption(signal.signal_id, option);
   };
 
   return (
@@ -616,11 +888,180 @@ export default function AIAgentPanel({
           backgroundColor: "#ffffff",
         }}
       >
+        {activeSignal ? (
+          <Stack spacing={1.5}>
+            {[activeSignal].map((signal) => {
+              const draftResponse = pendingSignalResponses[signal.signal_id];
+              const thumbsUpSelected = draftResponse?.rating === 5;
+              const thumbsDownSelected = draftResponse?.rating === 1;
+              const isRefreshSignal = signal.attributes?.action_type === "refresh_semantic_context";
+              const currentUnderstanding = buildSignalUnderstandingText(signal);
+              const actionLabel =
+                isRefreshSignal
+                  ? "Refresh now"
+                  : signal.attributes?.action_type === "explain_relationship"
+                    ? "Explain now"
+                    : null;
+              return (
+                <Paper
+                  key={signal.signal_id}
+                  elevation={0}
+                  sx={{
+                    p: 1.5,
+                    borderRadius: 2,
+                    border: signal.signal_type === "recommendation" ? "1px solid #bfdbfe" : "1px solid #fecaca",
+                    backgroundColor: signal.signal_type === "recommendation" ? "#eff6ff" : "#fff7f7",
+                  }}
+                >
+                  <Stack spacing={1}>
+                    <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                      {signal.signal_type === "recommendation" ? (
+                        <TipsAndUpdatesOutlinedIcon sx={{ fontSize: 18, color: "#2563eb" }} />
+                      ) : (
+                        <HelpOutlineOutlinedIcon sx={{ fontSize: 18, color: "#dc2626" }} />
+                      )}
+                      <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a" }}>
+                        {signal.title}
+                      </Typography>
+                    </Stack>
+                    <Typography
+                      sx={{
+                        fontSize: 13,
+                        color: "#334155",
+                        lineHeight: 1.55,
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                      }}
+                    >
+                      {signal.message}
+                    </Typography>
+                    {currentUnderstanding ? (
+                      <Box
+                        sx={{
+                          borderRadius: 1.5,
+                          border: "1px solid #dbeafe",
+                          backgroundColor: "#ffffff",
+                          px: 1.25,
+                          py: 1,
+                        }}
+                      >
+                        <Typography sx={{ fontSize: 12, fontWeight: 800, color: "#1d4ed8", mb: 0.5 }}>
+                          Current understanding
+                        </Typography>
+                        <Typography
+                          sx={{
+                            fontSize: 12.5,
+                            color: "#334155",
+                            lineHeight: 1.6,
+                            whiteSpace: "pre-wrap",
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {currentUnderstanding}
+                        </Typography>
+                      </Box>
+                    ) : null}
+                    {signal.options?.length ? (
+                      <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
+                        {signal.options.map((option) => {
+                          const selected = draftResponse?.optionSelected === option;
+                          return (
+                            <Button
+                              key={option}
+                              size="small"
+                              variant={selected ? "contained" : "outlined"}
+                              onClick={() => {
+                                void handleSignalOption(signal, option);
+                              }}
+                              sx={{ borderRadius: 999, textTransform: "none" }}
+                            >
+                              {option}
+                            </Button>
+                          );
+                        })}
+                      </Stack>
+                    ) : null}
+                    {signal.signal_type === "recommendation" ? (
+                      <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+                        <IconButton
+                          size="small"
+                          onClick={() => startSignalRating(signal.signal_id, 5)}
+                          sx={{ color: thumbsUpSelected ? "#16a34a" : "#64748b" }}
+                        >
+                          <ThumbUpAltOutlinedIcon fontSize="small" />
+                        </IconButton>
+                        <IconButton
+                          size="small"
+                          onClick={() => startSignalRating(signal.signal_id, 1)}
+                          sx={{ color: thumbsDownSelected ? "#dc2626" : "#64748b" }}
+                        >
+                          <ThumbDownAltOutlinedIcon fontSize="small" />
+                        </IconButton>
+                        <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+                          Was this recommendation useful?
+                        </Typography>
+                      </Stack>
+                    ) : null}
+                    {(!isRefreshSignal && (signal.allow_free_text || draftResponse?.rating || draftResponse?.optionSelected)) ? (
+                      <TextField
+                        size="small"
+                        placeholder="Add a business comment or type your own answer"
+                        value={draftResponse?.comment ?? ""}
+                        onChange={(event) => changeSignalComment(signal.signal_id, event.target.value)}
+                        multiline
+                        minRows={2}
+                      />
+                    ) : null}
+                    <Stack direction="row" spacing={1}>
+                      {actionLabel ? (
+                        <Button
+                          size="small"
+                          variant="outlined"
+                          onClick={() => {
+                            void applySignalAction(signal);
+                          }}
+                          disabled={signalActionBusyId === signal.signal_id}
+                          sx={{ textTransform: "none" }}
+                        >
+                          {signalActionBusyId === signal.signal_id ? "Working..." : actionLabel}
+                        </Button>
+                      ) : null}
+                      {!isRefreshSignal ? (
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => submitSignalResponse(signal.signal_id)}
+                          sx={{ textTransform: "none" }}
+                        >
+                          Send response
+                        </Button>
+                      ) : null}
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => dismissSignal(signal.signal_id)}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Dismiss
+                      </Button>
+                    </Stack>
+                  </Stack>
+                </Paper>
+              );
+            })}
+          </Stack>
+        ) : null}
         {chatMessages.map((message, index) => {
           const isAssistant = message.role === "assistant";
           const messageId = message.id ?? `${message.role}-${index}-${message.content.slice(0, 24)}`;
           const traceSteps = message.traceSteps ?? [];
           const isTraceExpanded = message.isStreaming || !!expandedTraces[messageId];
+          const pendingFeedbackEntry = pendingFeedback[messageId];
+          const thumbsUpSelected =
+            pendingFeedbackEntry?.rating === 5 || (message.feedbackStatus === "sent" && message.feedbackRating === 5);
+          const thumbsDownSelected =
+            pendingFeedbackEntry?.rating === 1 || (message.feedbackStatus === "sent" && message.feedbackRating === 1);
           return (
             <Stack
               key={messageId}
@@ -696,6 +1137,81 @@ export default function AIAgentPanel({
                         {option}
                       </Button>
                     ))}
+                  </Stack>
+                ) : null}
+                {isAssistant && !message.isStreaming ? (
+                  <Stack direction="row" spacing={0.5} sx={{ mt: 1, alignItems: "center" }}>
+                    <IconButton
+                      size="small"
+                      onClick={() => startFeedback(messageId, 5)}
+                      disabled={message.feedbackStatus === "sent" || chatLoading}
+                      sx={{ color: thumbsUpSelected ? "#16a34a" : "#64748b" }}
+                    >
+                      <ThumbUpAltOutlinedIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton
+                      size="small"
+                      onClick={() => startFeedback(messageId, 1)}
+                      disabled={message.feedbackStatus === "sent" || chatLoading}
+                      sx={{ color: thumbsDownSelected || message.feedbackStatus === "failed" ? "#dc2626" : "#64748b" }}
+                    >
+                      <ThumbDownAltOutlinedIcon fontSize="small" />
+                    </IconButton>
+                    {message.feedbackStatus === "sent" ? (
+                      <Typography variant="caption" sx={{ color: "#16a34a" }}>
+                        Feedback saved
+                      </Typography>
+                    ) : null}
+                    {message.feedbackStatus === "failed" ? (
+                      <Typography variant="caption" sx={{ color: "#dc2626" }}>
+                        Feedback failed
+                      </Typography>
+                    ) : null}
+                  </Stack>
+                ) : null}
+                {isAssistant && pendingFeedbackEntry && message.feedbackStatus !== "sent" ? (
+                  <Stack
+                    spacing={1}
+                    sx={{
+                      mt: 1,
+                      p: 1.25,
+                      borderRadius: 2,
+                      border: "1px solid #dbeafe",
+                      backgroundColor: "#f8fbff",
+                    }}
+                  >
+                    <Typography variant="caption" sx={{ color: "#1e3a8a", fontWeight: 700 }}>
+                      Any additional comments?
+                    </Typography>
+                    <TextField
+                      size="small"
+                      fullWidth
+                      multiline
+                      minRows={2}
+                      value={pendingFeedbackEntry.comment ?? ""}
+                      onChange={(event) => changeFeedbackComment(messageId, event.target.value)}
+                      placeholder="Tell us what worked well or what felt off..."
+                    />
+                    <Stack direction="row" spacing={1}>
+                      <Button
+                        size="small"
+                        variant="contained"
+                        onClick={() => submitPendingFeedback(messageId)}
+                        disabled={chatLoading}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Send feedback
+                      </Button>
+                      <Button
+                        size="small"
+                        variant="text"
+                        onClick={() => skipFeedbackComment(messageId)}
+                        disabled={chatLoading}
+                        sx={{ textTransform: "none" }}
+                      >
+                        Skip comment
+                      </Button>
+                    </Stack>
                   </Stack>
                 ) : null}
               </Paper>
@@ -890,6 +1406,37 @@ export default function AIAgentPanel({
       </Box>
 
       <Box sx={{ p: 1, backgroundColor: "#ffffff", borderTop: "1px solid #e2e8f0" }}>
+        <Stack direction="row" spacing={1} useFlexGap sx={{ px: 0.5, pb: 1, flexWrap: "wrap" }}>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<TipsAndUpdatesOutlinedIcon fontSize="small" />}
+            onClick={() => handleQuickAction("Recommend next steps for the selected tables and tell me what to validate first.")}
+            disabled={chatLoading}
+            sx={{ textTransform: "none", borderRadius: "999px" }}
+          >
+            Ask for recommendations
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            startIcon={<HelpOutlineOutlinedIcon fontSize="small" />}
+            onClick={() => handleQuickAction("I have a doubt about the selected tables. Ask me clarifying questions and give me options.")}
+            disabled={chatLoading}
+            sx={{ textTransform: "none", borderRadius: "999px" }}
+          >
+            Clear doubts
+          </Button>
+          <Button
+            size="small"
+            variant="outlined"
+            onClick={() => handleQuickAction("Show the relationship between the selected tables only.")}
+            disabled={chatLoading}
+            sx={{ textTransform: "none", borderRadius: "999px" }}
+          >
+            Explain selected tables
+          </Button>
+        </Stack>
         <Paper
           elevation={0}
           sx={{

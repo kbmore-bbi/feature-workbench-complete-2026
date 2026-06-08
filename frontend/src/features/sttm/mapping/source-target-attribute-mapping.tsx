@@ -15,14 +15,12 @@ import {
   Chip,
   IconButton,
 } from '@mui/material';
-import CheckBoxRoundedIcon from '@mui/icons-material/CheckBoxRounded';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
 import FileUploadOutlinedIcon from '@mui/icons-material/FileUploadOutlined';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import type { MappingRuleType } from '@/features/sttm/types/sttm.types';
-import MappingTableToolbar from './mapping-table-toolbar';
 import {
   buildSourceColumnOptions,
   formatSqlType,
@@ -32,7 +30,6 @@ import {
 import { FocusCheckbox } from '@/components/ui/focus-checkbox';
 import { FocusCheckboxCell, FocusInputCell } from '@/components/ui/focus-table';
 import {
-  MappingRowIndexCell,
   MappingRuleCell,
   MappingSourceColumnsCell,
   MappingStatusCell,
@@ -59,15 +56,44 @@ const PREPROCESS_CONFIGURE_VALUE = 'Configure Pre-processing Rule...';
 
 const RULE_OPTIONS = BUILT_IN_RULES.map((rule) => ({ label: rule, value: rule }));
 
+/** Minimum column widths — table scrolls horizontally when viewport is narrower. */
+const MAPPING_COLUMN_MIN_WIDTH = {
+  checkbox: 64,
+  targetColumn: 168,
+  sourceColumn: 300,
+  typePreview: 112,
+  preProcessRule: 248,
+  nlRule: 220,
+  order: 96,
+  description: 240,
+  status: 108,
+} as const;
+
+const MAPPING_TABLE_MIN_WIDTH = Object.values(MAPPING_COLUMN_MIN_WIDTH).reduce(
+  (total, width) => total + width,
+  0,
+);
+
+const tableScrollbarSx = {
+  scrollbarWidth: 'thin',
+  scrollbarColor: '#cbd5e1 transparent',
+  '&::-webkit-scrollbar': { width: 8, height: 8 },
+  '&::-webkit-scrollbar-thumb': {
+    backgroundColor: '#cbd5e1',
+    borderRadius: 999,
+  },
+  '&::-webkit-scrollbar-track': { backgroundColor: 'transparent' },
+} as const;
+
 const headerCellSx = {
-  color: '#9ca3af',
+  color: '#4b5563',
   fontWeight: 700,
   fontSize: '0.68rem',
   letterSpacing: '0.06em',
   textTransform: 'uppercase' as const,
   borderBottom: '1px solid #e5e7eb',
   bgcolor: '#fafafa',
-  py: 1.25,
+  py: 0.65,
 };
 
 const multilineCellInputSx = {
@@ -83,6 +109,31 @@ const multilineCellInputSx = {
   },
 } as const;
 
+const FROZEN_COLUMN_LEFT = {
+  checkbox: 0,
+  targetColumn: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+} as const;
+
+function mappingFrozenCellSx(
+  left: number,
+  options: { header?: boolean; lastFrozen?: boolean } = {},
+) {
+  const { header = false, lastFrozen = false } = options;
+  const backgroundColor = header ? '#fafafa' : '#fff';
+
+  return {
+    position: 'sticky' as const,
+    left,
+    top: header ? 0 : undefined,
+    zIndex: header ? 5 : 2,
+    bgcolor: backgroundColor,
+    backgroundColor,
+    ...(lastFrozen
+      ? { boxShadow: '4px 0 8px -4px rgba(15, 23, 42, 0.12)' }
+      : {}),
+  };
+}
+
 const SourceTargetAttributeMapping = () => {
   const {
     mappings,
@@ -93,9 +144,9 @@ const SourceTargetAttributeMapping = () => {
     bulkSetDirect,
     updateMapping,
     setPreProcessModalOpen,
-    relationships,
     mappingLoading,
     autoMapStatusMessage,
+    autoMapProcessingIds,
     sourceAttributeGroups,
     derivedSources,
   } = useSttmBuilderContext();
@@ -105,7 +156,6 @@ const SourceTargetAttributeMapping = () => {
 
   const allSelected = mappings.length > 0 && selectedMappingIds.length === mappings.length;
   const someSelected = selectedMappingIds.length > 0 && selectedMappingIds.length < mappings.length;
-  const mappedCount = mappings.filter((row) => row.status === 'MAPPED').length;
   const selectedMappedCount = mappings.filter(
     (row) => selectedMappingIds.includes(row.id) && row.status === 'MAPPED',
   ).length;
@@ -141,13 +191,7 @@ const SourceTargetAttributeMapping = () => {
   };
 
   return (
-    <Box sx={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', position: 'relative' }}>
-      <MappingTableToolbar
-        rowCount={mappings.length}
-        mappedCount={mappedCount}
-        joinCount={relationships.length}
-      />
-
+    <Box sx={{ width: '100%', height: '100%', minWidth: 0, display: 'flex', flexDirection: 'column', position: 'relative' }}>
       {selectedMappingIds.length > 0 && (
         <Box
           sx={{
@@ -163,7 +207,20 @@ const SourceTargetAttributeMapping = () => {
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
-            <CheckBoxRoundedIcon sx={{ fontSize: 20, color: '#22c55e' }} />
+            <Box
+              sx={{
+                width: 20,
+                height: 20,
+                borderRadius: '4px',
+                bgcolor: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <CheckRoundedIcon sx={{ fontSize: 15, color: '#111827' }} />
+            </Box>
             <Typography sx={{ fontSize: '0.85rem', fontWeight: 700, whiteSpace: 'nowrap' }}>
               {selectedMappingIds.length} row{selectedMappingIds.length === 1 ? '' : 's'} selected
             </Typography>
@@ -255,52 +312,166 @@ const SourceTargetAttributeMapping = () => {
         </Box>
       )}
 
-      <TableContainer
-        component={Paper}
-        elevation={0}
-        sx={{ flex: 1, border: 'none', borderRadius: 0, overflowY: 'auto', overflowX: 'hidden' }}
+      <Box
+        sx={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          width: '100%',
+          overflowY: 'auto',
+          overflowX: 'hidden',
+          ...tableScrollbarSx,
+        }}
       >
-        <Table
-          stickyHeader
-          size="small"
+        <TableContainer
+          component={Paper}
+          elevation={0}
           sx={{
             width: '100%',
-            tableLayout: 'fixed',
-            '& .MuiTableBody-root .MuiTableCell-root': {
+            border: 'none',
+            borderRadius: 0,
+            overflowX: 'auto',
+            overflowY: 'visible',
+            ...tableScrollbarSx,
+          }}
+        >
+          <Table
+            stickyHeader
+            size="small"
+            sx={{
+              width: '100%',
+              minWidth: MAPPING_TABLE_MIN_WIDTH,
+              tableLayout: 'fixed',
+              '& .MuiTableBody-root .MuiTableCell-root': {
               borderBottom: '1px solid #edf2f7',
               verticalAlign: 'top',
               py: 1.2,
-              backgroundColor: 'transparent',
             },
             '& .MuiTableBody-root .MuiTableRow-root:last-of-type .MuiTableCell-root': {
               borderBottom: '1px solid #edf2f7',
             },
           }}
         >
+          <colgroup>
+            {Object.values(MAPPING_COLUMN_MIN_WIDTH).map((columnWidth, index) => (
+              <col key={`mapping-col-${index}`} style={{ width: columnWidth }} />
+            ))}
+          </colgroup>
           <TableHead>
             <TableRow>
-              <TableCell padding="checkbox" sx={{ ...headerCellSx, width: '2.5%' }}>
-                <FocusCheckbox
-                  checked={allSelected}
-                  indeterminate={someSelected}
-                  checkHandler={(checked: boolean) =>
-                    selectAllMappings(
-                      mappings.map((row) => row.id),
-                      checked,
-                    )
-                  }
-                />
+              <TableCell
+                padding="none"
+                sx={{
+                  ...headerCellSx,
+                  ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.checkbox, { header: true }),
+                  width: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+                  maxWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+                  px: 0,
+                  textAlign: 'center',
+                  verticalAlign: 'middle',
+                }}
+              >
+                <Box
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    width: '100%',
+                    minHeight: 30,
+                  }}
+                >
+                  <FocusCheckbox
+                    checked={allSelected}
+                    indeterminate={someSelected}
+                    checkHandler={(checked: boolean) =>
+                      selectAllMappings(
+                        mappings.map((row) => row.id),
+                        checked,
+                      )
+                    }
+                    sx={{
+                      color: '#cbd5e1',
+                      '&.Mui-checked': {
+                        color: '#fff',
+                        bgcolor: '#111827',
+                        borderRadius: '4px',
+                      },
+                      '&.MuiCheckbox-indeterminate': {
+                        color: '#fff',
+                        bgcolor: '#111827',
+                        borderRadius: '4px',
+                      },
+                    }}
+                  />
+                </Box>
               </TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '2.5%' }}>#</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '13.5%' }}>Target Column</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '23%' }}>Source Column</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '5.5%', whiteSpace: 'nowrap' }}>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
+                    header: true,
+                    lastFrozen: true,
+                  }),
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
+                  width: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
+                }}
+              >
+                Target Column
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
+                  width: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
+                }}
+              >
+                Source Column
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.typePreview,
+                  width: MAPPING_COLUMN_MIN_WIDTH.typePreview,
+                  whiteSpace: 'nowrap',
+                }}
+              >
                 Type (Preview)
               </TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '14%' }}>Pre-processing Rule</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '15.5%' }}>NL Rule</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '5%' }}>Order</TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '13.5%' }}>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
+                  width: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
+                }}
+              >
+                Pre-processing Rule
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.nlRule,
+                  width: MAPPING_COLUMN_MIN_WIDTH.nlRule,
+                }}
+              >
+                NL Rule
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.order,
+                  width: MAPPING_COLUMN_MIN_WIDTH.order,
+                }}
+              >
+                Order
+              </TableCell>
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.description,
+                  width: MAPPING_COLUMN_MIN_WIDTH.description,
+                }}
+              >
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                   Description
                   <Chip
@@ -316,14 +487,23 @@ const SourceTargetAttributeMapping = () => {
                   />
                 </Box>
               </TableCell>
-              <TableCell sx={{ ...headerCellSx, width: '5%' }} align="right">
+              <TableCell
+                sx={{
+                  ...headerCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.status,
+                  width: MAPPING_COLUMN_MIN_WIDTH.status,
+                }}
+                align="right"
+              >
                 Status
               </TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
-            {sortedMappings.map((row, index) => {
+            {sortedMappings.map((row) => {
               const isSelected = selectedMappingIds.includes(row.id);
+              const isProcessing =
+                autoMapProcessingIds.includes(row.id) || row.status === 'PROCESSING';
               const previewType = row.sourceType ?? row.targetType ?? undefined;
               const sourceColumns =
                 row.sourceColumns && row.sourceColumns.length
@@ -338,42 +518,33 @@ const SourceTargetAttributeMapping = () => {
               const descriptionValue = row.description ?? autoDescription ?? '';
               const descriptionPlaceholder =
                 autoDescription || 'Add description...';
-
               return (
                 <TableRow
                   key={row.id}
-                  hover
                   sx={{
-                    bgcolor: (() => {
-                      if (isSelected) return 'rgba(59, 130, 246, 0.04)';
-                      const needsAttention =
-                        row.status !== 'MAPPED' ||
-                        !!row.unmatchedReason ||
-                        ((row.confidenceScore ?? 1) < 0.55 && !!row.sourceColumn);
-                      return needsAttention ? 'rgba(254, 226, 226, 0.45)' : '#fff';
-                    })(),
-                    '&:hover': {
-                      bgcolor: isSelected
-                        ? 'rgba(59, 130, 246, 0.07)'
-                        : row.status !== 'MAPPED' ||
-                            !!row.unmatchedReason ||
-                            ((row.confidenceScore ?? 1) < 0.55 && !!row.sourceColumn)
-                          ? 'rgba(254, 202, 202, 0.55)'
-                          : '#fafafa',
+                    bgcolor: '#fff',
+                    '&.MuiTableRow-root:hover': {
+                      bgcolor: '#fff',
                     },
                   }}
                 >
                   <FocusCheckboxCell
                     checked={isSelected}
                     onChange={() => toggleMappingSelection(row.id)}
+                    width={MAPPING_COLUMN_MIN_WIDTH.checkbox}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.checkbox}
+                    sx={mappingFrozenCellSx(FROZEN_COLUMN_LEFT.checkbox)}
                   />
-
-                  <MappingRowIndexCell index={index + 1} />
 
                   <MappingTargetColumnCell
                     name={row.targetColumn}
-                    type={formatSqlType(row.targetType)}
-                    width="13.5%"
+                    isMapped={row.status === 'MAPPED'}
+                    isProcessing={isProcessing}
+                    width={MAPPING_COLUMN_MIN_WIDTH.targetColumn}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.targetColumn}
+                    sx={mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
+                      lastFrozen: true,
+                    })}
                   />
 
                   <MappingSourceColumnsCell
@@ -391,22 +562,26 @@ const SourceTargetAttributeMapping = () => {
                           )?.dataType ?? row.sourceType ?? null,
                       });
                     }}
-                    width="23%"
-                    minWidth={0}
+                    width={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
                     confidenceScore={row.confidenceScore}
                     confidenceReason={row.confidenceReason}
                     candidateSourceColumns={row.candidateSourceColumns}
                     unmatchedReason={row.unmatchedReason}
                   />
 
-                  <MappingTypePreviewCell dataType={previewType} width="5.5%" minWidth={84} />
+                  <MappingTypePreviewCell
+                    dataType={previewType}
+                    width={MAPPING_COLUMN_MIN_WIDTH.typePreview}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.typePreview}
+                  />
 
                   <MappingRuleCell
                     value={row.rule === 'Select...' ? 'Direct' : row.rule || 'Direct'}
                     options={RULE_OPTIONS}
                     configureValue={PREPROCESS_CONFIGURE_VALUE}
-                    width="14%"
-                    minWidth={0}
+                    width={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
                     highlighted={
                       !!row.rule &&
                       row.rule !== 'Select...' &&
@@ -420,8 +595,8 @@ const SourceTargetAttributeMapping = () => {
                     placeholder="Add NL rule..."
                     value={row.nlRule ?? ''}
                     onChange={(value) => updateMapping(row.id, { nlRule: value })}
-                    width="15.5%"
-                    minWidth={0}
+                    width={MAPPING_COLUMN_MIN_WIDTH.nlRule}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.nlRule}
                     multiline
                     minRows={1}
                     maxRows={10}
@@ -432,8 +607,8 @@ const SourceTargetAttributeMapping = () => {
                     placeholder="Order..."
                     value={row.loadOrder ?? ''}
                     onChange={(value) => updateMapping(row.id, { loadOrder: value })}
-                    width="5%"
-                    minWidth={84}
+                    width={MAPPING_COLUMN_MIN_WIDTH.order}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.order}
                   />
 
                   <FocusInputCell
@@ -445,35 +620,77 @@ const SourceTargetAttributeMapping = () => {
                         descriptionEdited: value.trim().length > 0,
                       })
                     }
-                    width="13.5%"
-                    minWidth={0}
+                    width={MAPPING_COLUMN_MIN_WIDTH.description}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.description}
                     multiline
                     minRows={1}
                     maxRows={10}
                     inputSx={multilineCellInputSx}
                   />
 
-                  <MappingStatusCell status={row.status} width="5%" minWidth={92} />
+                  <MappingStatusCell
+                    status={isProcessing ? 'PROCESSING' : row.status}
+                    width={MAPPING_COLUMN_MIN_WIDTH.status}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.status}
+                  />
                 </TableRow>
               );
             })}
           </TableBody>
         </Table>
-      </TableContainer>
+        </TableContainer>
+      </Box>
 
       {mappingLoading && (
         <Box
           sx={{
             position: 'absolute',
-            inset: 0,
-            bgcolor: 'rgba(255,255,255,0.6)',
+            top: 12,
+            right: 16,
+            maxWidth: 320,
+            px: 1.5,
+            py: 1,
+            bgcolor: 'rgba(15,23,42,0.92)',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
+            justifyContent: 'flex-start',
+            gap: 1,
             zIndex: 5,
+            borderRadius: '12px',
+            boxShadow: '0 12px 28px rgba(15,23,42,0.18)',
+            pointerEvents: 'none',
           }}
         >
-          <Typography sx={{ fontSize: '0.85rem', color: '#4b5563', fontWeight: 600 }}>
+          <Box
+            sx={{
+              width: 18,
+              height: 18,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '999px',
+              bgcolor: 'rgba(37,99,235,0.16)',
+              flexShrink: 0,
+            }}
+          >
+            <Box
+              component="span"
+              sx={{
+                width: 10,
+                height: 10,
+                borderRadius: '999px',
+                border: '2px solid #93c5fd',
+                borderTopColor: '#eff6ff',
+                display: 'inline-block',
+                animation: 'sttm-auto-map-spin 0.9s linear infinite',
+                '@keyframes sttm-auto-map-spin': {
+                  from: { transform: 'rotate(0deg)' },
+                  to: { transform: 'rotate(360deg)' },
+                },
+              }}
+            />
+          </Box>
+          <Typography sx={{ fontSize: '0.8rem', color: '#e2e8f0', fontWeight: 600 }}>
             {autoMapStatusMessage || 'Running auto-map...'}
           </Typography>
         </Box>

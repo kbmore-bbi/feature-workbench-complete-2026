@@ -13,10 +13,27 @@ if (-not $EnvFile) {
 }
 
 $ToolsVenv = Join-Path $RootDir ".client-tools-venv"
-$SnowExe = Join-Path $ToolsVenv "Scripts\snow.exe"
 $RenderScript = Join-Path $PSScriptRoot "render_spcs_spec.py"
 $SpecTemplate = Join-Path $RootDir "infra\snowflake\service-specs\webapp.yaml.tmpl"
 $ArtifactsDir = Join-Path $RootDir "artifacts\client-spcs"
+
+function Resolve-SnowCli {
+    param([string]$VenvPath)
+
+    $candidates = @(
+        (Join-Path $VenvPath "Scripts\snow.exe"),
+        (Join-Path $VenvPath "Scripts\snow.cmd"),
+        (Join-Path $VenvPath "Scripts\snow")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
 
 function Import-ClientEnv {
     param([string]$Path)
@@ -45,9 +62,14 @@ function Import-ClientEnv {
     return $values
 }
 
-if (-not (Test-Path $SnowExe)) {
+if (-not (Resolve-SnowCli -VenvPath $ToolsVenv)) {
     Write-Host "Snow CLI tools are not bootstrapped yet. Running bootstrap script first."
     & (Join-Path $PSScriptRoot "bootstrap_client_spcs_tools.ps1")
+}
+
+$SnowExe = Resolve-SnowCli -VenvPath $ToolsVenv
+if (-not $SnowExe) {
+    throw "Snow CLI is still unavailable after bootstrap. Check .client-tools-venv\\Scripts for a runnable snow command."
 }
 
 $cfg = Import-ClientEnv -Path $EnvFile
@@ -69,7 +91,8 @@ $required = @(
     "APP_ROLE_ADMIN",
     "APP_ROLE_PUBLISHER",
     "APP_ROLE_VIEWER",
-    "SNOWFLAKE_STTM_BUILDER_AGENT"
+    "SNOWFLAKE_STTM_BUILDER_AGENT",
+    "SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT"
 )
 
 foreach ($name in $required) {
@@ -92,9 +115,17 @@ $agentModel = if ($cfg.ContainsKey("SNOWFLAKE_AGENT_ORCHESTRATION_MODEL") -and $
 $cors = if ($cfg.ContainsKey("CORS_ALLOWED_ORIGINS")) { $cfg["CORS_ALLOWED_ORIGINS"] } else { "" }
 $snowflakeHost = if ($cfg.ContainsKey("SNOWFLAKE_HOST")) { $cfg["SNOWFLAKE_HOST"] } else { "" }
 $semanticModelAgent = if ($cfg.ContainsKey("SNOWFLAKE_SEMANTIC_MODEL_AGENT") -and $cfg["SNOWFLAKE_SEMANTIC_MODEL_AGENT"]) { $cfg["SNOWFLAKE_SEMANTIC_MODEL_AGENT"] } else { "{0}.{1}.AGT_SEMANTIC_MODEL" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
+$dbtConversionAgent = if ($cfg.ContainsKey("SNOWFLAKE_DBT_CONVERSION_AGENT") -and $cfg["SNOWFLAKE_DBT_CONVERSION_AGENT"]) { $cfg["SNOWFLAKE_DBT_CONVERSION_AGENT"] } else { "{0}.{1}.AGT_DBT_CONVERSION" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
+$conversationAgent = if ($cfg.ContainsKey("SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT") -and $cfg["SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT"]) { $cfg["SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT"] } else { "{0}.{1}.AGT_WORKBENCH_CONVERSATION" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
 $relationshipsProcedure = if ($cfg.ContainsKey("SNOWFLAKE_RELATIONSHIPS_PROCEDURE") -and $cfg["SNOWFLAKE_RELATIONSHIPS_PROCEDURE"]) { $cfg["SNOWFLAKE_RELATIONSHIPS_PROCEDURE"] } else { "{0}.{1}.SP_GET_TABLE_RELATIONSHIPS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
 $semanticModelTable = if ($cfg.ContainsKey("SNOWFLAKE_SEMANTIC_MODEL_TABLE") -and $cfg["SNOWFLAKE_SEMANTIC_MODEL_TABLE"]) { $cfg["SNOWFLAKE_SEMANTIC_MODEL_TABLE"] } else { "{0}.{1}.TBL_SEMANTIC_MODELS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
 $derivedSourcesTable = if ($cfg.ContainsKey("SNOWFLAKE_DERIVED_SOURCES_TABLE") -and $cfg["SNOWFLAKE_DERIVED_SOURCES_TABLE"]) { $cfg["SNOWFLAKE_DERIVED_SOURCES_TABLE"] } else { "{0}.{1}.TBL_DERIVED_SOURCES" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
+$conversationTurnsTable = if ($cfg.ContainsKey("SNOWFLAKE_CONVERSATION_TURNS_TABLE") -and $cfg["SNOWFLAKE_CONVERSATION_TURNS_TABLE"]) { $cfg["SNOWFLAKE_CONVERSATION_TURNS_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_CONVERSATION_TURNS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
+$conversationFeedbackTable = if ($cfg.ContainsKey("SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE") -and $cfg["SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE"]) { $cfg["SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_FEEDBACK" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
+$conversationRecommendationsTable = if ($cfg.ContainsKey("SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE") -and $cfg["SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE"]) { $cfg["SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_RECOMMENDATIONS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
+$relationshipFactsTable = if ($cfg.ContainsKey("SNOWFLAKE_RELATIONSHIP_FACTS_TABLE") -and $cfg["SNOWFLAKE_RELATIONSHIP_FACTS_TABLE"]) { $cfg["SNOWFLAKE_RELATIONSHIP_FACTS_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_RELATIONSHIP_FACTS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
+$ragDocumentsTable = if ($cfg.ContainsKey("SNOWFLAKE_RAG_DOCUMENTS_TABLE") -and $cfg["SNOWFLAKE_RAG_DOCUMENTS_TABLE"]) { $cfg["SNOWFLAKE_RAG_DOCUMENTS_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_RAG_DOCUMENTS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
+$ragSearchService = if ($cfg.ContainsKey("SNOWFLAKE_RAG_SEARCH_SERVICE") -and $cfg["SNOWFLAKE_RAG_SEARCH_SERVICE"]) { $cfg["SNOWFLAKE_RAG_SEARCH_SERVICE"] } else { "{0}.{1}.CSS_WORKBENCH_RAG" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw "Docker is required but was not found in PATH."
@@ -126,10 +157,18 @@ $env:SNOWFLAKE_WAREHOUSE = $cfg["SNOWFLAKE_WAREHOUSE"]
 $env:SNOWFLAKE_DATABASE = $cfg["SNOWFLAKE_DATABASE"]
 $env:SNOWFLAKE_SCHEMA = $cfg["SNOWFLAKE_SCHEMA"]
 $env:SNOWFLAKE_STTM_BUILDER_AGENT = $cfg["SNOWFLAKE_STTM_BUILDER_AGENT"]
+$env:SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT = $conversationAgent
 $env:SNOWFLAKE_SEMANTIC_MODEL_AGENT = $semanticModelAgent
+$env:SNOWFLAKE_DBT_CONVERSION_AGENT = $dbtConversionAgent
 $env:SNOWFLAKE_RELATIONSHIPS_PROCEDURE = $relationshipsProcedure
 $env:SNOWFLAKE_SEMANTIC_MODEL_TABLE = $semanticModelTable
 $env:SNOWFLAKE_DERIVED_SOURCES_TABLE = $derivedSourcesTable
+$env:SNOWFLAKE_CONVERSATION_TURNS_TABLE = $conversationTurnsTable
+$env:SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE = $conversationFeedbackTable
+$env:SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE = $conversationRecommendationsTable
+$env:SNOWFLAKE_RELATIONSHIP_FACTS_TABLE = $relationshipFactsTable
+$env:SNOWFLAKE_RAG_DOCUMENTS_TABLE = $ragDocumentsTable
+$env:SNOWFLAKE_RAG_SEARCH_SERVICE = $ragSearchService
 $env:SNOWFLAKE_AGENT_ORCHESTRATION_MODEL = $agentModel
 $env:CORS_ALLOWED_ORIGINS = $cors
 

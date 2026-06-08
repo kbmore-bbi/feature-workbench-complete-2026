@@ -1,4 +1,4 @@
-CREATE OR REPLACE PROCEDURE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_SUBAGT_SEMANTIC_MODEL("QUERY_CONTEXT" VARCHAR, "MODEL_NAME" VARCHAR DEFAULT 'claude-sonnet-4-6')
+CREATE OR REPLACE PROCEDURE __STTM_METADATA_NAMESPACE__.SP_SUBAGT_SEMANTIC_MODEL("QUERY_CONTEXT" VARCHAR, "MODEL_NAME" VARCHAR DEFAULT 'claude-sonnet-4-6')
 RETURNS VARCHAR
 LANGUAGE PYTHON
 RUNTIME_VERSION = '3.12'
@@ -9,8 +9,19 @@ AS '
 import json
 import _snowflake
 
-SEMANTIC_MODEL_TABLE = "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODELS"
-SEMANTIC_AGENT_PATH = "/api/v2/databases/FFP_HDP_CRM_MIG_DB_DEV/schemas/SCH_STTM_METADATA/agents/AGT_SEMANTIC_MODEL:run"
+def _current_namespace(session):
+    row = session.sql("SELECT CURRENT_DATABASE() AS DB, CURRENT_SCHEMA() AS SCH").collect()[0]
+    return str(row["DB"]), str(row["SCH"])
+
+
+def _semantic_model_table(session):
+    current_database, current_schema = _current_namespace(session)
+    return f"{current_database}.{current_schema}.TBL_SEMANTIC_MODELS"
+
+
+def _semantic_agent_path(session):
+    current_database, current_schema = _current_namespace(session)
+    return f"/api/v2/databases/{current_database}/schemas/{current_schema}/agents/AGT_SEMANTIC_MODEL:run"
 
 
 def _safe_json_loads(value):
@@ -40,6 +51,28 @@ def _normalize_table_ref(item):
 
 
 def _extract_request_tables(payload):
+    if isinstance(payload.get("data"), dict):
+        data = payload.get("data") or {}
+        scope = str(data.get("scope") or "TABLE").upper()
+        semantic_level = str(
+            (payload.get("context") or {}).get("semantic_level_requested")
+            or data.get("semantic_level")
+            or "L1_CONTEXT"
+        ).upper()
+        if scope != "TABLE":
+            return [], semantic_level
+        table_name = str(data.get("table") or "").strip()
+        if not table_name:
+            return [], semantic_level
+        ref = _normalize_table_ref(
+            {
+                "database": data.get("database"),
+                "schema": data.get("schema"),
+                "table": table_name,
+            }
+        )
+        return ([ref] if ref else []), semantic_level
+
     if "scope" in payload and "database" in payload and "schema" in payload:
         scope = str(payload.get("scope") or "TABLE").upper()
         if scope != "TABLE":
@@ -135,7 +168,7 @@ def _merge_row(session, scope, table_ref, attribute_name, model_payload, ddl_has
             src.SEMANTIC_MODEL, src.DDL_HASH, src.NOW, src.NOW
         )
     """.format(
-        sm_table=SEMANTIC_MODEL_TABLE,
+        sm_table=_semantic_model_table(session),
         scope=scope,
         db=table_ref["database"],
         schema=table_ref["schema"],
@@ -186,7 +219,7 @@ def _run_single_table(session, table_ref, semantic_level, model_name):
 
     response = _snowflake.send_snow_api_request(
         "POST",
-        SEMANTIC_AGENT_PATH,
+        _semantic_agent_path(session),
         {},
         {},
         payload,

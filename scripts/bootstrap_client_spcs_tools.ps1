@@ -36,6 +36,24 @@ function Resolve-Python {
     throw "Python 3 is required but was not found in PATH."
 }
 
+function Resolve-SnowCli {
+    param([string]$VenvPath)
+
+    $candidates = @(
+        (Join-Path $VenvPath "Scripts\snow.exe"),
+        (Join-Path $VenvPath "Scripts\snow.cmd"),
+        (Join-Path $VenvPath "Scripts\snow")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
 $PythonCmd = Resolve-Python -Preferred $PythonExe
 
 $versionCheck = @'
@@ -54,7 +72,6 @@ if (-not (Test-Path $ToolsVenv)) {
 }
 
 $PythonExe = Join-Path $ToolsVenv "Scripts\python.exe"
-$SnowExe = Join-Path $ToolsVenv "Scripts\snow.exe"
 
 Write-Host "Upgrading pip tooling"
 & $PythonExe -m pip install --upgrade pip setuptools wheel
@@ -65,6 +82,17 @@ if ($SnowflakeCliVersion) {
 } else {
     Write-Host "Installing latest snowflake-cli"
     & $PythonExe -m pip install --upgrade snowflake-cli
+}
+
+$SnowExe = Resolve-SnowCli -VenvPath $ToolsVenv
+if (-not $SnowExe) {
+    $scriptsDir = Join-Path $ToolsVenv "Scripts"
+    $availableScripts = if (Test-Path $scriptsDir) {
+        (Get-ChildItem $scriptsDir | Select-Object -ExpandProperty Name) -join ", "
+    } else {
+        "<missing Scripts directory>"
+    }
+    throw "Snowflake CLI appears to have installed without a runnable 'snow' command under $scriptsDir. Available files: $availableScripts"
 }
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {

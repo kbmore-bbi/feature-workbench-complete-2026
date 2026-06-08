@@ -15,6 +15,7 @@ import yaml
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SOURCE_NAMESPACE = "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA"
+NAMESPACE_PLACEHOLDER = "__STTM_METADATA_NAMESPACE__"
 SKILLS_STAGE_NAME = "STTM_AGENT_SKILLS"
 
 SQL_FILES = [
@@ -22,25 +23,37 @@ SQL_FILES = [
     ROOT_DIR / "infra/snowflake/create-derived-sources-table.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-ddl.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-list-tables.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-list-columns.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-sample-data.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-stats.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-attribute-profile.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-relationship.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-check-table-staleness.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-check-column-staleness.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-cached-semantic-view.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-context-bundle.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-save-semantic-view.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-rollup-schema-summary.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-semantic-model.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-subagent-semantic-model.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-subagent-source-mapping.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-subagent-transformation-rule.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-dbt-repo-tools.sql",
 ]
 
 AGENT_SPECS = [
     ("AGT_SOURCE_MAPPING", ROOT_DIR / "infra/snowflake/agents/agent_spec_source_mapping.yaml"),
     ("AGT_TRANSFORMATION_RULE", ROOT_DIR / "infra/snowflake/agents/agent_spec_transformation_rule.yaml"),
     ("AGT_STTM_BUILDER", ROOT_DIR / "infra/snowflake/agents/agent_spec_sttm_builder.yaml"),
+    ("AGT_DBT_CONVERSION", ROOT_DIR / "infra/snowflake/agents/agent_spec_dbt_conversion.yaml"),
     ("AGT_SEMANTIC_MODEL", ROOT_DIR / "infra/snowflake/agents/agent_spec_semantic_model.yaml"),
+    ("AGT_WORKBENCH_CONVERSATION", ROOT_DIR / "infra/snowflake/agents/agent_spec_workbench_conversation.yaml"),
 ]
 
 SKILL_DIRECTORIES = [
     ROOT_DIR / "infra/snowflake/skills/sttm_bundle_orchestration",
     ROOT_DIR / "infra/snowflake/skills/derived_source_analyst",
+    ROOT_DIR / "infra/snowflake/skills/live_feedback_and_recommendations",
 ]
 
 
@@ -98,7 +111,8 @@ def target_namespace(database: str, schema: str) -> str:
 
 
 def render_sql(raw_sql: str, namespace: str) -> str:
-    rendered = raw_sql.replace(SOURCE_NAMESPACE, namespace)
+    rendered = raw_sql.replace(NAMESPACE_PLACEHOLDER, namespace)
+    rendered = rendered.replace(SOURCE_NAMESPACE, namespace)
     return re.sub(
         r"CREATE TABLE(?! IF NOT EXISTS)\s+",
         "CREATE TABLE IF NOT EXISTS ",
@@ -334,9 +348,8 @@ def main() -> int:
         restore_bundle_analyst_tools(
             connection,
             namespace=namespace,
-            warehouse=args.warehouse.strip(),
+            warehouse=args.warehouse,
         )
-
     print("")
     print("[bootstrap-sttm-metadata] Completed successfully.")
     print(f"[bootstrap-sttm-metadata] Target namespace: {namespace}")

@@ -37,6 +37,8 @@ import ErrorOutlineRoundedIcon from '@mui/icons-material/ErrorOutlineRounded';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import FiberManualRecordRoundedIcon from '@mui/icons-material/FiberManualRecordRounded';
+import FunctionsRoundedIcon from '@mui/icons-material/FunctionsRounded';
+import HelpOutlineOutlinedIcon from '@mui/icons-material/HelpOutlineOutlined';
 import FileUploadOutlinedIcon from '@mui/icons-material/FileUploadOutlined';
 import FilterAltOutlinedIcon from '@mui/icons-material/FilterAltOutlined';
 import FilterAltRoundedIcon from '@mui/icons-material/FilterAltRounded';
@@ -72,6 +74,10 @@ import RemoveCircleOutlineRoundedIcon from '@mui/icons-material/RemoveCircleOutl
 import SchemaRoundedIcon from '@mui/icons-material/SchemaRounded';
 import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import SendIcon from '@mui/icons-material/Send';
+import SettingsOutlinedIcon from '@mui/icons-material/SettingsOutlined';
+import ThumbDownAltOutlinedIcon from '@mui/icons-material/ThumbDownAltOutlined';
+import ThumbUpAltOutlinedIcon from '@mui/icons-material/ThumbUpAltOutlined';
+import TipsAndUpdatesOutlinedIcon from '@mui/icons-material/TipsAndUpdatesOutlined';
 import SmartToyIcon from '@mui/icons-material/SmartToy';
 import StorageRoundedIcon from '@mui/icons-material/StorageRounded';
 import TableChartIcon from '@mui/icons-material/TableChart';
@@ -125,6 +131,7 @@ export {
   ExpandMoreIcon,
   FiberManualRecordIcon,
   FiberManualRecordRoundedIcon,
+  FunctionsRoundedIcon,
   FileUploadOutlinedIcon,
   FilterAltOutlinedIcon,
   FilterAltRoundedIcon,
@@ -134,6 +141,7 @@ export {
   ForwardOutlinedIcon,
   GridOnRoundedIcon,
   GridViewRoundedIcon,
+  HelpOutlineOutlinedIcon,
   HubRoundedIcon,
   InfoOutlinedIcon,
   KeyIcon,
@@ -160,6 +168,7 @@ export {
   SchemaRoundedIcon,
   SearchRoundedIcon,
   SendIcon,
+  SettingsOutlinedIcon,
   SmartToyIcon,
   StorageRoundedIcon,
   TableChartIcon,
@@ -167,6 +176,9 @@ export {
   TableChartOutlinedIcon,
   TableChartRoundedIcon,
   TableRowsRoundedIcon,
+  ThumbDownAltOutlinedIcon,
+  ThumbUpAltOutlinedIcon,
+  TipsAndUpdatesOutlinedIcon,
   TaskAltRoundedIcon,
   TerminalRoundedIcon,
   TrendingFlatRoundedIcon,

@@ -1,12 +1,8 @@
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-  Background,
-  BackgroundVariant,
-  Controls,
   MarkerType,
-  ReactFlow,
   type Connection,
   type Edge,
   useEdgesState,
@@ -24,13 +20,12 @@ import AddCircleOutlineRoundedIcon from "@mui/icons-material/AddCircleOutlineRou
 import TableChartOutlinedIcon from "@mui/icons-material/TableChartOutlined";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
 import RadioButtonUncheckedRoundedIcon from "@mui/icons-material/RadioButtonUncheckedRounded";
-import ContentCopyRoundedIcon from "@mui/icons-material/ContentCopyRounded";
-import UploadFileRoundedIcon from "@mui/icons-material/UploadFileRounded";
 
 import { dbService } from "@/services/dbService";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import { FocusButton } from "@/components/ui/focus-button";
 import { FocusTable } from "@/components/ui/focus-table/focus-table";
+import { SqlEditor, SQL_EDITOR_DERIVED_HEIGHT } from "@/components/sql";
 import { FilterConditions, type RuleGroup } from "./filter-conditions";
 import { JoinModal } from "./join-modal";
 import {
@@ -41,6 +36,12 @@ import {
 } from "./sql-hydration";
 import { TableEdge } from "./table-edge";
 import { TableNode, type TableNodeData } from "./table-node";
+import { RelationshipFlowView } from "./relationship-flow-view";
+import {
+  buildRelationshipLayout,
+  mergeRelationshipNodePositions,
+  RELATIONSHIP_LAYOUT_COMPACT,
+} from "./relationship-layout";
 import type {
   Column,
   DerivedSource,
@@ -80,7 +81,8 @@ function parseRelationshipHandleId(
   const suffix = `-${kind}`;
   if (!handleId.endsWith(suffix)) return null;
   const withoutKind = handleId.slice(0, -suffix.length);
-  return withoutKind.slice(withoutKind.lastIndexOf(".") + 1);
+  const columnPart = withoutKind.slice(withoutKind.lastIndexOf(".") + 1);
+  return columnPart.replace(/-\d+$/, "");
 }
 
 interface AddDerivedModalProps {
@@ -317,8 +319,6 @@ export function AddDerivedModal({
     type: "success" | "error";
     message: string;
   } | null>(null);
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const sqlEditorRef = useRef<HTMLTextAreaElement | null>(null);
 
   const applySqlHydration = (
     sqlText: string,
@@ -579,11 +579,22 @@ export function AddDerivedModal({
     ) as Record<string, string>;
   }, [selectedTables]);
 
+  const layoutPositions = useMemo(
+    () =>
+      buildRelationshipLayout(
+        selectedTables.map((table) => table.id as string),
+        drivingTable,
+        joins,
+        RELATIONSHIP_LAYOUT_COMPACT,
+      ),
+    [drivingTable, joins, selectedTables],
+  );
+
   const relationshipNodes = useMemo(() => {
-    return selectedTables.map((table, index) => ({
+    return selectedTables.map((table) => ({
       id: table.id as string,
       type: "tableNode",
-      position: { x: 32 + index * 268, y: 40 },
+      position: layoutPositions[table.id as string] ?? { x: 32, y: 40 },
       data: {
         label: table.name ?? "—",
         schema: table.schema ?? "—",
@@ -611,23 +622,24 @@ export function AddDerivedModal({
         },
       } satisfies TableNodeData,
     }));
-  }, [drivingTable, selectedColumnsByTable, selectedTables]);
+  }, [drivingTable, layoutPositions, selectedColumnsByTable, selectedTables]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(relationshipNodes);
 
   useEffect(() => {
-    setNodes((prevNodes) =>
-      relationshipNodes.map((node) => {
-        const existing = prevNodes.find((prevNode) => prevNode.id === node.id);
-        return existing
-          ? {
-              ...node,
-              position: existing.position,
-            }
-          : node;
-      })
+    setNodes((previousNodes) =>
+      mergeRelationshipNodePositions(
+        relationshipNodes,
+        previousNodes,
+        layoutPositions,
+        RELATIONSHIP_LAYOUT_COMPACT,
+        {
+          joins,
+          drivingTableId: drivingTable,
+        },
+      ),
     );
-  }, [relationshipNodes, setNodes]);
+  }, [drivingTable, joins, layoutPositions, relationshipNodes, setNodes]);
 
   const relationshipEdges = useMemo(() => {
     return joins
@@ -766,8 +778,8 @@ export function AddDerivedModal({
   const previewColumns = useMemo(() => {
     return [
       { key: "index", label: "#", align: "left" as const },
-      ...previewColumnsState.map((column, index) => ({
-        key: `${column.name}-${index}`,
+      ...previewColumnsState.map((column) => ({
+        key: column.name,
         label: (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
             <Typography sx={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>
@@ -982,51 +994,6 @@ export function AddDerivedModal({
     });
   };
 
-  const handleCopySql = async () => {
-    try {
-      await navigator.clipboard.writeText(effectiveSqlExpression);
-      setValidationState({ type: "success", message: "SQL copied to clipboard." });
-    } catch {
-      setValidationState({ type: "error", message: "Unable to copy the SQL right now." });
-    }
-  };
-
-  const handleUploadSql = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const content = await file.text();
-      setCustomSql(content);
-      applySqlHydration(content, { preserveManualName: false });
-      setValidationState({
-        type: "success",
-        message: `Loaded SQL from ${file.name} and synced it to the builder.`,
-      });
-    } catch {
-      setValidationState({ type: "error", message: "Unable to read that SQL file." });
-    } finally {
-      event.target.value = "";
-    }
-  };
-
-  const insertSqlSnippet = (snippet: string) => {
-    const editor = sqlEditorRef.current;
-    if (!editor) {
-      setCustomSql((prev) => `${prev.trim()}\n${snippet}`.trim());
-      return;
-    }
-
-    const start = editor.selectionStart ?? editor.value.length;
-    const end = editor.selectionEnd ?? editor.value.length;
-    const nextValue = `${editor.value.slice(0, start)}${snippet}${editor.value.slice(end)}`;
-    setCustomSql(nextValue);
-    requestAnimationFrame(() => {
-      editor.focus();
-      const caret = start + snippet.length;
-      editor.setSelectionRange(caret, caret);
-    });
-  };
-
   const handleConfirm = async () => {
     const normalizedJoins = joins
       .filter(
@@ -1192,14 +1159,14 @@ export function AddDerivedModal({
         <Box
           sx={{
             width: 300,
-            borderRight: "1px solid #e5e7eb",
+            borderRight: "1px solid #e2e8f0",
             display: "flex",
             flexDirection: "column",
-            bgcolor: "#fafafa",
+            bgcolor: "#ffffff",
             overflowX: "hidden",
           }}
         >
-          <Box sx={{ p: 2, borderBottom: "1px solid #e5e7eb", flexShrink: 0 }}>
+          <Box sx={{ p: 2, borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
             <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", mb: 1 }}>
               DERIVED SOURCE NAME
             </Typography>
@@ -1233,7 +1200,7 @@ export function AddDerivedModal({
                     onClick={() => toggleTableSelection(table.id as string)}
                     sx={{
                       border: "1px solid",
-                      borderColor: isActive ? "#2563eb" : "#e5e7eb",
+                      borderColor: isActive ? "#2563eb" : "#e2e8f0",
                       borderRadius: 2,
                       px: 1.5,
                       py: 1.25,
@@ -1342,8 +1309,8 @@ export function AddDerivedModal({
 
         <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
           <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          <Box sx={{ minHeight: 520, display: "flex", flexDirection: "column", bgcolor: "#f8fafc", borderBottom: "1px solid #e5e7eb" }}>
-            <Box sx={{ display: "flex", borderBottom: "1px solid #e5e7eb", px: 3, pt: 2, gap: 3, bgcolor: "#ffffff" }}>
+          <Box sx={{ display: "flex", flexDirection: "column", bgcolor: "#ffffff", borderBottom: "1px solid #e2e8f0" }}>
+            <Box sx={{ display: "flex", borderBottom: "1px solid #e2e8f0", px: 3, pt: 2, gap: 3, bgcolor: "#ffffff" }}>
               <Box
                 onClick={() => setActiveTab("SQL")}
                 sx={{
@@ -1370,9 +1337,9 @@ export function AddDerivedModal({
               </Box>
             </Box>
 
-            <Box sx={{ flex: 1, minHeight: 0, p: 3 }}>
+            <Box sx={{ flex: 1, minHeight: 0, p: 3, width: "100%" }}>
               {activeTab === "SQL" ? (
-                <Box sx={{ height: "100%", minHeight: 420, bgcolor: "#0f172a", borderRadius: 2, p: 2, display: "flex", flexDirection: "column", gap: 1.5 }}>
+                <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, width: "100%" }}>
                   {validationState ? (
                     <Box
                       sx={{
@@ -1380,7 +1347,7 @@ export function AddDerivedModal({
                         py: 1,
                         borderRadius: 1.5,
                         backgroundColor: validationState.type === "success" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
-                        color: validationState.type === "success" ? "#bbf7d0" : "#fecaca",
+                        color: validationState.type === "success" ? "#166534" : "#b91c1c",
                         fontSize: 12,
                         fontWeight: 600,
                       }}
@@ -1388,104 +1355,56 @@ export function AddDerivedModal({
                       {validationState.message}
                     </Box>
                   ) : null}
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept=".sql,.txt"
-                    onChange={handleUploadSql}
-                    style={{ display: "none" }}
-                  />
-                  <Box sx={{ display: "flex", justifyContent: "space-between", gap: 1.5, flexWrap: "wrap" }}>
-                    <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
-                      <FocusButton
-                        variant="contained"
-                        size="small"
-                        rounded="full"
-                        onClick={handleApplySqlToBuilder}
-                      >
-                        Apply To Builder
-                      </FocusButton>
-                    </Box>
-                    <Box sx={{ display: "flex", gap: 0.75, alignItems: "center" }}>
-                      <IconButton
-                        onClick={() => fileInputRef.current?.click()}
-                        title="Upload SQL file"
-                        sx={{
-                          width: 34,
-                          height: 34,
-                          border: "1px solid rgba(191,219,254,0.28)",
-                          borderRadius: 2,
-                          color: "#bfdbfe",
-                          backgroundColor: "rgba(30,41,59,0.7)",
-                          "&:hover": { backgroundColor: "rgba(51,65,85,0.78)" },
-                        }}
-                      >
-                        <UploadFileRoundedIcon sx={{ fontSize: 18 }} />
-                      </IconButton>
-                      <IconButton
-                        onClick={handleCopySql}
-                        title="Copy SQL"
-                        sx={{
-                          width: 34,
-                          height: 34,
-                          border: "1px solid rgba(191,219,254,0.28)",
-                          borderRadius: 2,
-                          color: "#bfdbfe",
-                          backgroundColor: "rgba(30,41,59,0.7)",
-                          "&:hover": { backgroundColor: "rgba(51,65,85,0.78)" },
-                        }}
-                      >
-                        <ContentCopyRoundedIcon sx={{ fontSize: 18 }} />
-                      </IconButton>
-                    </Box>
+                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                    <FocusButton
+                      variant="contained"
+                      size="small"
+                      rounded="full"
+                      onClick={handleApplySqlToBuilder}
+                    >
+                      Apply To Builder
+                    </FocusButton>
                   </Box>
-                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
-                    {[
-                      { label: "COUNT", snippet: "COUNT(*) AS total_count" },
-                      { label: "SUM", snippet: "SUM(amount) AS total_amount" },
-                      { label: "AVG", snippet: "AVG(amount) AS avg_amount" },
-                      { label: "CONCAT", snippet: "CONCAT(first_name, ' ', last_name) AS full_name" },
-                      { label: "CASE", snippet: "CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END AS is_active" },
-                      { label: "ROW_NUMBER", snippet: "ROW_NUMBER() OVER (PARTITION BY customer_id ORDER BY created_datetime DESC) AS row_num" },
-                      { label: "LAG", snippet: "LAG(amount) OVER (PARTITION BY customer_id ORDER BY created_datetime) AS previous_amount" },
-                    ].map((shortcut) => (
-                      <button
-                        key={shortcut.label}
-                        type="button"
-                        onClick={() => insertSqlSnippet(shortcut.snippet)}
-                        style={{
-                          border: "1px solid rgba(191,219,254,0.24)",
-                          background: "rgba(15,23,42,0.72)",
-                          color: "#bfdbfe",
-                          borderRadius: 999,
-                          padding: "4px 10px",
-                          fontSize: 10,
-                          fontWeight: 700,
-                          cursor: "pointer",
-                        }}
-                      >
-                        {shortcut.label}
-                      </button>
-                    ))}
+                  <Box sx={{ width: '100%', flexShrink: 0 }}>
+                    <SqlEditor
+                      value={effectiveSqlExpression}
+                      onChange={setCustomSql}
+                      title="SQL View"
+                      placeholder="-- Paste, upload, or build SQL here"
+                      showCopy
+                      showUpload
+                      showFunctionLibrary
+                      minHeight={SQL_EDITOR_DERIVED_HEIGHT}
+                      maxHeight={SQL_EDITOR_DERIVED_HEIGHT}
+                      sx={{ width: '100%' }}
+                      onUpload={(content, fileName) => {
+                        setCustomSql(content);
+                        applySqlHydration(content, { preserveManualName: false });
+                        setValidationState({
+                          type: "success",
+                          message: `Loaded SQL from ${fileName} and synced it to the builder.`,
+                        });
+                      }}
+                      onUploadError={() => {
+                        setValidationState({
+                          type: "error",
+                          message: "Unable to read that SQL file.",
+                        });
+                      }}
+                      onCopySuccess={() => {
+                        setValidationState({
+                          type: "success",
+                          message: "SQL copied to clipboard.",
+                        });
+                      }}
+                      onCopyError={() => {
+                        setValidationState({
+                          type: "error",
+                          message: "Unable to copy the SQL right now.",
+                        });
+                      }}
+                    />
                   </Box>
-                  <Box
-                    component="textarea"
-                    ref={sqlEditorRef}
-                    value={effectiveSqlExpression}
-                    onChange={(event: React.ChangeEvent<HTMLTextAreaElement>) => setCustomSql(event.target.value)}
-                    sx={{
-                      flex: 1,
-                      minHeight: 340,
-                      m: 0,
-                      fontSize: 13,
-                      color: "#ffffff",
-                      fontFamily: "monospace",
-                      bgcolor: "transparent",
-                      border: "none",
-                      outline: "none",
-                      resize: "none",
-                    }}
-                  />
                   <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                     {detectedFunctions.length > 0 ? (
                       <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
@@ -1655,7 +1574,7 @@ export function AddDerivedModal({
             </Box>
           </Box>
 
-          <Box sx={{ p: 3, borderBottom: "1px solid #e5e7eb" }}>
+          <Box sx={{ p: 3, borderBottom: "1px solid #e2e8f0" }}>
             <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
               <Box>
                 <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
@@ -1679,7 +1598,17 @@ export function AddDerivedModal({
               </FocusButton>
             </Box>
 
-            <Box sx={{ height: 320, border: "1px solid #e5e7eb", borderRadius: 3, overflow: "hidden", bgcolor: "#ffffff" }}>
+            <Box
+              sx={{
+                height: 400,
+                border: "1px solid #e2e8f0",
+                borderRadius: "12px",
+                overflow: "hidden",
+                bgcolor: "#ffffff",
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
               {selectedTables.length === 0 ? (
                 <Box
                   sx={{
@@ -1696,7 +1625,8 @@ export function AddDerivedModal({
                   Select one or more source tables from the left. They will appear here for join design and column selection.
                 </Box>
               ) : (
-                <ReactFlow
+                <Box sx={{ flex: 1, minHeight: 0 }}>
+                <RelationshipFlowView
                   nodes={nodes}
                   edges={edges}
                   onNodesChange={onNodesChange}
@@ -1704,13 +1634,9 @@ export function AddDerivedModal({
                   onConnect={onConnect}
                   nodeTypes={nodeTypes}
                   edgeTypes={edgeTypes}
-                  proOptions={{ hideAttribution: true }}
                   defaultEdgeOptions={{ type: "tableEdge", animated: true }}
-                  style={{ width: "100%", height: "100%" }}
-                >
-                  <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="#e2e8f0" />
-                  <Controls position="bottom-right" style={{ marginBottom: 16, marginRight: 16 }} />
-                </ReactFlow>
+                />
+                </Box>
               )}
             </Box>
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mt: 1.5 }}>
@@ -1741,7 +1667,7 @@ export function AddDerivedModal({
             </Box>
           </Box>
 
-          <Box sx={{ borderBottom: "1px solid #e5e7eb" }}>
+          <Box sx={{ p: 3, borderBottom: "1px solid #e2e8f0" }}>
             <FilterConditions
               tables={selectedTables}
               initialGroups={filterGroups}

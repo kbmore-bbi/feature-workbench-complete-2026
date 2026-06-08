@@ -1,0 +1,22 @@
+defaults:
+  table_semantic_level: L2_ANALYST_READY
+  bundle_semantic_level: L3_MAPPING_ENRICHED
+  allow_agent_refresh_for_bundles: false
+  force: false
+
+table_groups:
+  - name: loan_income_sources
+    tables:
+      - BBI_STTM_TEST_DB.DL_AMOUNT.LOAN_INCOME_AMOUNT_CALCULATION
+      - BBI_STTM_TEST_DB.DL_AMOUNT.NOTE
+  - name: dw_ops_targets
+    schemas:
+      - BBI_STTM_TEST_DB.DW_OPS
+
+bundles:
+  - name: loan_income_to_dw_ops
+    source_tables:
+      - BBI_STTM_TEST_DB.DL_AMOUNT.LOAN_INCOME_AMOUNT_CALCULATION
+      - BBI_STTM_TEST_DB.DL_AMOUNT.NOTE
+    target_table: BBI_STTM_TEST_DB.DW_OPS.LOAN_INCOME_AMOUNT_CALCULATION
+    requested_level: L3_MAPPING_ENRICHED

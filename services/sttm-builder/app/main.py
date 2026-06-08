@@ -29,6 +29,7 @@ app = FastAPI(
 setup_docs(app)
 app.add_middleware(GuardrailsMiddleware, config=load_config(settings=_settings))
 
+_origins: list[str] = []
 if _settings.cors_allowed_origins:
     wildcard_requested = _settings.cors_allowed_origins.strip() == "*"
     if wildcard_requested and _settings.non_local_env and not _settings.local_dev_auth_enabled:
@@ -36,32 +37,33 @@ if _settings.cors_allowed_origins:
             "Skipping wildcard CORS configuration in non-local environment: app_env=%s",
             _settings.app_env,
         )
-        _origins: list[str] = []
     else:
-        _origins = (
+        _origins.extend(
             ["*"]
             if wildcard_requested
             else [o.strip() for o in _settings.cors_allowed_origins.split(",") if o.strip()]
         )
-    if _settings.local_dev_auth_enabled:
-        for origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
-            if origin not in _origins:
-                _origins.append(origin)
-    if _origins:
-        app.add_middleware(
-            CORSMiddleware,
-            allow_origins=_origins,
-            allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            allow_headers=[
-                "Content-Type",
-                "Accept",
-                "Sf-Context-Current-User",
-                "Sf-Context-Current-User-Email",
-                "Sf-Context-Current-User-Token",
-                "X-Request-Id",
-                "X-Trace-Id",
-            ],
-        )
+
+if _settings.local_dev_auth_enabled:
+    for origin in ("http://localhost:3000", "http://127.0.0.1:3000"):
+        if origin not in _origins:
+            _origins.append(origin)
+
+if _origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=[
+            "Content-Type",
+            "Accept",
+            "Sf-Context-Current-User",
+            "Sf-Context-Current-User-Email",
+            "Sf-Context-Current-User-Token",
+            "X-Request-Id",
+            "X-Trace-Id",
+        ],
+    )
 
 app.add_exception_handler(AppError, app_error_handler)
 app.add_exception_handler(RequestValidationError, request_validation_error_handler)

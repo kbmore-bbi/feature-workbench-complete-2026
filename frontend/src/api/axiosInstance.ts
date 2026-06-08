@@ -30,7 +30,13 @@ const api = axios.create({
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    const requestUrl = String(error?.config?.url ?? "");
+    const isAssistantSignalEvaluate = requestUrl.includes("/conversation/signals/evaluate");
     if (axios.isCancel(error) || error?.code === "ERR_CANCELED" || error?.name === "CanceledError") {
+      return Promise.reject(error);
+    }
+    const isTimeout = error?.code === "ECONNABORTED" || String(error?.message ?? "").toLowerCase().includes("timeout");
+    if (isAssistantSignalEvaluate) {
       return Promise.reject(error);
     }
     console.error('Global API Error:', error.response?.data || error.message);

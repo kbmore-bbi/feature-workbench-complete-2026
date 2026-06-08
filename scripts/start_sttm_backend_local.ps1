@@ -39,15 +39,20 @@ function Resolve-VenvPython {
 }
 
 function Resolve-BootstrapPython {
+    $pyCommand = Get-Command "py" -ErrorAction SilentlyContinue
+    if ($pyCommand) {
+        return @($pyCommand.Source, "-3")
+    }
+
     $candidates = @("python", "python3")
     foreach ($candidate in $candidates) {
         $command = Get-Command $candidate -ErrorAction SilentlyContinue
         if ($command) {
-            return $command.Source
+            return @($command.Source)
         }
     }
 
-    Fail "Python 3 is required but was not found."
+    Fail "Python 3 is required but was not found. Install Python or make sure the Windows 'py' launcher is available."
 }
 
 function Import-EnvFile {
@@ -156,7 +161,12 @@ function Ensure-Venv {
 
     $bootstrapPython = Resolve-BootstrapPython
     Log-Info "Creating virtual environment at $VenvDir"
-    & $bootstrapPython -m venv $VenvDir
+    $bootstrapExe = $bootstrapPython[0]
+    $bootstrapArgs = @()
+    if ($bootstrapPython.Length -gt 1) {
+        $bootstrapArgs = $bootstrapPython[1..($bootstrapPython.Length - 1)]
+    }
+    & $bootstrapExe @bootstrapArgs -m venv $VenvDir
 
     $venvPython = Resolve-VenvPython
     if (-not $venvPython) {

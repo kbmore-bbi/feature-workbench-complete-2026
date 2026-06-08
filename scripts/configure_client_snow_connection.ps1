@@ -11,7 +11,24 @@ if (-not $EnvFile) {
 }
 
 $ToolsVenv = Join-Path $RootDir ".client-tools-venv"
-$SnowExe = Join-Path $ToolsVenv "Scripts\snow.exe"
+
+function Resolve-SnowCli {
+    param([string]$VenvPath)
+
+    $candidates = @(
+        (Join-Path $VenvPath "Scripts\snow.exe"),
+        (Join-Path $VenvPath "Scripts\snow.cmd"),
+        (Join-Path $VenvPath "Scripts\snow")
+    )
+
+    foreach ($candidate in $candidates) {
+        if (Test-Path $candidate) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
 
 function Import-ClientEnv {
     param([string]$Path)
@@ -40,9 +57,14 @@ function Import-ClientEnv {
     return $values
 }
 
-if (-not (Test-Path $SnowExe)) {
+if (-not (Resolve-SnowCli -VenvPath $ToolsVenv)) {
     Write-Host "Snow CLI tools are not bootstrapped yet. Running bootstrap script first."
     & (Join-Path $PSScriptRoot "bootstrap_client_spcs_tools.ps1")
+}
+
+$SnowExe = Resolve-SnowCli -VenvPath $ToolsVenv
+if (-not $SnowExe) {
+    throw "Snow CLI is still unavailable after bootstrap. Check .client-tools-venv\\Scripts for a runnable snow command."
 }
 
 $cfg = Import-ClientEnv -Path $EnvFile

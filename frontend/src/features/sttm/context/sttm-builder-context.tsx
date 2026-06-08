@@ -1,11 +1,12 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef } from "react";
+import { usePathname } from "next/navigation";
 import { dbService } from "@/services/dbService";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import type { RootState } from "@/store/store";
 import {
   evaluateAssistantSignals,
-  fetchAssistantSignals,
   fetchDatabases,
   fetchSchemas,
   fetchTables,
@@ -41,6 +42,8 @@ import {
   bulkSetDirect as bulkSetDirectAction,
   setPreProcessModalOpen as setPreProcessModalOpenAction,
   setMappingSql as setMappingSqlAction,
+  setMappingPreviewSql as setMappingPreviewSqlAction,
+  setMappingSqlVariant as setMappingSqlVariantAction,
   updateAssistantPreferences as updateAssistantPreferencesThunk,
 } from "@/features/sttm/store/sttm-builder-slice";
 import type {
@@ -57,15 +60,36 @@ export function SttmBuilderProvider({
 }: {
   children: React.ReactNode;
 }) {
+  const pathname = usePathname();
   const dispatch = useAppDispatch();
   const state = useAppSelector((s) => s.sttmBuilder);
   const lastAssistantSignalSignature = useRef<string | null>(null);
+  const signalEvaluationTimerRef = useRef<number | null>(null);
+  const signalEvaluationInFlightRef = useRef(false);
+  const queuedAssistantSignalSignatureRef = useRef<string | null>(null);
+
+  const currentAssistantPage = useMemo(() => {
+    if (pathname.includes("/summary")) return "summary";
+    if (pathname.includes("/mapping")) return "mapping";
+    return "builder";
+  }, [pathname]);
+
+  const currentAssistantSurface = currentAssistantPage === "mapping" ? "MAPPING" : "SOURCE_SELECTION";
 
   // Load databases on mount
   useEffect(() => {
     dispatch(fetchDatabases());
     dispatch(fetchDerivedSources());
   }, [dispatch]);
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.removeItem("sttm-builder-session-v1");
+      window.sessionStorage.removeItem("sttm-builder-session-v2");
+    } catch (error) {
+      console.warn("Unable to clear STTM builder draft session.", error);
+    }
+  }, []);
 
   const assistantSignalSignature = useMemo(() => {
     const selectedSources = state.sources
@@ -91,7 +115,8 @@ export function SttmBuilderProvider({
       .sort();
 
     return JSON.stringify({
-      page: state.targetAttributeGroup ? "mapping" : "builder",
+      page: currentAssistantPage,
+      surface: currentAssistantSurface,
       selectedSources,
       selectedDerived,
       selectedTarget,
@@ -113,11 +138,49 @@ export function SttmBuilderProvider({
     state.relationships,
     state.mappings,
     state.selectedMappingIds,
-    state.targetAttributeGroup,
+    currentAssistantPage,
+    currentAssistantSurface,
   ]);
+
+  const buildAssistantActivityType = () => {
+    if (currentAssistantPage === "mapping") {
+      return state.relationships.length > 0 ? "mapping_join_ready" : "mapping_context_changed";
+    }
+    if (state.relationships.length > 0) {
+      return "relationship_changed";
+    }
+    if (state.derivedSources.some((source) => source.isSelected)) {
+      return "derived_source_selected";
+    }
+    return "selection_changed";
+  };
+
+  const runAssistantSignalEvaluation = (signature: string) => {
+    signalEvaluationInFlightRef.current = true;
+    void dispatch(
+      evaluateAssistantSignals({
+        page: currentAssistantPage,
+        surface: currentAssistantSurface,
+        activityType: buildAssistantActivityType(),
+      }),
+    ).finally(() => {
+      signalEvaluationInFlightRef.current = false;
+      const queuedSignature = queuedAssistantSignalSignatureRef.current;
+      if (!queuedSignature || queuedSignature === signature) {
+        queuedAssistantSignalSignatureRef.current = null;
+        return;
+      }
+      queuedAssistantSignalSignatureRef.current = null;
+      lastAssistantSignalSignature.current = queuedSignature;
+      runAssistantSignalEvaluation(queuedSignature);
+    });
+  };
 
   useEffect(() => {
     if (!state.loadState.initial || state.loadState.initial === "loading") {
+      return;
+    }
+    if (currentAssistantPage === "mapping" && state.loadState.attributes === "loading") {
       return;
     }
     if (!state.assistantPreferences.feedback_enabled && !state.assistantPreferences.recommendations_enabled) {
@@ -138,16 +201,32 @@ export function SttmBuilderProvider({
       return;
     }
     lastAssistantSignalSignature.current = assistantSignalSignature;
-    const timeoutId = window.setTimeout(() => {
-      dispatch(evaluateAssistantSignals());
-    }, 1400);
-    return () => window.clearTimeout(timeoutId);
+    if (signalEvaluationTimerRef.current !== null) {
+      window.clearTimeout(signalEvaluationTimerRef.current);
+    }
+    signalEvaluationTimerRef.current = window.setTimeout(() => {
+      if (signalEvaluationInFlightRef.current) {
+        queuedAssistantSignalSignatureRef.current = assistantSignalSignature;
+        signalEvaluationTimerRef.current = null;
+        return;
+      }
+      runAssistantSignalEvaluation(assistantSignalSignature);
+      signalEvaluationTimerRef.current = null;
+    }, 900);
+    return () => {
+      if (signalEvaluationTimerRef.current !== null) {
+        window.clearTimeout(signalEvaluationTimerRef.current);
+        signalEvaluationTimerRef.current = null;
+      }
+    };
   }, [
     assistantSignalSignature,
     dispatch,
     state.assistantPreferences.feedback_enabled,
     state.assistantPreferences.recommendations_enabled,
+    state.loadState.attributes,
     state.loadState.initial,
+    currentAssistantPage,
   ]);
 
   const value = useMemo<ContextValue>(() => {
@@ -175,6 +254,7 @@ export function SttmBuilderProvider({
       mappingSuggestions: state.mappingSuggestions,
       mappingLoading: state.mappingLoading,
       autoMapStatusMessage: state.autoMapStatusMessage,
+      autoMapProcessingIds: state.autoMapProcessingIds,
 
       // Chat
       chatMessages: state.chatMessages,
@@ -183,6 +263,7 @@ export function SttmBuilderProvider({
       assistantInferences: state.assistantInferences,
       assistantPreferences: state.assistantPreferences,
       assistantUnreadCount: state.assistantUnreadCount,
+      mappingIntent: state.mappingIntent,
       semanticBundleId: state.semanticBundleId,
       semanticBundleLabel: state.semanticBundleLabel,
       semanticLevel: state.semanticLevel,
@@ -265,7 +346,13 @@ export function SttmBuilderProvider({
         );
       },
       refreshAssistantSignals: () => {
-        dispatch(fetchAssistantSignals());
+        dispatch(
+          evaluateAssistantSignals({
+            page: currentAssistantPage,
+            surface: currentAssistantSurface,
+            activityType: buildAssistantActivityType(),
+          }),
+        );
       },
       requestSemanticRefresh: async () => {
         const selectedSourceTables = state.sources
@@ -278,7 +365,7 @@ export function SttmBuilderProvider({
           return;
         }
         const selectedTargetTable = state.targets.find((table) => table.isSelected);
-        const refresh = await dbService.refreshSemanticContext({
+        void dbService.refreshSemanticContext({
           selected_source_tables: selectedSourceTables,
           selected_derived_sources: selectedDerivedSourceIds,
           target_table: selectedTargetTable
@@ -298,12 +385,23 @@ export function SttmBuilderProvider({
                 right_column: condition.rightColumn,
                 operator: condition.operator ?? "=",
               })),
-            })),
+          })),
           requested_level: selectedTargetTable ? "L3_MAPPING_ENRICHED" : "L2_ANALYST_READY",
           force: false,
-        });
-        dispatch(applySemanticRefreshAction(refresh));
-        dispatch(fetchAssistantSignals());
+        })
+          .then((refresh) => {
+            dispatch(applySemanticRefreshAction(refresh));
+            dispatch(
+              evaluateAssistantSignals({
+                page: currentAssistantPage,
+                surface: currentAssistantSurface,
+                activityType: "semantic_context_refreshed",
+              }),
+            );
+          })
+          .catch((error) => {
+            console.warn("Semantic refresh request did not complete in the background.", error);
+          });
       },
       respondToAssistantSignal: ({ signalId, status, optionSelected, rating, comment }) => {
         dispatch(
@@ -314,13 +412,17 @@ export function SttmBuilderProvider({
             rating: rating ?? null,
             comment: comment ?? null,
           }),
-        ).then(() => {
-          dispatch(fetchAssistantSignals());
-        });
+        );
       },
       updateAssistantPreferences: (settings) => {
         dispatch(updateAssistantPreferencesThunk(settings)).then(() => {
-          dispatch(fetchAssistantSignals());
+          dispatch(
+            evaluateAssistantSignals({
+              page: currentAssistantPage,
+              surface: currentAssistantSurface,
+              activityType: "settings_changed",
+            }),
+          );
         });
       },
       openPendingDerivedSourceDraft: () => {
@@ -379,6 +481,8 @@ export function SttmBuilderProvider({
       mappings: state.mappings,
       selectedMappingIds: state.selectedMappingIds,
       mappingSql: state.mappingSql,
+      mappingPreviewSql: state.mappingPreviewSql,
+      mappingSqlVariant: state.mappingSqlVariant,
       isPreProcessModalOpen: state.isPreProcessModalOpen,
       activeMappingId: state.activeMappingId,
       pendingAiMappingReviews: state.pendingAiMappingReviews,
@@ -393,6 +497,8 @@ export function SttmBuilderProvider({
       bulkSetDirect: (ids) => dispatch(bulkSetDirectAction({ ids })),
       setPreProcessModalOpen: (open, mappingId) => dispatch(setPreProcessModalOpenAction({ open, mappingId })),
       setMappingSql: (sql) => dispatch(setMappingSqlAction({ sql })),
+      setMappingPreviewSql: (sql) => dispatch(setMappingPreviewSqlAction({ sql })),
+      setMappingSqlVariant: (variant) => dispatch(setMappingSqlVariantAction({ variant })),
     };
   }, [state, dispatch]);
 

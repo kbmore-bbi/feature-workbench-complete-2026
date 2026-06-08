@@ -560,3 +560,123 @@ CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENC
     UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
 )
 COMMENT = 'Canonical structured RAG document table indexed by Cortex Search for semantic, relationship, feedback, recommendation, and conversation retrieval.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_CLIENT_NOTES (
+    NOTE_ID              STRING          NOT NULL,
+    PROJECT_ID           STRING,
+    ENTITY_TYPE          STRING,
+    ENTITY_IDS           VARIANT,
+    TITLE                STRING,
+    NOTE_TEXT            STRING          NOT NULL,
+    SOURCE_LABEL         STRING,
+    AUTHOR_NAME          STRING,
+    TAGS                 VARIANT,
+    ATTRIBUTES           VARIANT,
+    STATUS               STRING          DEFAULT 'active',
+    UPDATED_AT           TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    CREATED_AT           TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Client-provided business notes, usage guidance, and mapping context that can be indexed for assistant retrieval in client environments.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_CLIENT_SQL_ASSETS (
+    SQL_ASSET_ID         STRING          NOT NULL,
+    PROJECT_ID           STRING,
+    ENTITY_TYPE          STRING,
+    ENTITY_IDS           VARIANT,
+    TITLE                STRING,
+    SQL_TEXT             STRING          NOT NULL,
+    SQL_KIND             STRING          DEFAULT 'historical_mapping',
+    DIALECT              STRING          DEFAULT 'snowflake',
+    DESCRIPTION          STRING,
+    SOURCE_LABEL         STRING,
+    AUTHOR_NAME          STRING,
+    TAGS                 VARIANT,
+    ATTRIBUTES           VARIANT,
+    STATUS               STRING          DEFAULT 'active',
+    UPDATED_AT           TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    CREATED_AT           TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Client-provided historical SQL, mapping SQL, and handcrafted query assets that can be indexed and cited by the assistant.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_FIR_EVENTS (
+    EVENT_ID            STRING          NOT NULL,
+    EVENT_TYPE          STRING          NOT NULL,
+    USER_ID             STRING,
+    SESSION_ID          STRING,
+    REQUEST_ID          STRING,
+    PAGE                STRING,
+    SURFACE             STRING,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    EVENT_PAYLOAD       VARIANT,
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Canonical event stream for live Feedback, Inference, and Recommendation evaluation.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_FIR_FEATURES (
+    FEATURE_KEY         STRING          NOT NULL,
+    USER_ID             STRING,
+    SESSION_ID          STRING,
+    PAGE                STRING,
+    SURFACE             STRING,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    FEATURES            VARIANT,
+    MODEL_TARGETS       VARIANT,
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Online FIR feature snapshots and lightweight model scores used for low-latency recommendation and feedback decisions.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_MAPPING_INTENTS (
+    INTENT_ID           STRING          NOT NULL,
+    CONTEXT_KEY         STRING          NOT NULL,
+    USER_ID             STRING,
+    SESSION_ID          STRING,
+    TARGET_TABLE        STRING,
+    SOURCE_TABLES       VARIANT,
+    BUSINESS_GOAL       STRING,
+    LIFECYCLE           STRING          DEFAULT 'unknown',
+    TARGET_OUTCOME      STRING,
+    DOMAIN_HINTS        VARIANT,
+    SOURCE              STRING          DEFAULT 'user',
+    CONFIDENCE          FLOAT,
+    ATTRIBUTES          VARIANT,
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Business-first mapping intent captured for a source/target context and reused by FIR, automap, and semantic guidance.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_SEMANTIC_LEARNINGS (
+    LEARNING_ID         STRING          NOT NULL,
+    LEARNING_KEY        STRING          NOT NULL,
+    USER_ID             STRING,
+    ENTITY_TYPE         STRING,
+    ENTITY_IDS          VARIANT,
+    LEARNING_TYPE       STRING          NOT NULL,
+    SUMMARY             STRING          NOT NULL,
+    CONFIDENCE          FLOAT,
+    SOURCE              STRING          NOT NULL,
+    ATTRIBUTES          VARIANT,
+    UPDATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    CREATED_AT          TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Curated semantic learnings distilled from feedback, inferences, and accepted recommendations for semantic reuse and automap improvement.';
+
+CREATE TABLE IF NOT EXISTS FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_FIR_MODEL_SCORES (
+    SCORE_ID                              STRING          NOT NULL,
+    MODEL_NAME                            STRING          NOT NULL,
+    MODEL_VERSION                         STRING          NOT NULL,
+    CONTEXT_KEY                           STRING          NOT NULL,
+    ENTITY_TYPE                           STRING,
+    ENTITY_ID                             STRING,
+    PAGE                                  STRING,
+    SURFACE                               STRING,
+    FEEDBACK_NEEDED_PROBABILITY           FLOAT,
+    RECOMMENDATION_HELPFULNESS_PROBABILITY FLOAT,
+    RECOMMENDATION_TYPE                   STRING,
+    RECOMMENDATION_PRIORITY               FLOAT,
+    SCORE_PAYLOAD                         VARIANT,
+    UPDATED_AT                            TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP(),
+    CREATED_AT                            TIMESTAMP_NTZ   DEFAULT CURRENT_TIMESTAMP()
+)
+COMMENT = 'Latest FIR model predictions per live context, used to bias recommendation and feedback decisions without forcing retrieval on every click.';

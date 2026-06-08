@@ -20,10 +20,11 @@ instructions:
     ["claude-sonnet-4-6", "claude-haiku-4-5"]
 
     Default Model Policy:
-    - Use `claude-sonnet-4-6` for AGT_SEMANTIC_MODEL because semantic enrichment quality matters,
-      but avoid heavier models unless explicitly required.
+    - Prefer `claude-sonnet-4-6` for AGT_SEMANTIC_MODEL on the live path.
+    - Reserve heavier model choices for explicit refresh, offline rebuilds, or especially ambiguous semantic-generation requests.
+      Only force a heavier model if the semantic output quality is clearly inadequate for the current domain.
     - Use `claude-haiku-4-5` for AGT_SOURCE_MAPPING and AGT_TRANSFORMATION_RULE by default.
-    - Do not assume `auto` model selection for sub-agent work.
+    - Do not assume `auto` for all sub-agent work; use it selectively where latency/quality balancing matters.
 
     ## Input contract
     The user message is a serialized agent payload JSON object. Parse it as JSON.
@@ -39,6 +40,8 @@ instructions:
       "context": {
         "surface": "SOURCE_SELECTION | DERIVED_SOURCE | MAPPING",
         "semantic_level_requested": "L1_CONTEXT | L2_ANALYST_READY | L3_MAPPING_ENRICHED",
+        "mapping_intent": {},
+        "semantic_learnings": [],
         "source_tables": [],
         "selected_derived_sources": [],
         "target_table": null,
@@ -120,6 +123,9 @@ instructions:
       - For mapping-page refinement requests, do not answer with only explanatory markdown when a
         sub-agent can provide a structured result. The UI review/apply flow depends on
         `data.agent`, `data.result`, and `data.artifact_type`.
+      - Use mapping_intent and semantic_learnings when available to improve source selection,
+        multi-source mapping, and transformation recommendations. Prefer business-purpose reasoning
+        over name-only column matching.
       - When a mapping or transformation sub-agent is called, preserve the canonical payload from
         that sub-agent in `data.result` and set `artifact_type` to `source_mapping` or
         `transformation_rules`. Any natural-language explanation should be additive in `message`,
@@ -209,12 +215,12 @@ skills:
   - name: sttm_bundle_orchestration
     source:
       type: STAGE
-      path: "@FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.STTM_AGENT_SKILLS/skills/sttm_bundle_orchestration"
+      path: "@__STTM_METADATA_NAMESPACE__.STTM_AGENT_SKILLS/skills/sttm_bundle_orchestration"
 
   - name: derived_source_analyst
     source:
       type: STAGE
-      path: "@FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.STTM_AGENT_SKILLS/skills/derived_source_analyst"
+      path: "@__STTM_METADATA_NAMESPACE__.STTM_AGENT_SKILLS/skills/derived_source_analyst"
 
 tools:
   - tool_spec:
@@ -277,7 +283,7 @@ tool_resources:
   AGT_SEMANTIC_MODEL:
     type: procedure
     name: "SP_SUBAGT_SEMANTIC_MODEL(VARCHAR, DEFAULT VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_SUBAGT_SEMANTIC_MODEL"
+    identifier: "__STTM_METADATA_NAMESPACE__.SP_SUBAGT_SEMANTIC_MODEL"
     execution_environment:
       type: warehouse
       warehouse: ""
@@ -285,7 +291,7 @@ tool_resources:
   AGT_SOURCE_MAPPING:
     type: procedure
     name: "SP_SUBAGT_SOURCE_MAPPING(VARCHAR, DEFAULT VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_SUBAGT_SOURCE_MAPPING"
+    identifier: "__STTM_METADATA_NAMESPACE__.SP_SUBAGT_SOURCE_MAPPING"
     execution_environment:
       type: warehouse
       warehouse: ""
@@ -293,7 +299,7 @@ tool_resources:
   AGT_TRANSFORMATION_RULE:
     type: procedure
     name: "SP_SUBAGT_TRANSFORMATION_RULE(VARCHAR, DEFAULT VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_SUBAGT_TRANSFORMATION_RULE"
+    identifier: "__STTM_METADATA_NAMESPACE__.SP_SUBAGT_TRANSFORMATION_RULE"
     execution_environment:
       type: warehouse
       warehouse: ""

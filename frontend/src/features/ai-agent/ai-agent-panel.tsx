@@ -271,6 +271,27 @@ function MessageContent({ content }: { content: string }) {
   return <Box sx={{ display: "grid", gap: 1.25 }}>{blocks}</Box>;
 }
 
+function buildSignalUnderstandingText(signal: {
+  attributes?: Record<string, unknown>;
+}) {
+  const value = signal.attributes?.current_understanding;
+  if (typeof value === "string" && value.trim()) {
+    return value.trim();
+  }
+  return null;
+}
+
+function shouldSuppressSignalForCurrentState(
+  signal: {
+    attributes?: Record<string, unknown>;
+  },
+  relationshipCount: number,
+) {
+  if (relationshipCount === 0) return false;
+  const actionType = typeof signal.attributes?.action_type === "string" ? signal.attributes.action_type : "";
+  return actionType === "refresh_semantic_context";
+}
+
 function TracePanel({
   messageId,
   steps,
@@ -359,6 +380,7 @@ export default function AIAgentPanel({
 }) {
   const {
     assistantSignals,
+    relationships,
     chatLoading,
     chatMessages,
     datahubStatus,
@@ -369,7 +391,6 @@ export default function AIAgentPanel({
     openPendingDerivedSourceDraft,
     pendingDerivedSourceDraft,
     pendingAiMappingReviews,
-    relationships,
     semanticBundleLabel,
     semanticLevel,
     semanticStatus,
@@ -384,6 +405,7 @@ export default function AIAgentPanel({
   const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
   const [pendingFeedback, setPendingFeedback] = useState<Record<string, { rating: number; comment: string }>>({});
   const [pendingSignalResponses, setPendingSignalResponses] = useState<Record<string, { optionSelected?: string | null; rating?: number | null; comment: string }>>({});
+  const [signalActionBusyId, setSignalActionBusyId] = useState<string | null>(null);
   const messagesRef = useRef<HTMLDivElement | null>(null);
 
   const statsLabel = useMemo(() => {
@@ -398,8 +420,14 @@ export default function AIAgentPanel({
   const activeReview = pendingAiMappingReviews[0] ?? null;
   const isTransformationReview = !!activeReview?.preprocessingRule;
   const activeSignal = useMemo(
-    () => assistantSignals.find((signal) => signal.status === "new") ?? assistantSignals[0] ?? null,
-    [assistantSignals],
+    () =>
+      assistantSignals.find(
+        (signal) =>
+          signal.status !== "dismissed" &&
+          signal.status !== "responded" &&
+          !shouldSuppressSignalForCurrentState(signal, relationships.length),
+      ) ?? null,
+    [assistantSignals, relationships.length],
   );
 
   const handleSend = () => {
@@ -552,29 +580,116 @@ export default function AIAgentPanel({
     });
   };
 
+  const confirmSignalOption = (signalId: string, optionSelected: string) => {
+    respondToAssistantSignal({
+      signalId,
+      status: "responded",
+      optionSelected,
+    });
+    setPendingSignalResponses((current) => {
+      const next = { ...current };
+      delete next[signalId];
+      return next;
+    });
+  };
+
+  const explainSignal = async (signal: (typeof assistantSignals)[number], optionLabel?: string) => {
+    const signalTables =
+      Array.isArray(signal.entity_ids) && signal.entity_ids.length >= 2
+        ? signal.entity_ids.slice(0, 2)
+        : [];
+    const fallbackPrompt =
+      signalTables.length >= 2
+        ? `Explain the relationship between ${signalTables[0]} and ${signalTables[1]} in simple business terms and tell me whether it looks reliable for mapping.`
+        : "Explain the relationship between the selected tables in simple business terms and tell me whether it looks reliable for mapping.";
+    const suggestedPrompt =
+      typeof signal.attributes?.suggested_prompt === "string" && signal.attributes.suggested_prompt.trim()
+        ? signal.attributes.suggested_prompt.trim()
+        : fallbackPrompt;
+    const currentUnderstanding = buildSignalUnderstandingText(signal);
+    const explanationPrompt = currentUnderstanding
+      ? `${suggestedPrompt}\n\nThis is your current understanding so far:\n${currentUnderstanding}\n\nPlease explain this in simple business terms, tell me what looks reliable, and call out the specific assumption or join detail the user should confirm or correct.`
+      : suggestedPrompt;
+    sendChatMessage(explanationPrompt);
+    respondToAssistantSignal({
+      signalId: signal.signal_id,
+      status: "acknowledged",
+      optionSelected: optionLabel ?? "Ask AI to explain first",
+    });
+  };
+
   const applySignalAction = async (signal: (typeof assistantSignals)[number]) => {
     const actionType = typeof signal.attributes?.action_type === "string" ? signal.attributes.action_type : "";
     if (actionType === "refresh_semantic_context") {
-      await requestSemanticRefresh();
-      respondToAssistantSignal({
-        signalId: signal.signal_id,
-        status: "acknowledged",
-        optionSelected: "Refresh semantic context",
-      });
+      try {
+        setSignalActionBusyId(signal.signal_id);
+        await requestSemanticRefresh();
+        respondToAssistantSignal({
+          signalId: signal.signal_id,
+          status: "acknowledged",
+          optionSelected: "Refresh semantic context",
+        });
+      } finally {
+        setSignalActionBusyId(null);
+      }
       return;
     }
     if (actionType === "explain_relationship") {
-      const suggestedPrompt =
-        typeof signal.attributes?.suggested_prompt === "string" && signal.attributes.suggested_prompt.trim()
-          ? signal.attributes.suggested_prompt.trim()
-          : "Explain the relationship between the selected tables in business terms.";
-      sendChatMessage(suggestedPrompt);
-      respondToAssistantSignal({
-        signalId: signal.signal_id,
-        status: "acknowledged",
-        optionSelected: "Explain this relationship",
-      });
+      await explainSignal(signal, "Explain this relationship");
     }
+  };
+
+  const handleSignalOption = async (signal: (typeof assistantSignals)[number], option: string) => {
+    const normalized = option.trim().toLowerCase();
+    if (normalized === "refresh semantic context" || normalized === "build stronger context") {
+      await applySignalAction(signal);
+      return;
+    }
+    if (
+      normalized === "ask ai to explain first" ||
+      normalized === "explain this relationship" ||
+      normalized === "explain this join"
+    ) {
+      await explainSignal(signal, option);
+      return;
+    }
+    if (normalized === "dismiss" || normalized === "not now") {
+      dismissSignal(signal.signal_id);
+      return;
+    }
+    if (normalized === "looks right") {
+      confirmSignalOption(signal.signal_id, option);
+      return;
+    }
+    if (normalized === "needs correction") {
+      const currentUnderstanding = buildSignalUnderstandingText(signal);
+      setPendingSignalResponses((current) => ({
+        ...current,
+        [signal.signal_id]: {
+          rating: current[signal.signal_id]?.rating ?? null,
+          optionSelected: option,
+          comment: current[signal.signal_id]?.comment ?? "",
+        },
+      }));
+      sendChatMessage(
+        currentUnderstanding
+          ? `This current understanding needs correction:\n${currentUnderstanding}\n\nPlease ask me what looks wrong, what the right business meaning is, and what join or relationship should be used instead.`
+          : "I think the current join needs correction. Please ask me what looks wrong and help me capture the right business relationship.",
+      );
+      return;
+    }
+    if (normalized === "i will type it manually" || normalized === "i want to describe it") {
+      setPendingSignalResponses((current) => ({
+        ...current,
+        [signal.signal_id]: {
+          rating: current[signal.signal_id]?.rating ?? null,
+          optionSelected: option,
+          comment: current[signal.signal_id]?.comment ?? "",
+        },
+      }));
+      return;
+    }
+    selectSignalOption(signal.signal_id, option);
   };
 
   return (
@@ -779,9 +894,11 @@ export default function AIAgentPanel({
               const draftResponse = pendingSignalResponses[signal.signal_id];
               const thumbsUpSelected = draftResponse?.rating === 5;
               const thumbsDownSelected = draftResponse?.rating === 1;
+              const isRefreshSignal = signal.attributes?.action_type === "refresh_semantic_context";
+              const currentUnderstanding = buildSignalUnderstandingText(signal);
               const actionLabel =
-                signal.attributes?.action_type === "refresh_semantic_context"
-                  ? "Apply refresh"
+                isRefreshSignal
+                  ? "Refresh now"
                   : signal.attributes?.action_type === "explain_relationship"
                     ? "Explain now"
                     : null;
@@ -807,9 +924,44 @@ export default function AIAgentPanel({
                         {signal.title}
                       </Typography>
                     </Stack>
-                    <Typography sx={{ fontSize: 13, color: "#334155", lineHeight: 1.55 }}>
+                    <Typography
+                      sx={{
+                        fontSize: 13,
+                        color: "#334155",
+                        lineHeight: 1.55,
+                        overflowWrap: "anywhere",
+                        wordBreak: "break-word",
+                      }}
+                    >
                       {signal.message}
                     </Typography>
+                    {currentUnderstanding ? (
+                      <Box
+                        sx={{
+                          borderRadius: 1.5,
+                          border: "1px solid #dbeafe",
+                          backgroundColor: "#ffffff",
+                          px: 1.25,
+                          py: 1,
+                        }}
+                      >
+                        <Typography sx={{ fontSize: 12, fontWeight: 800, color: "#1d4ed8", mb: 0.5 }}>
+                          Current understanding
+                        </Typography>
+                        <Typography
+                          sx={{
+                            fontSize: 12.5,
+                            color: "#334155",
+                            lineHeight: 1.6,
+                            whiteSpace: "pre-wrap",
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
+                          }}
+                        >
+                          {currentUnderstanding}
+                        </Typography>
+                      </Box>
+                    ) : null}
                     {signal.options?.length ? (
                       <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
                         {signal.options.map((option) => {
@@ -819,7 +971,9 @@ export default function AIAgentPanel({
                               key={option}
                               size="small"
                               variant={selected ? "contained" : "outlined"}
-                              onClick={() => selectSignalOption(signal.signal_id, option)}
+                              onClick={() => {
+                                void handleSignalOption(signal, option);
+                              }}
                               sx={{ borderRadius: 999, textTransform: "none" }}
                             >
                               {option}
@@ -849,7 +1003,7 @@ export default function AIAgentPanel({
                         </Typography>
                       </Stack>
                     ) : null}
-                    {(signal.allow_free_text || draftResponse?.rating || draftResponse?.optionSelected) ? (
+                    {(!isRefreshSignal && (signal.allow_free_text || draftResponse?.rating || draftResponse?.optionSelected)) ? (
                       <TextField
                         size="small"
                         placeholder="Add a business comment or type your own answer"
@@ -867,19 +1021,22 @@ export default function AIAgentPanel({
                           onClick={() => {
                             void applySignalAction(signal);
                           }}
+                          disabled={signalActionBusyId === signal.signal_id}
                           sx={{ textTransform: "none" }}
                         >
-                          {actionLabel}
+                          {signalActionBusyId === signal.signal_id ? "Working..." : actionLabel}
                         </Button>
                       ) : null}
-                      <Button
-                        size="small"
-                        variant="contained"
-                        onClick={() => submitSignalResponse(signal.signal_id)}
-                        sx={{ textTransform: "none" }}
-                      >
-                        Send response
-                      </Button>
+                      {!isRefreshSignal ? (
+                        <Button
+                          size="small"
+                          variant="contained"
+                          onClick={() => submitSignalResponse(signal.signal_id)}
+                          sx={{ textTransform: "none" }}
+                        >
+                          Send response
+                        </Button>
+                      ) : null}
                       <Button
                         size="small"
                         variant="text"

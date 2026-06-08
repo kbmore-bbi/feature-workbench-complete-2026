@@ -52,7 +52,7 @@ class DerivedSourceService:
 
     @property
     def _table_name(self) -> str:
-        parts = self._settings.snowflake_derived_sources_table.split(".")
+        parts = self._settings.qualify_metadata_object_name(self._settings.snowflake_derived_sources_table).split(".")
         if len(parts) != 3:
             raise AppValidationError(
                 "SNOWFLAKE_DERIVED_SOURCES_TABLE must be a fully-qualified DATABASE.SCHEMA.TABLE name."

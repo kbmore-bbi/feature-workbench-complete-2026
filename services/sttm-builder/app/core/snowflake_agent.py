@@ -54,12 +54,14 @@ class SnowflakeAgentClient:
         agent: str | None = None,
         thread_id: str | None = None,
         parent_message_id: int | None = None,
+        request_timeout: float | None = None,
     ) -> tuple[str, str]:
         text, resolved_thread_id, _ = self.run_detailed(
             messages,
             agent=agent,
             thread_id=thread_id,
             parent_message_id=parent_message_id,
+            request_timeout=request_timeout,
         )
         return text, resolved_thread_id
 
@@ -114,6 +116,7 @@ class SnowflakeAgentClient:
         agent: str | None = None,
         thread_id: str | None = None,
         parent_message_id: int | None = None,
+        request_timeout: float | None = None,
     ) -> tuple[str, str, dict[str, Any] | None]:
         """
         Send *messages* to the Cortex Agent and return
@@ -144,7 +147,7 @@ class SnowflakeAgentClient:
         endpoint = self._build_endpoint(agent)
 
         try:
-            with httpx.Client(timeout=self._timeout) as client:
+            with httpx.Client(timeout=request_timeout or self._timeout) as client:
                 response = client.post(
                     f"{self._base_url}{endpoint}",
                     headers=headers,

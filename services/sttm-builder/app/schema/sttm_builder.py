@@ -500,7 +500,7 @@ class STTMBuilderResponse(BaseModel):
         semantic_level_achieved: SemanticLevel | None = None,
         semantic_refresh_status: SemanticRefreshStatus | None = None,
         warnings: list[ApiWarning] | None = None,
-        error: ApiError | None = None,
+        error: ApiError | dict[str, Any] | None = None,
         meta: dict[str, Any] | None = None,
     ) -> "STTMBuilderResponse":
         context = request.context.model_copy(
@@ -510,6 +510,7 @@ class STTMBuilderResponse(BaseModel):
             }
         )
         response_warnings = [*request.warnings, *(warnings or [])]
+        normalized_error = _coerce_api_error(error)
         data = STTMBuilderResponseData(
             intent=request.data.intent,
             status=status,
@@ -528,7 +529,7 @@ class STTMBuilderResponse(BaseModel):
             context=context,
             data=data,
             warnings=response_warnings,
-            error=error,
+            error=normalized_error,
             meta={**request.meta, **(meta or {})},
             thread_id=thread_id,
             parent_message_id=parent_message_id,
@@ -536,6 +537,41 @@ class STTMBuilderResponse(BaseModel):
             result=result,
             message=message,
         )
+
+
+def _coerce_api_error(error: ApiError | dict[str, Any] | None) -> ApiError | None:
+    if error is None or isinstance(error, ApiError):
+        return error
+    if not isinstance(error, dict):
+        text = str(error).strip()
+        if not text:
+            return None
+        return ApiError(title=text, detail=text)
+
+    title = (
+        str(error.get("title") or "").strip()
+        or str(error.get("message") or "").strip()
+        or str(error.get("detail") or "").strip()
+        or str(error.get("code") or "").strip()
+        or "Request failed"
+    )
+    detail = str(error.get("detail") or error.get("message") or title).strip() or title
+    status_value = error.get("status")
+    try:
+        status = int(status_value) if status_value is not None else None
+    except (TypeError, ValueError):
+        status = None
+    code_value = error.get("code")
+    field_value = error.get("field")
+    type_value = error.get("type")
+    return ApiError(
+        type=str(type_value).strip() if type_value else "about:blank",
+        title=title,
+        status=status,
+        detail=detail,
+        code=str(code_value).strip() if code_value else None,
+        field=str(field_value).strip() if field_value else None,
+    )
 
 
 def normalize_sttm_builder_invoke_body(

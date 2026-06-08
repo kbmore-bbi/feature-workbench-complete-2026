@@ -65,7 +65,8 @@ function parseHandleId(
   const suffix = `-${kind}`;
   if (!handleId.endsWith(suffix)) return null;
   const withoutKind = handleId.slice(0, -suffix.length);
-  return withoutKind.slice(withoutKind.lastIndexOf(".") + 1);
+  const columnPart = withoutKind.slice(withoutKind.lastIndexOf(".") + 1);
+  return columnPart.replace(/-\d+$/, "");
 }
 
 function tagChipPalette(tag?: string) {

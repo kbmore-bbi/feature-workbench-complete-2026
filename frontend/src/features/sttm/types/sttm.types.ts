@@ -4,6 +4,7 @@ import type {
   AssistantInferenceRecord,
   AssistantPreferenceState,
   AssistantSignal,
+  MappingIntent,
   SemanticContextBundleResponse,
   SemanticContextItem,
   TableRef,
@@ -276,6 +277,7 @@ export type SttmBuilderContextValue = {
   mappingSuggestions: MappingSuggestion[];
   mappingLoading: boolean;
   autoMapStatusMessage: string | null;
+  autoMapProcessingIds: string[];
 
   // Chat
   chatMessages: ChatMessage[];
@@ -284,6 +286,7 @@ export type SttmBuilderContextValue = {
   assistantInferences: AssistantInferenceRecord[];
   assistantPreferences: AssistantPreferenceState;
   assistantUnreadCount: number;
+  mappingIntent: MappingIntent | null;
   semanticBundleId: string | null;
   semanticBundleLabel: string | null;
   semanticLevel: string | null;
@@ -370,6 +373,8 @@ export type SttmBuilderContextValue = {
   mappings: MappingState[];
   selectedMappingIds: string[];
   mappingSql: string;
+  mappingPreviewSql: string;
+  mappingSqlVariant: "original" | "optimized" | null;
   isPreProcessModalOpen: boolean;
   activeMappingId: string | null;
   pendingAiMappingReviews: PendingAiMappingReview[];
@@ -383,9 +388,11 @@ export type SttmBuilderContextValue = {
   bulkSetDirect: (ids: string[]) => void;
   setPreProcessModalOpen: (open: boolean, mappingId?: string | null) => void;
   setMappingSql: (sql: string) => void;
+  setMappingPreviewSql: (sql: string) => void;
+  setMappingSqlVariant: (variant: "original" | "optimized" | null) => void;
 };
 
-export type MappingStatus = "MAPPED" | "UNMAPPED";
+export type MappingStatus = "MAPPED" | "UNMAPPED" | "PROCESSING";
 export type MappingRuleType = "Direct" | "Select..." | "Custom" | string;
 
 export interface MappingState {

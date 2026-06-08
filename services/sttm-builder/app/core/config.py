@@ -18,6 +18,9 @@ SNOWFLAKE_SUPPORTED_MODELS: list[str] = [
     "jamba-1.5-mini",
 ]
 
+LEGACY_METADATA_DATABASE = "FFP_HDP_CRM_MIG_DB_DEV"
+LEGACY_METADATA_SCHEMA = "SCH_STTM_METADATA"
+
 
 class AgentConfig(BaseModel):
     """Internal agent definition — snowflake_name is infra detail, not exposed to callers."""
@@ -104,24 +107,28 @@ class Settings(BaseSettings):
         default="",
         alias="SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT",
     )
+    snowflake_dbt_conversion_agent: str = Field(
+        default="",
+        alias="SNOWFLAKE_DBT_CONVERSION_AGENT",
+    )
     snowflake_relationships_procedure: str = Field(
         default="",
         alias="SNOWFLAKE_RELATIONSHIPS_PROCEDURE",
     )
     snowflake_semantic_model_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODELS",
+        default="TBL_SEMANTIC_MODELS",
         alias="SNOWFLAKE_SEMANTIC_MODEL_TABLE",
     )
     snowflake_semantic_bundles_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_BUNDLES",
+        default="TBL_SEMANTIC_BUNDLES",
         alias="SNOWFLAKE_SEMANTIC_BUNDLES_TABLE",
     )
     snowflake_semantic_overrides_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_OVERRIDES",
+        default="TBL_SEMANTIC_OVERRIDES",
         alias="SNOWFLAKE_SEMANTIC_OVERRIDES_TABLE",
     )
     snowflake_derived_sources_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_DERIVED_SOURCES",
+        default="TBL_DERIVED_SOURCES",
         alias="SNOWFLAKE_DERIVED_SOURCES_TABLE",
     )
     snowflake_derived_view_prefix: str = Field(
@@ -129,39 +136,67 @@ class Settings(BaseSettings):
         alias="SNOWFLAKE_DERIVED_VIEW_PREFIX",
     )
     snowflake_conversation_turns_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_CONVERSATION_TURNS",
+        default="TBL_WORKBENCH_CONVERSATION_TURNS",
         alias="SNOWFLAKE_CONVERSATION_TURNS_TABLE",
     )
     snowflake_conversation_feedback_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_FEEDBACK",
+        default="TBL_WORKBENCH_FEEDBACK",
         alias="SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE",
     )
     snowflake_conversation_recommendations_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RECOMMENDATIONS",
+        default="TBL_WORKBENCH_RECOMMENDATIONS",
         alias="SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE",
     )
     snowflake_assistant_inferences_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_INFERENCES",
+        default="TBL_WORKBENCH_INFERENCES",
         alias="SNOWFLAKE_ASSISTANT_INFERENCES_TABLE",
     )
     snowflake_assistant_signals_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SIGNALS",
+        default="TBL_WORKBENCH_ASSISTANT_SIGNALS",
         alias="SNOWFLAKE_ASSISTANT_SIGNALS_TABLE",
     )
     snowflake_assistant_settings_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_ASSISTANT_SETTINGS",
+        default="TBL_WORKBENCH_ASSISTANT_SETTINGS",
         alias="SNOWFLAKE_ASSISTANT_SETTINGS_TABLE",
     )
     snowflake_relationship_facts_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RELATIONSHIP_FACTS",
+        default="TBL_WORKBENCH_RELATIONSHIP_FACTS",
         alias="SNOWFLAKE_RELATIONSHIP_FACTS_TABLE",
     )
     snowflake_rag_documents_table: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RAG_DOCUMENTS",
+        default="TBL_WORKBENCH_RAG_DOCUMENTS",
         alias="SNOWFLAKE_RAG_DOCUMENTS_TABLE",
     )
+    snowflake_client_notes_table: str = Field(
+        default="TBL_WORKBENCH_CLIENT_NOTES",
+        alias="SNOWFLAKE_CLIENT_NOTES_TABLE",
+    )
+    snowflake_client_sql_assets_table: str = Field(
+        default="TBL_WORKBENCH_CLIENT_SQL_ASSETS",
+        alias="SNOWFLAKE_CLIENT_SQL_ASSETS_TABLE",
+    )
+    snowflake_fir_events_table: str = Field(
+        default="TBL_WORKBENCH_FIR_EVENTS",
+        alias="SNOWFLAKE_FIR_EVENTS_TABLE",
+    )
+    snowflake_fir_feature_snapshots_table: str = Field(
+        default="TBL_WORKBENCH_FIR_FEATURES",
+        alias="SNOWFLAKE_FIR_FEATURES_TABLE",
+    )
+    snowflake_mapping_intents_table: str = Field(
+        default="TBL_WORKBENCH_MAPPING_INTENTS",
+        alias="SNOWFLAKE_MAPPING_INTENTS_TABLE",
+    )
+    snowflake_semantic_learnings_table: str = Field(
+        default="TBL_WORKBENCH_SEMANTIC_LEARNINGS",
+        alias="SNOWFLAKE_SEMANTIC_LEARNINGS_TABLE",
+    )
+    snowflake_fir_model_scores_table: str = Field(
+        default="TBL_WORKBENCH_FIR_MODEL_SCORES",
+        alias="SNOWFLAKE_FIR_MODEL_SCORES_TABLE",
+    )
     snowflake_rag_search_service: str = Field(
-        default="FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_WORKBENCH_RAG",
+        default="CSS_WORKBENCH_RAG",
         alias="SNOWFLAKE_RAG_SEARCH_SERVICE",
     )
     snowflake_agent_orchestration_model: str = Field(
@@ -214,16 +249,45 @@ class Settings(BaseSettings):
                 snowflake_name=self.resolved_sttm_builder_agent,
                 default_model=self.snowflake_agent_orchestration_model,
             ),
+            AgentConfig(
+                id="dbt_conversion",
+                display_name="DBT Conversion Agent",
+                description=(
+                    "Converts final STTM mapping SQL into dbt model files, source updates, "
+                    "and schema YAML aligned to the client repository layout."
+                ),
+                snowflake_name=self.resolved_dbt_conversion_agent,
+                default_model=self.snowflake_agent_orchestration_model,
+            ),
         ]
 
     def qualify_table_name(self, table_name: str) -> str:
-        if "." in table_name:
-            return table_name
-        return (
-            f"{self.resolved_metadata_database}."
-            f"{self.resolved_metadata_schema}."
-            f"{table_name}"
-        )
+        return self.qualify_metadata_object_name(table_name)
+
+    def qualify_metadata_object_name(self, object_name: str) -> str:
+        candidate = object_name.strip()
+        if not candidate:
+            return candidate
+
+        parts = _split_qualified_name(candidate)
+        if parts:
+            database, schema, resolved_object_name = parts
+            if self._should_rebase_legacy_metadata_namespace(database, schema):
+                return (
+                    f"{self.snowflake_database.strip()}."
+                    f"{self.snowflake_schema.strip()}."
+                    f"{resolved_object_name}"
+                )
+            return f"{database}.{schema}.{resolved_object_name}"
+
+        if "." in candidate:
+            return candidate
+
+        database = self.resolved_metadata_database
+        schema = self.resolved_metadata_schema
+        if not database or not schema:
+            return candidate
+        return f"{database}.{schema}.{candidate}"
 
     @property
     def normalized_snowflake_authenticator(self) -> str:
@@ -296,10 +360,18 @@ class Settings(BaseSettings):
         )
 
     @property
+    def resolved_dbt_conversion_agent(self) -> str:
+        return self._resolve_agent_name(
+            self.snowflake_dbt_conversion_agent,
+            legacy_object_name="DBT_CONVERSION_AGENT",
+            default_object_name="AGT_DBT_CONVERSION",
+        )
+
+    @property
     def resolved_relationships_procedure(self) -> str:
         raw_value = self.snowflake_relationships_procedure.strip()
         if raw_value and not _looks_like_placeholder(raw_value):
-            parts = _split_qualified_name(raw_value)
+            parts = _split_qualified_name(self.qualify_metadata_object_name(raw_value))
             if parts:
                 return f"{parts[0]}.{parts[1]}.{parts[2]}"
 
@@ -348,13 +420,36 @@ class Settings(BaseSettings):
                 database, schema, object_name = parts
                 if object_name.upper() == legacy_object_name:
                     object_name = default_object_name
+                if self._should_rebase_legacy_metadata_namespace(database, schema):
+                    database = self.snowflake_database.strip()
+                    schema = self.snowflake_schema.strip()
                 return f"{database}.{schema}.{object_name}"
+            if "." not in candidate:
+                database = self.resolved_metadata_database
+                schema = self.resolved_metadata_schema
+                if database and schema:
+                    object_name = default_object_name if candidate.upper() == legacy_object_name else candidate
+                    return f"{database}.{schema}.{object_name}"
 
         database = self.resolved_metadata_database
         schema = self.resolved_metadata_schema
         if not database or not schema:
             return ""
         return f"{database}.{schema}.{default_object_name}"
+
+    def _should_rebase_legacy_metadata_namespace(self, database: str, schema: str) -> bool:
+        current_database = self.snowflake_database.strip()
+        current_schema = self.snowflake_schema.strip()
+        if not current_database or not current_schema:
+            return False
+        return (
+            database.strip().upper() == LEGACY_METADATA_DATABASE
+            and schema.strip().upper() == LEGACY_METADATA_SCHEMA
+            and (
+                current_database.strip().upper() != LEGACY_METADATA_DATABASE
+                or current_schema.strip().upper() != LEGACY_METADATA_SCHEMA
+            )
+        )
 
 
 @lru_cache

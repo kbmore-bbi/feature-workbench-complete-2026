@@ -2,41 +2,85 @@
 
 import EastRoundedIcon from "@mui/icons-material/EastRounded";
 import PublishRoundedIcon from "@mui/icons-material/PublishRounded";
-import VerifiedRoundedIcon from "@mui/icons-material/VerifiedRounded";
-import { Box, Button, Typography } from "@mui/material";
+import { Box, Button } from "@mui/material";
+import { BuilderHeaderStatsPill } from "./builder-header-stats-pill";
+import { BuilderStepNav, type BuilderStepId } from "./builder-step-nav";
 
 type BuilderContentHeaderProps = {
-  currentStep: 1 | 2;
+  currentStep: BuilderStepId;
+  sourceTableCount?: number;
+  joinCount?: number;
   tableCount?: number;
   mappingCount?: number;
-  onProceed?: () => void;
-  onRunValidation?: () => void;
+  onNext?: () => void;
   onPublish?: () => void;
-  onStepChange?: (step: 1 | 2) => void;
+  onStepChange?: (step: BuilderStepId) => void;
   embedded?: boolean;
-  proceedDisabled?: boolean;
+  nextDisabled?: boolean;
 };
 
-const steps = [
-  { id: 1 as const, label: "Select Tables" },
-  { id: 2 as const, label: "Map - Transform - Validate" },
-];
+const nextButtonSx = {
+  height: 36,
+  minWidth: 0,
+  px: 2,
+  borderRadius: "5px",
+  backgroundColor: "#0f172a",
+  border: "1px solid #0f172a",
+  color: "#ffffff",
+  fontSize: "12px",
+  fontWeight: 700,
+  whiteSpace: "nowrap",
+  textTransform: "none",
+  boxShadow: "none",
+  gap: 0.5,
+  flexShrink: 0,
+  "&:hover": {
+    backgroundColor: "#1e293b",
+    borderColor: "#1e293b",
+    boxShadow: "none",
+  },
+  "&.Mui-disabled": {
+    color: "#ffffff",
+    backgroundColor: "#64748b",
+    borderColor: "#64748b",
+    opacity: 0.7,
+  },
+} as const;
 
 export default function BuilderContentHeader({
   currentStep,
-  tableCount = 2,
+  sourceTableCount = 0,
+  joinCount = 0,
+  tableCount = 0,
   mappingCount = 0,
-  onProceed,
-  onRunValidation,
+  onNext,
   onPublish,
   onStepChange,
   embedded = false,
-  proceedDisabled = false,
+  nextDisabled = false,
 }: BuilderContentHeaderProps) {
+  const statsPill =
+    currentStep === 1 ? (
+      <BuilderHeaderStatsPill
+        items={[
+          { value: sourceTableCount, label: "tables" },
+          { value: joinCount, label: "joins" },
+        ]}
+      />
+    ) : (
+      <BuilderHeaderStatsPill
+        items={[
+          { value: tableCount, label: "tables" },
+          { value: mappingCount, label: "mappings" },
+        ]}
+      />
+    );
+
   return (
     <Box
       sx={{
-        minHeight: embedded ? 40 : 54,
+        width: "100%",
+        minHeight: embedded ? 44 : 54,
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
@@ -46,167 +90,51 @@ export default function BuilderContentHeader({
         backgroundColor: embedded ? "transparent" : "var(--color-surface)",
       }}
     >
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, minWidth: 0 }}>
-        {steps.map((step) => {
-          const active = currentStep === step.id;
-          const completed = currentStep > step.id;
+      <BuilderStepNav currentStep={currentStep} onStepChange={onStepChange} />
 
-          return (
-            <Box
-              key={step.id}
-              onClick={() => onStepChange?.(step.id)}
-              sx={{
-                height: 30,
-                px: 1.75,
-                borderRadius: "999px",
-                display: "flex",
-                alignItems: "center",
-                gap: 1,
-                cursor: "pointer",
-                backgroundColor: active
-                  ? "var(--color-header-bg)"
-                  : completed
-                    ? "var(--color-surface-muted)"
-                    : "transparent",
-                color: active ? "#060505" : "#282323",
-              }}
-            >
-              <Box
-                sx={{
-                  width: 16,
-                  height: 16,
-                  borderRadius: "999px",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: "10px",
-                  fontWeight: 700,
-                  backgroundColor: active
-                    ? "var(--color-header-text)"
-                    : completed
-                      ? "var(--color-header-bg)"
-                      : "var(--color-border)",
-                  color: active ? "var(--color-header-bg)" : completed ? "#060505" : "#282323",
-                  lineHeight: 1,
-                }}
-              >
-                {step.id}
-              </Box>
-
-              <Typography
-                sx={{
-                  fontSize: "14px",
-                  fontWeight: 600,
-                  lineHeight: 1,
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {step.label}
-              </Typography>
-            </Box>
-          );
-        })}
-      </Box>
-
-      <Box sx={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-        <Typography sx={{ fontSize: "12px", fontWeight: 600, color: "var(--color-title)" }}>
-          {tableCount} tables
-        </Typography>
-
-        <Typography sx={{ fontSize: "12px", fontWeight: 600, color: "var(--color-muted)" }}>
-          {mappingCount} mappings
-        </Typography>
-
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "flex-end",
+          gap: 1.25,
+          flexShrink: 0,
+          ml: 2,
+        }}
+      >
+        {statsPill}
         {currentStep === 1 ? (
           <Button
             variant="contained"
             endIcon={<EastRoundedIcon sx={{ fontSize: 14 }} />}
-            onClick={onProceed}
-            disabled={proceedDisabled}
-            sx={{
-              height: 30,
-              minWidth: 136,
-              px: 1.75,
-              borderRadius: "4px",
-              backgroundColor: "var(--aia-mapping-button-color)",
-              border: "1px solid var(--aia-mapping-button-color)",
-              color: "#ffffff",
-              fontSize: "12px",
-              fontWeight: 600,
-              whiteSpace: "nowrap",
-              textTransform: "none",
-              boxShadow: "none",
-              opacity: proceedDisabled ? 0.55 : 1,
-              "&:hover": {
-                backgroundColor: "var(--aia-mapping-button-hoverColor)",
-                borderColor: "var(--aia-mapping-button-hoverColor)",
-                boxShadow: "none",
-              },
-              "&.Mui-disabled": {
-                color: "#ffffff",
-                backgroundColor: "var(--aia-mapping-button-color)",
-                borderColor: "var(--aia-mapping-button-color)",
-              },
-            }}
+            onClick={onNext}
+            disabled={nextDisabled}
+            sx={nextButtonSx}
           >
-            Proceed to Mapping
+            Next
+          </Button>
+        ) : currentStep === 2 ? (
+          <Button
+            variant="contained"
+            endIcon={<EastRoundedIcon sx={{ fontSize: 14 }} />}
+            onClick={onNext}
+            sx={nextButtonSx}
+          >
+            Next
           </Button>
         ) : (
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Button
-              variant="outlined"
-              startIcon={<VerifiedRoundedIcon sx={{ fontSize: 14 }} />}
-              onClick={onRunValidation}
-              sx={{
-                height: 30,
-                minWidth: 124,
-                px: 1.5,
-                borderRadius: "4px",
-                backgroundColor: "transparent",
-                border: "1px solid var(--color-primary-save)",
-                color: "var(--color-text)",
-                fontSize: "12px",
-                fontWeight: 600,
-                whiteSpace: "nowrap",
-                textTransform: "none",
-                "&:hover": {
-                  backgroundColor: "transparent",
-                  borderColor: "var(--color-primary-hover)",
-                },
-              }}
-            >
-              Run Validation
-            </Button>
-
-            <Button
-              variant="contained"
-              startIcon={<PublishRoundedIcon sx={{ fontSize: 14 }} />}
-              onClick={onPublish}
-              sx={{
-                height: 30,
-                minWidth: 132,
-                px: 1.5,
-                borderRadius: "4px",
-                backgroundColor: "var(--aia-mapping-button-color)",
-                border: "1px solid var(--aia-mapping-button-color)",
-                color: "#ffffff",
-                fontSize: "12px",
-                fontWeight: 600,
-                whiteSpace: "nowrap",
-                textTransform: "none",
-                boxShadow: "none",
-                "&:hover": {
-                  backgroundColor: "var(--aia-mapping-button-hoverColor)",
-                  borderColor: "var(--aia-mapping-button-hoverColor)",
-                  boxShadow: "none",
-                },
-              }}
-            >
-              Publish Mapping
-            </Button>
-          </Box>
+          <Button
+            variant="contained"
+            endIcon={<PublishRoundedIcon sx={{ fontSize: 14 }} />}
+            onClick={onPublish}
+            sx={nextButtonSx}
+          >
+            Publish Mapping
+          </Button>
         )}
       </Box>
     </Box>
   );
 }
+
+export type { BuilderStepId };

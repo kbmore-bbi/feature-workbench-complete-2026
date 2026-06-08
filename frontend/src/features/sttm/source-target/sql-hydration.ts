@@ -513,6 +513,11 @@ function fieldTokenToUiValue(
   aliasToTableId: Map<string, string>,
   availableTables: TableMeta[],
 ) {
+  const knownFieldValues = new Set(
+    availableTables.flatMap((table) =>
+      (table.columns ?? []).map((column) => `${table.schema ?? ""}.${table.name ?? ""}.${String(column.name ?? "")}`.replace(/\.+/g, ".")),
+    ),
+  );
   const unwrapFieldExpression = (raw: string): string => {
     const trimmed = raw.trim();
     const directField = trimmed.match(/^("?[\w$]+"?)\."?([\w$]+)"?$/);
@@ -537,7 +542,10 @@ function fieldTokenToUiValue(
       availableTables,
     );
     const prefix = tableId ? tableFieldPrefixForId(tableId, availableTables) : null;
-    if (prefix) return `${prefix}.${column}`;
+    if (prefix) {
+      const candidate = `${prefix}.${column}`;
+      return knownFieldValues.has(candidate) ? candidate : "";
+    }
   }
   const parts = cleaned.split(".");
   if (parts.length >= 3) {
@@ -554,9 +562,13 @@ function fieldTokenToUiValue(
       columnName,
       availableTables,
     );
-    return `${schemaName}.${tableName}.${canonicalColumn}`;
+    const candidate = `${schemaName}.${tableName}.${canonicalColumn}`;
+    return knownFieldValues.has(candidate) ? candidate : "";
   }
-  return cleaned;
+  const directMatch = Array.from(knownFieldValues).find(
+    (value) => value.toLowerCase().endsWith(`.${cleaned.toLowerCase()}`),
+  );
+  return directMatch ?? "";
 }
 
 function normalizeLiteral(raw: string) {
@@ -746,12 +758,16 @@ function parseOrderBy(
   availableTables: TableMeta[],
 ) {
   if (!orderByClause?.trim()) return [];
-  return splitTopLevel(orderByClause, ",").map((item) => {
-    const normalized = normalizeWhitespace(item);
+  return splitTopLevel(orderByClause, ",").flatMap((item) => {
+    const normalized = normalizeWhitespace(item)
+      .replace(/\s+LIMIT\s+\d+\s*$/i, "")
+      .replace(/\s+NULLS\s+(?:FIRST|LAST)\s*$/i, "")
+      .trim();
     const match = normalized.match(/^(.*?)(?:\s+(ASC|DESC))?$/i);
     const field = match?.[1]?.trim() ?? normalized;
     const direction = match?.[2]?.toUpperCase() ?? "ASC";
-    return `${fieldTokenToUiValue(field, aliasToTableId, availableTables)} ${direction}`;
+    const resolvedField = fieldTokenToUiValue(field, aliasToTableId, availableTables);
+    return resolvedField ? [`${resolvedField} ${direction}`] : [];
   });
 }
 

@@ -166,7 +166,7 @@ export function FilterConditions({
       );
       if (matches.length === 1) return matches[0].value;
 
-      return trimmed;
+      return "";
     },
     [allFields]
   );

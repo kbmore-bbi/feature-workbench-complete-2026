@@ -1,4 +1,5 @@
 import type { ColumnGroup, DerivedSource, MappingState } from '@/features/sttm/types/sttm.types';
+import type { RelationshipContextItem, TableRef } from '@/types/api-contract';
 
 export type SourceColumnOption = {
   label: string;
@@ -9,6 +10,18 @@ export type SourceColumnOption = {
 
 export function tableAlias(tableName: string) {
   return tableName.toLowerCase();
+}
+
+function qualifiedTableName(table: TableRef) {
+  return `${table.database}.${table.schema}.${table.table}`.replace(/\.+/g, '.');
+}
+
+function qualifiedColumnName(table: TableRef, columnName: string) {
+  return `${qualifiedTableName(table)}.${columnName}`.replace(/\.+/g, '.');
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function formatSqlType(type?: string) {
@@ -333,6 +346,157 @@ function normalizeBaseQuerySql(baseSql: string) {
   return trimmed.replace(/^SELECT\s+\*\s+/i, '');
 }
 
+function buildSourceAliasLookup(params: {
+  sourceTables: TableRef[];
+  derivedSources?: DerivedSource[];
+}) {
+  const { sourceTables, derivedSources = [] } = params;
+  const lookup = new Map<string, string>();
+
+  for (const table of sourceTables) {
+    lookup.set(tableAlias(table.table), qualifiedTableName(table));
+  }
+
+  for (const source of derivedSources.filter((item) => item.isSelected !== false)) {
+    const aliasSeed = source.alias || source.sourceName || source.id;
+    lookup.set(tableAlias(String(aliasSeed).replace(/\s+/g, '_')), String(aliasSeed));
+  }
+
+  return lookup;
+}
+
+function normalizeSourceExpression(
+  expression: string,
+  params: {
+    sourceTables: TableRef[];
+    derivedSources?: DerivedSource[];
+  },
+) {
+  let normalized = expression;
+  const aliasLookup = buildSourceAliasLookup(params);
+
+  for (const [alias, qualified] of aliasLookup.entries()) {
+    if (!qualified || qualified === alias) {
+      continue;
+    }
+    const pattern = new RegExp(
+      `(^|[^A-Za-z0-9_\\.])(${escapeRegExp(alias)})\\.([A-Za-z_][A-Za-z0-9_$]*)`,
+      'gi',
+    );
+    normalized = normalized.replace(pattern, (_, prefix: string, _alias: string, column: string) =>
+      `${prefix}${qualified}.${column}`,
+    );
+  }
+
+  return normalized;
+}
+
+export function buildFallbackSourceQuerySql(params: {
+  sourceQuerySql?: string | null;
+  sourceTables: TableRef[];
+  derivedSources?: DerivedSource[];
+  relationships?: RelationshipContextItem[];
+  drivingTable?: TableRef | null;
+}) {
+  const {
+    sourceQuerySql,
+    sourceTables,
+    derivedSources = [],
+    relationships = [],
+    drivingTable,
+  } = params;
+
+  if (sourceQuerySql?.trim()) {
+    return sourceQuerySql;
+  }
+
+  const selectedDerivedSources = derivedSources.filter((source) => source.isSelected !== false);
+  if (!sourceTables.length && selectedDerivedSources.length === 1) {
+    const derivedSql = selectedDerivedSources[0].sqlText?.trim().replace(/;+\s*$/, '');
+    if (derivedSql) {
+      const aliasSeed =
+        selectedDerivedSources[0].alias ||
+        selectedDerivedSources[0].sourceName ||
+        selectedDerivedSources[0].id;
+      const alias = tableAlias(String(aliasSeed).replace(/\s+/g, '_'));
+      return `FROM (\n${derivedSql}\n) ${alias}`;
+    }
+  }
+
+  if (!sourceTables.length) {
+    return '';
+  }
+
+  const tableByQualifiedName = new Map(
+    sourceTables.map((table) => [qualifiedTableName(table).toUpperCase(), table] as const),
+  );
+  const seedTable =
+    (drivingTable ? tableByQualifiedName.get(qualifiedTableName(drivingTable).toUpperCase()) : null) ??
+    sourceTables[0];
+  if (!seedTable) {
+    return '';
+  }
+
+  const lines = [`FROM ${qualifiedTableName(seedTable)}`];
+  const visited = new Set<string>([qualifiedTableName(seedTable).toUpperCase()]);
+  const pending = relationships.filter(
+    (relationship) =>
+      relationship.left_table &&
+      relationship.right_table &&
+      Array.isArray(relationship.conditions) &&
+      relationship.conditions.some((condition) => condition.left_column && condition.right_column),
+  );
+
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    for (const relationship of pending) {
+      const leftName = qualifiedTableName(relationship.left_table).toUpperCase();
+      const rightName = qualifiedTableName(relationship.right_table).toUpperCase();
+      const leftVisited = visited.has(leftName);
+      const rightVisited = visited.has(rightName);
+
+      if (leftVisited === rightVisited) {
+        continue;
+      }
+
+      const attachingTable = leftVisited ? relationship.right_table : relationship.left_table;
+      const attachingName = qualifiedTableName(attachingTable).toUpperCase();
+      const joinType = relationship.join_type?.trim() || 'INNER';
+      const validConditions = (relationship.conditions ?? []).filter(
+        (condition) => condition.left_column && condition.right_column,
+      );
+      if (!validConditions.length) {
+        continue;
+      }
+
+      lines.push(`${joinType} JOIN ${qualifiedTableName(attachingTable)}`);
+      lines.push(
+        `  ON ${validConditions
+          .map(
+            (condition) =>
+              `${qualifiedColumnName(relationship.left_table, condition.left_column)} ${condition.operator ?? '='} ${qualifiedColumnName(relationship.right_table, condition.right_column)}`,
+          )
+          .join('\n  AND ')}`,
+      );
+      visited.add(attachingName);
+      progressed = true;
+    }
+  }
+
+  const unjoinedTables = sourceTables.filter(
+    (table) => !visited.has(qualifiedTableName(table).toUpperCase()),
+  );
+  if (unjoinedTables.length) {
+    lines.push('-- Additional selected tables are waiting for join conditions:');
+    lines.push(
+      ...unjoinedTables.map((table) => `-- ${qualifiedTableName(table)}`),
+    );
+  }
+
+  return lines.join('\n');
+}
+
 export function buildSourceQueryPreviewSql(params: {
   sourceQuerySql: string;
   sourceFilterSql?: string;
@@ -361,42 +525,66 @@ export function buildSourceQueryPreviewSql(params: {
 }
 
 export function buildMappingExpression(mapping: MappingState) {
+  return buildResolvedMappingExpression(mapping, { sourceTables: [], derivedSources: [] });
+}
+
+export function buildResolvedMappingExpression(
+  mapping: MappingState,
+  params: {
+    sourceTables: TableRef[];
+    derivedSources?: DerivedSource[];
+  },
+) {
   const sourceColumns =
     mapping.sourceColumns && mapping.sourceColumns.length
       ? mapping.sourceColumns
       : parseSourceColumns(mapping.sourceColumn);
 
   if (mapping.expression?.trim()) {
-    return mapping.expression.trim();
+    return normalizeSourceExpression(mapping.expression.trim(), params);
   }
   if (!sourceColumns.length) {
     return 'NULL';
   }
 
+  const normalizedSourceColumns = sourceColumns.map((item) =>
+    normalizeSourceExpression(item, params),
+  );
+
   const rule = (mapping.rule || 'Direct').trim().toUpperCase();
   if (rule === 'DIRECT' || rule === 'SELECT...') {
-    return sourceColumns[0];
+    return normalizedSourceColumns[0];
   }
   if (rule === 'CONCATENATE') {
-    return `CONCAT(${sourceColumns.join(', ')})`;
+    return `CONCAT(${normalizedSourceColumns.join(', ')})`;
   }
   if (sourceColumns.length === 1 && ['UPPER', 'LOWER', 'TRIM'].includes(rule)) {
-    return `${rule}(${sourceColumns[0]})`;
+    return `${rule}(${normalizedSourceColumns[0]})`;
   }
   if (sourceColumns.length === 1 && rule === 'NULLIF') {
-    return `NULLIF(${sourceColumns[0]}, '')`;
+    return `NULLIF(${normalizedSourceColumns[0]}, '')`;
   }
-  return sourceColumns[0];
+  return normalizedSourceColumns[0];
 }
 
 export function buildMappingSelectSql(params: {
   mappings: MappingState[];
   sourceQuerySql: string;
+  sourceTables?: TableRef[];
+  derivedSources?: DerivedSource[];
   sourceFilterSql?: string;
   sourceGroupBySql?: string;
   sourceOrderBySql?: string;
 }) {
-  const { mappings, sourceQuerySql, sourceFilterSql, sourceGroupBySql, sourceOrderBySql } = params;
+  const {
+    mappings,
+    sourceQuerySql,
+    sourceTables = [],
+    derivedSources = [],
+    sourceFilterSql,
+    sourceGroupBySql,
+    sourceOrderBySql,
+  } = params;
   const activeMappings = mappings.filter((mapping) => mapping.status === 'MAPPED');
   if (!activeMappings.length) {
     return '-- No columns mapped yet. Map columns to generate SQL.';
@@ -410,7 +598,10 @@ export function buildMappingSelectSql(params: {
   const lines = [
     'SELECT',
     activeMappings
-      .map((mapping) => `  ${buildMappingExpression(mapping)} AS ${mapping.targetColumn}`)
+      .map(
+        (mapping) =>
+          `  ${buildResolvedMappingExpression(mapping, { sourceTables, derivedSources })} AS ${mapping.targetColumn}`,
+      )
       .join(',\n'),
     fromClause,
   ];
@@ -432,6 +623,8 @@ export function buildMappingInsertSql(params: {
   mappings: MappingState[];
   targetQualifiedName: string | null;
   sourceQuerySql: string;
+  sourceTables?: TableRef[];
+  derivedSources?: DerivedSource[];
   sourceFilterSql?: string;
   sourceGroupBySql?: string;
   sourceOrderBySql?: string;
@@ -440,6 +633,8 @@ export function buildMappingInsertSql(params: {
     mappings,
     targetQualifiedName,
     sourceQuerySql,
+    sourceTables = [],
+    derivedSources = [],
     sourceFilterSql,
     sourceGroupBySql,
     sourceOrderBySql,
@@ -447,6 +642,8 @@ export function buildMappingInsertSql(params: {
   const selectSql = buildMappingSelectSql({
     mappings,
     sourceQuerySql,
+    sourceTables,
+    derivedSources,
     sourceFilterSql,
     sourceGroupBySql,
     sourceOrderBySql,

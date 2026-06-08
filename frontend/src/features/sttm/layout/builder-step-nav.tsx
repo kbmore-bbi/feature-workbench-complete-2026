@@ -1,4 +1,5 @@
 "use client";
+
 import { Box, Icon, Typography } from "@mui/material";
 import { KeyboardArrowRightRoundedIcon } from '@/utils/icons';
 

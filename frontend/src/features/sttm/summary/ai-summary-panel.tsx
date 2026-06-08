@@ -9,7 +9,7 @@ import {
   SwapHorizRoundedIcon,
   TableChartOutlinedIcon,
   WarningAmberRoundedIcon,
-} from '@/utils/icons';
+} from "@/utils/icons";
 import { SttmSidebarSectionIcon } from "@/features/sttm/layout/sttm-sidebar-icons";
 import {
   Box,

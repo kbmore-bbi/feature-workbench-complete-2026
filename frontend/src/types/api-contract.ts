@@ -121,6 +121,7 @@ export type SemanticContextBundleResponse = {
 export type STTMBuilderContext = {
   thread_id?: string | null;
   parent_message_id?: number | null;
+  session_id?: string | null;
   current_role?: string | null;
   current_database?: string | null;
   current_schema?: string | null;
@@ -139,6 +140,7 @@ export type STTMBuilderContext = {
   semantic_view_name?: string | null;
   derived_source_lineage?: Array<Record<string, unknown>> | null;
   datahub_context?: Record<string, unknown> | null;
+  mapping_intent?: MappingIntent | null;
 };
 
 export type STTMBuilderRequestData = {
@@ -265,6 +267,16 @@ export type AssistantPreferenceState = {
   recommendations_enabled: boolean;
 };
 
+export type MappingIntent = {
+  business_goal?: string | null;
+  lifecycle?: "new" | "update" | "unknown";
+  target_outcome?: string | null;
+  domain_hints?: string[];
+  source?: string;
+  confidence?: number | null;
+  updated_at?: string | null;
+};
+
 export type AssistantSignalType = "feedback" | "recommendation";
 export type AssistantSignalStatus = "new" | "acknowledged" | "responded" | "dismissed";
 
@@ -287,6 +299,177 @@ export type AssistantSignal = {
   attributes?: Record<string, unknown>;
   created_at?: string | null;
   updated_at?: string | null;
+};
+
+export type MappingSqlMappingItem = {
+  target_column: string;
+  target_type?: string | null;
+  source_column?: string | null;
+  source_columns?: string[];
+  expression?: string | null;
+  rule?: string | null;
+  status?: string | null;
+  nl_rule?: string | null;
+  description?: string | null;
+};
+
+export type MappingSqlReviewRequest = {
+  source_tables: TableRef[];
+  target_table?: TableRef | null;
+  driving_table?: TableRef | null;
+  selected_derived_sources?: string[];
+  relationships?: RelationshipContextItem[];
+  selected_columns_by_table?: Record<string, string[]>;
+  semantic_bundle_id?: string | null;
+  semantic_bundle_label?: string | null;
+  semantic_view_name?: string | null;
+  source_query_sql: string;
+  preview_sql: string;
+  generated_sql: string;
+  mappings: MappingSqlMappingItem[];
+  preview_limit?: number;
+};
+
+export type MappingSqlReviewResponse = {
+  valid: boolean;
+  review_agent: string;
+  syntax_valid: boolean;
+  execution_ready: boolean;
+  review_summary: string;
+  optimized: boolean;
+  requires_approval: boolean;
+  original_preview_sql: string;
+  original_generated_sql: string;
+  optimized_preview_sql?: string | null;
+  optimized_generated_sql?: string | null;
+  semantic_view_name?: string | null;
+  warnings: string[];
+};
+
+export type MappingSqlPreviewColumn = {
+  name: string;
+  data_type: string;
+};
+
+export type MappingSqlPreviewRow = {
+  values: Record<string, unknown>;
+};
+
+export type MappingSqlPreviewRequest = MappingSqlReviewRequest & {
+  chosen_variant: "original" | "optimized";
+  approved_preview_sql?: string | null;
+  approved_generated_sql?: string | null;
+};
+
+export type MappingSqlPreviewResponse = {
+  valid: boolean;
+  variant_used: "original" | "optimized";
+  executed_preview_sql: string;
+  executed_generated_sql: string;
+  preview_columns: MappingSqlPreviewColumn[];
+  preview_rows: MappingSqlPreviewRow[];
+  source_sample_aliases: Record<string, string>;
+  source_sample_rows: MappingSqlPreviewRow[];
+  semantic_view_name?: string | null;
+  warnings: string[];
+};
+
+export type WorkbookDerivedSourceItem = {
+  derived_source_id: string;
+  derived_source_name: string;
+  sql_text?: string | null;
+  source_tables?: TableRef[];
+  base_source_tables?: TableRef[];
+  semantic_view_name?: string | null;
+  semantic_bundle_label?: string | null;
+};
+
+export type WorkbookDbtConversionPayload = {
+  status?: string | null;
+  action?: string | null;
+  message?: string | null;
+  materialization?: string | null;
+  materialization_reason?: string | null;
+  generated_files?: DbtConversionGeneratedFile[];
+  schema_files?: DbtConversionGeneratedFile[];
+  source_update?: DbtConversionSourceUpdate | null;
+};
+
+export type WorkbookExportRequest = {
+  project_name?: string | null;
+  summary_narrative?: string | null;
+  created_by?: string | null;
+  created_at?: string | null;
+  version_label?: string | null;
+  target_table?: TableRef | null;
+  source_tables?: TableRef[];
+  relationships?: RelationshipContextItem[];
+  derived_sources?: WorkbookDerivedSourceItem[];
+  filters_sql?: string | null;
+  source_query_sql?: string;
+  preview_sql?: string;
+  generated_sql?: string;
+  sql_variant_label?: string | null;
+  derived_source_lineage?: Array<Record<string, unknown>>;
+  lineage_table_mermaid?: string | null;
+  lineage_column_mermaid?: string | null;
+  dbt_conversion?: WorkbookDbtConversionPayload | null;
+  mappings?: MappingSqlMappingItem[];
+};
+
+export type DbtConversionRequest = {
+  project_name?: string | null;
+  domain_name?: string | null;
+  target_layer?: "raw" | "curated" | "mart" | string | null;
+  materialization?: "incremental" | "table" | "view" | string | null;
+  source_tables: TableRef[];
+  target_table: TableRef;
+  driving_table?: TableRef | null;
+  selected_derived_sources?: string[];
+  relationships?: RelationshipContextItem[];
+  selected_columns_by_table?: Record<string, string[]>;
+  semantic_bundle_id?: string | null;
+  semantic_bundle_label?: string | null;
+  semantic_view_name?: string | null;
+  source_query_sql?: string | null;
+  validated_sql: string;
+  generated_sql?: string | null;
+  mappings: MappingSqlMappingItem[];
+  semantic_context?: SemanticContextItem[];
+  derived_source_lineage?: Array<Record<string, unknown>>;
+  datahub_context?: Record<string, unknown> | null;
+  checklist?: string[];
+};
+
+export type DbtConversionGeneratedFile = {
+  file_name: string;
+  file_path: string;
+  file_type: string;
+  content: string;
+  language: "sql" | "yaml" | "text";
+};
+
+export type DbtConversionSourceUpdate = {
+  file_path: string;
+  action: "UPDATE" | "NO_CHANGE" | string;
+  content?: string | null;
+  language: "yaml" | "text";
+};
+
+export type DbtConversionResponse = {
+  status: "completed" | "failed" | string;
+  action?: "CREATE_NEW" | "UPDATE_EXISTING" | "CREATE_WITH_REFERENCE" | "REUSE_EXISTING" | string | null;
+  message?: string | null;
+  generated_files: DbtConversionGeneratedFile[];
+  source_update?: DbtConversionSourceUpdate | null;
+  schema_files: DbtConversionGeneratedFile[];
+  macros_used: string[];
+  materialization?: string | null;
+  materialization_reason?: string | null;
+  agent_name: string;
+  domain_name?: string | null;
+  target_layer?: string | null;
+  branch: string;
 };
 
 export type AssistantInferenceRecord = {
@@ -332,6 +515,7 @@ export type ConversationSignalsResponseData = {
   signals: AssistantSignal[];
   inferences: AssistantInferenceRecord[];
   unread_count: number;
+  mapping_intent?: MappingIntent | null;
 };
 
 export type AssistantSignalResponseData = {

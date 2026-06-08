@@ -1,35 +1,55 @@
 "use client";
+
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   AccountTreeOutlinedIcon,
+  AutoAwesomeRoundedIcon,
   KeyboardDoubleArrowRightRoundedIcon,
   TableChartOutlinedIcon,
   TerminalRoundedIcon,
-} from '@/utils/icons';
-
-import { Box, IconButton } from "@mui/material";
+} from "@/utils/icons";
+import { Alert, Box, IconButton, LinearProgress, Typography } from "@mui/material";
 import { AiaResizeHandle } from "@/components/ui/aia-resize-handle";
 import { MappingSqlPreview } from "@/components/sql";
 import { SttmLineageWorkspacePanel } from "@/features/sttm/lineage/sttm-lineage-workspace-panel";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import {
+  buildFallbackSourceQuerySql,
   buildMappingInsertSql,
+  buildMappingSelectSql,
   buildSourceQueryPreviewSql,
+  parseSourceColumns,
 } from "@/features/sttm/mapping/mapping-utils";
 import { BuilderWorkspaceTabBar } from "@/features/sttm/shared/builder-workspace-tab-bar";
 import { SttmSidebarCollapsedRail } from "@/features/sttm/layout/sttm-sidebar-collapsed-rail";
+import { dbService } from "@/services/dbService";
 import { AiSummaryPanel } from "./ai-summary-panel";
+import {
+  buildDbtConversionRequestPayload,
+  DbtConversionTab,
+  getCachedDbtConversion,
+} from "./dbt-conversion-tab";
 import { SummaryExportActions } from "./summary-export-actions";
 import { SummaryStatsRow } from "./summary-stats-row";
-import { buildSummaryMetrics } from "./summary-utils";
+import {
+  buildColumnLineageMermaid,
+  buildSummaryMetrics,
+  buildTableLineageMermaid,
+} from "./summary-utils";
 import { SttmSheetTab } from "./sttm-sheet-tab";
 
-type SummaryTab = "sttm-sheet" | "sql-preview" | "data-lineage";
+type SummaryTab = "sttm-sheet" | "sql-preview" | "data-lineage" | "dbt-conversion";
 
 const MIN_AI_SUMMARY_WIDTH = 280;
 const MAX_AI_SUMMARY_WIDTH = 420;
 const COLLAPSED_AI_SUMMARY_WIDTH = 54;
 const DEFAULT_AI_SUMMARY_WIDTH = 320;
+
+function qualifiedNameToTableRef(qualifiedName: string) {
+  const [database, schema, table] = qualifiedName.split(".", 3);
+  if (!database || !schema || !table) return null;
+  return { database, schema, table };
+}
 
 function countFilterConditions(
   groups: Array<{ type?: string; children?: unknown[] }>,
@@ -52,14 +72,106 @@ export function SummaryWorkspace() {
     targets,
     relationships,
     derivedSources,
+    session,
+    semanticBundleLabel,
+    semanticViewName,
     sourceFilterGroups,
     sourceQuerySql,
     sourceFilterSql,
     sourceGroupBySql,
     sourceOrderBySql,
+    mappingSql,
+    mappingPreviewSql,
+    mappingSqlVariant,
+    drivingTableId,
+    semanticLineage,
+    semanticContextItems,
+    semanticDatahubContext,
+    sourceAttributeGroups,
+    semanticBundleId,
   } = useSttmBuilderContext();
 
   const [tab, setTab] = useState<SummaryTab>("sttm-sheet");
+  const [excelExportLoading, setExcelExportLoading] = useState(false);
+  const [excelExportStage, setExcelExportStage] = useState<string | null>(null);
+  const [excelExportProgress, setExcelExportProgress] = useState(0);
+  const [excelExportError, setExcelExportError] = useState<string | null>(null);
+  const [excelExportNotice, setExcelExportNotice] = useState<string | null>(null);
+  const [gitPushNotice, setGitPushNotice] = useState<string | null>(null);
+  const [dbtCacheVersion, setDbtCacheVersion] = useState(0);
+  const exportProgressTimerRef = useRef<number | null>(null);
+
+  const selectedTargetQualifiedName =
+    targets.find((table) => table.isSelected)?.qualifiedName ?? null;
+  const selectedDerivedSourceRecords = useMemo(
+    () => derivedSources.filter((source) => source.isSelected),
+    [derivedSources],
+  );
+  const selectedSourceTables = useMemo(
+    () =>
+      sources
+        .filter((table) => table.isSelected)
+        .map((table) => qualifiedNameToTableRef(table.qualifiedName))
+        .filter((table): table is NonNullable<typeof table> => Boolean(table)),
+    [sources],
+  );
+  const selectedTargetTableRef = useMemo(
+    () =>
+      selectedTargetQualifiedName
+        ? qualifiedNameToTableRef(selectedTargetQualifiedName)
+        : null,
+    [selectedTargetQualifiedName],
+  );
+  const drivingTableRef = useMemo(
+    () => (drivingTableId ? qualifiedNameToTableRef(drivingTableId) : null),
+    [drivingTableId],
+  );
+  const relationshipPayload = useMemo(
+    () =>
+      relationships
+        .filter((join) => join.leftTableId && join.rightTableId && join.conditions?.length)
+        .map((join) => {
+          const leftTable = qualifiedNameToTableRef(String(join.leftTableId));
+          const rightTable = qualifiedNameToTableRef(String(join.rightTableId));
+          return leftTable && rightTable
+            ? {
+                left_table: leftTable,
+                right_table: rightTable,
+                join_type: join.joinType ?? "INNER",
+                constraint_name: join.constraintName ?? null,
+                source: join.source ?? "USER_DEFINED",
+                locked: join.locked ?? false,
+                conditions: (join.conditions ?? [])
+                  .filter((condition) => condition.leftColumn && condition.rightColumn)
+                  .map((condition) => ({
+                    left_column: String(condition.leftColumn),
+                    right_column: String(condition.rightColumn),
+                    operator: condition.operator ?? "=",
+                  })),
+              }
+            : null;
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item)),
+    [relationships],
+  );
+  const resolvedSourceQuerySql = useMemo(
+    () =>
+      buildFallbackSourceQuerySql({
+        sourceQuerySql,
+        sourceTables: selectedSourceTables,
+        derivedSources: selectedDerivedSourceRecords,
+        relationships: relationshipPayload,
+        drivingTable: drivingTableRef,
+      }),
+    [
+      drivingTableRef,
+      relationshipPayload,
+      selectedDerivedSourceRecords,
+      selectedSourceTables,
+      sourceQuerySql,
+    ],
+  );
+
   const [aiSummaryCollapsed, setAiSummaryCollapsed] = useState(false);
   const [aiSummaryWidth, setAiSummaryWidth] = useState(DEFAULT_AI_SUMMARY_WIDTH);
   const aiSummaryResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
@@ -96,9 +208,6 @@ export function SummaryWorkspace() {
     };
   };
 
-  const selectedTargetQualifiedName =
-    targets.find((table) => table.isSelected)?.qualifiedName ?? null;
-
   const metrics = useMemo(
     () =>
       buildSummaryMetrics({
@@ -124,12 +233,12 @@ export function SummaryWorkspace() {
   const sourceQueryPreviewSql = useMemo(
     () =>
       buildSourceQueryPreviewSql({
-        sourceQuerySql,
+        sourceQuerySql: resolvedSourceQuerySql,
         sourceFilterSql,
         sourceGroupBySql,
         sourceOrderBySql,
       }),
-    [sourceFilterSql, sourceGroupBySql, sourceOrderBySql, sourceQuerySql],
+    [resolvedSourceQuerySql, sourceFilterSql, sourceGroupBySql, sourceOrderBySql],
   );
 
   const generatedSql = useMemo(
@@ -137,19 +246,121 @@ export function SummaryWorkspace() {
       buildMappingInsertSql({
         mappings,
         targetQualifiedName: selectedTargetQualifiedName,
-        sourceQuerySql,
+        sourceQuerySql: resolvedSourceQuerySql,
+        sourceTables: selectedSourceTables,
+        derivedSources: selectedDerivedSourceRecords,
         sourceFilterSql,
         sourceGroupBySql,
         sourceOrderBySql,
       }),
     [
+      selectedDerivedSourceRecords,
+      selectedSourceTables,
       mappings,
+      resolvedSourceQuerySql,
       selectedTargetQualifiedName,
-      sourceQuerySql,
       sourceFilterSql,
       sourceGroupBySql,
       sourceOrderBySql,
     ],
+  );
+
+  const previewSql = useMemo(
+    () =>
+      buildMappingSelectSql({
+        mappings,
+        sourceQuerySql: resolvedSourceQuerySql,
+        sourceTables: selectedSourceTables,
+        derivedSources: selectedDerivedSourceRecords,
+        sourceFilterSql,
+        sourceGroupBySql,
+        sourceOrderBySql,
+      }),
+    [
+      selectedDerivedSourceRecords,
+      selectedSourceTables,
+      mappings,
+      resolvedSourceQuerySql,
+      sourceFilterSql,
+      sourceGroupBySql,
+      sourceOrderBySql,
+    ],
+  );
+  const finalGeneratedSql = useMemo(
+    () => (mappingSql?.trim() ? mappingSql : generatedSql),
+    [generatedSql, mappingSql],
+  );
+  const finalPreviewSql = useMemo(
+    () => (mappingPreviewSql?.trim() ? mappingPreviewSql : previewSql),
+    [mappingPreviewSql, previewSql],
+  );
+  const sqlVariantLabel = useMemo(() => {
+    if (mappingSqlVariant === "optimized") {
+      return "Cortex Analyst optimized SQL";
+    }
+    if (mappingSqlVariant === "original") {
+      return "Original builder SQL";
+    }
+    return "Current builder SQL";
+  }, [mappingSqlVariant]);
+  const tableLineageMermaid = useMemo(
+    () =>
+      buildTableLineageMermaid({
+        sourceTables: selectedSourceTables,
+        derivedSources,
+        relationships: relationshipPayload,
+        targetTable: selectedTargetTableRef,
+      }),
+    [derivedSources, relationshipPayload, selectedSourceTables, selectedTargetTableRef],
+  );
+  const columnLineageMermaid = useMemo(
+    () =>
+      buildColumnLineageMermaid({
+        mappings,
+        targetTable: selectedTargetTableRef,
+      }),
+    [mappings, selectedTargetTableRef],
+  );
+  const dbtRequestPayload = useMemo(
+    () =>
+      buildDbtConversionRequestPayload({
+        targets,
+        sources,
+        relationships,
+        derivedSources,
+        sourceAttributeGroups,
+        mappings,
+        semanticBundleId,
+        semanticBundleLabel,
+        semanticViewName,
+        semanticContextItems,
+        semanticLineage,
+        semanticDatahubContext,
+        sourceQuerySql: sourceQueryPreviewSql,
+        validatedSql: finalPreviewSql,
+        generatedSql: finalGeneratedSql,
+      }),
+    [
+      derivedSources,
+      finalGeneratedSql,
+      finalPreviewSql,
+      mappings,
+      relationships,
+      semanticBundleId,
+      semanticBundleLabel,
+      semanticContextItems,
+      semanticDatahubContext,
+      semanticLineage,
+      semanticViewName,
+      sourceAttributeGroups,
+      sourceQueryPreviewSql,
+      sources,
+      targets,
+    ],
+  );
+  const cachedDbtConversion = useMemo(
+    () => getCachedDbtConversion(dbtRequestPayload),
+    [dbtCacheVersion, dbtRequestPayload],
   );
 
   const narrative = useMemo(() => {
@@ -163,16 +374,141 @@ export function SummaryWorkspace() {
   }, [metrics, selectedTargetQualifiedName]);
 
   const handleExportSql = () => {
-    if (!generatedSql.trim()) {
+    if (!finalGeneratedSql.trim()) {
       return;
     }
-    const blob = new Blob([generatedSql], { type: "text/sql;charset=utf-8" });
+    const blob = new Blob([finalGeneratedSql], { type: "text/sql;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement("a");
     anchor.href = url;
     anchor.download = "mapping.sql";
     anchor.click();
     URL.revokeObjectURL(url);
+  };
+
+  const clearExportProgressTimer = () => {
+    if (exportProgressTimerRef.current !== null) {
+      window.clearInterval(exportProgressTimerRef.current);
+      exportProgressTimerRef.current = null;
+    }
+  };
+
+  useEffect(() => clearExportProgressTimer, []);
+
+  const beginExportProgress = () => {
+    clearExportProgressTimer();
+    setExcelExportProgress(8);
+    exportProgressTimerRef.current = window.setInterval(() => {
+      setExcelExportProgress((current) => (current >= 88 ? current : current + 8));
+    }, 900);
+  };
+
+  const handleExportExcel = async () => {
+    setExcelExportLoading(true);
+    setGitPushNotice(null);
+    setExcelExportError(null);
+    setExcelExportNotice(null);
+    setExcelExportStage("Collecting mapping context for the workbook...");
+    beginExportProgress();
+    const targetTable = selectedTargetTableRef;
+
+    if (!cachedDbtConversion?.result) {
+      setExcelExportNotice(
+        "DBT code is still being generated. Downloading the workbook without the DBT sheet content for now.",
+      );
+    }
+
+    const payload = {
+      project_name: targetTable?.table ? `${targetTable.table} STTM Export` : "STTM Export",
+      summary_narrative: narrative,
+      created_by:
+        session?.display_name ||
+        session?.email ||
+        (session?.user_id !== undefined && session?.user_id !== null ? String(session.user_id) : "Unknown"),
+      created_at: new Date().toISOString(),
+      version_label: semanticBundleLabel || semanticViewName || "Current builder session",
+      target_table: targetTable,
+      source_tables: selectedSourceTables,
+      relationships: relationshipPayload,
+      derived_sources: selectedDerivedSourceRecords
+        .map((source) => ({
+          derived_source_id: source.id,
+          derived_source_name: source.sourceName,
+          sql_text: source.sqlText ?? null,
+          source_tables: (source.baseSourceTables ?? []).filter(Boolean),
+          base_source_tables: (source.baseSourceTables ?? []).filter(Boolean),
+          semantic_view_name: source.semanticViewName ?? null,
+          semantic_bundle_label: source.semanticBundleLabel ?? null,
+        })),
+      filters_sql: sourceFilterSql || null,
+      source_query_sql: sourceQueryPreviewSql,
+      preview_sql: finalPreviewSql,
+      generated_sql: finalGeneratedSql,
+      sql_variant_label: sqlVariantLabel,
+      derived_source_lineage: semanticLineage ?? [],
+      lineage_table_mermaid: tableLineageMermaid,
+      lineage_column_mermaid: columnLineageMermaid,
+      dbt_conversion: cachedDbtConversion?.result
+        ? {
+            status: cachedDbtConversion.result.status,
+            action: cachedDbtConversion.result.action ?? null,
+            message: cachedDbtConversion.result.message ?? null,
+            materialization: cachedDbtConversion.result.materialization ?? null,
+            materialization_reason: cachedDbtConversion.result.materialization_reason ?? null,
+            generated_files: cachedDbtConversion.result.generated_files,
+            schema_files: cachedDbtConversion.result.schema_files,
+            source_update: cachedDbtConversion.result.source_update ?? null,
+          }
+        : null,
+      mappings: mappings
+        .filter((mapping) => mapping.status === "MAPPED")
+        .map((mapping) => ({
+          target_column: mapping.targetColumn,
+          target_type: mapping.targetType,
+          source_column: mapping.sourceColumn,
+          source_columns:
+            mapping.sourceColumns && mapping.sourceColumns.length
+              ? mapping.sourceColumns
+              : parseSourceColumns(mapping.sourceColumn),
+          expression: mapping.expression,
+          rule: mapping.rule,
+          status: mapping.status,
+          nl_rule: mapping.nlRule ?? null,
+          description: mapping.description ?? null,
+        })),
+    };
+
+    try {
+      setExcelExportProgress(28);
+      setExcelExportStage("Preparing workbook sheets and sample values...");
+      const blob = await dbService.exportSttmWorkbook(payload);
+      setExcelExportProgress(95);
+      setExcelExportStage("Workbook is ready. Starting the download...");
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${targetTable?.table ?? "sttm"}_export.xlsx`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      setExcelExportProgress(100);
+      setTimeout(() => {
+        setExcelExportStage(null);
+        setExcelExportProgress(0);
+      }, 1200);
+    } catch (error) {
+      setExcelExportError(
+        error instanceof Error ? error.message : "Unable to generate the Excel workbook.",
+      );
+      setExcelExportStage("Workbook generation failed. Review the error and try again.");
+      setExcelExportProgress(0);
+    } finally {
+      clearExportProgressTimer();
+      setExcelExportLoading(false);
+    }
+  };
+
+  const handlePushToGit = () => {
+    setGitPushNotice("Dummy action only for now. The DBT git push wiring is not connected yet.");
   };
 
   return (
@@ -187,6 +523,11 @@ export function SummaryWorkspace() {
             icon: <TerminalRoundedIcon sx={{ fontSize: 17 }} />,
             badge: metrics.mappedCount > 0 ? metrics.mappedCount : undefined,
           },
+          {
+            key: "dbt-conversion",
+            label: "DBT Conversion",
+            icon: <AutoAwesomeRoundedIcon sx={{ fontSize: 17 }} />,
+          },
           { key: "data-lineage", label: "Data Lineage", icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
         ]}
         activeTab={tab}
@@ -195,10 +536,61 @@ export function SummaryWorkspace() {
           <SummaryExportActions
             mappedCount={metrics.mappedCount}
             totalCount={metrics.totalCount}
+            excelLoading={excelExportLoading}
+            excelLabel={excelExportLoading ? "Generating Excel..." : "Download Excel"}
+            onExportExcel={() => {
+              void handleExportExcel();
+            }}
             onExportSql={handleExportSql}
+            onPushToGit={handlePushToGit}
           />
         }
       />
+
+      {excelExportStage || gitPushNotice ? (
+        <Box sx={{ px: 2, pt: 1.5, pb: 0.5, backgroundColor: "#ffffff" }}>
+          {excelExportStage ? (
+            <Alert
+              severity={excelExportError ? "error" : excelExportLoading ? "info" : "success"}
+              sx={{ borderRadius: 2, alignItems: "center", mb: gitPushNotice ? 1 : 0 }}
+            >
+              <Typography sx={{ fontSize: "0.82rem", fontWeight: 700, mb: 0.35 }}>
+                {excelExportStage}
+              </Typography>
+              {!excelExportError ? (
+                <LinearProgress
+                  variant={excelExportProgress > 0 ? "determinate" : "indeterminate"}
+                  value={excelExportProgress}
+                  sx={{
+                    mt: 0.75,
+                    height: 6,
+                    borderRadius: 999,
+                    bgcolor: "rgba(148,163,184,0.18)",
+                  }}
+                />
+              ) : (
+                <Typography sx={{ fontSize: "0.78rem", lineHeight: 1.5 }}>
+                  {excelExportError}
+                </Typography>
+              )}
+            </Alert>
+          ) : null}
+          {excelExportNotice ? (
+            <Alert severity="warning" sx={{ borderRadius: 2, mb: gitPushNotice ? 1 : 0 }}>
+              <Typography sx={{ fontSize: "0.8rem", lineHeight: 1.5 }}>
+                {excelExportNotice}
+              </Typography>
+            </Alert>
+          ) : null}
+          {gitPushNotice ? (
+            <Alert severity="info" sx={{ borderRadius: 2 }}>
+              <Typography sx={{ fontSize: "0.8rem", lineHeight: 1.5 }}>
+                {gitPushNotice}
+              </Typography>
+            </Alert>
+          ) : null}
+        </Box>
+      ) : null}
 
       <Box sx={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
         {tab !== "data-lineage" ? (
@@ -294,10 +686,17 @@ export function SummaryWorkspace() {
               filterCount={filterCount}
               joinCount={relationships.length}
               sourceQuerySql={sourceQueryPreviewSql}
-              generatedSql={generatedSql}
+              generatedSql={finalGeneratedSql}
             />
           ) : null}
           {tab === "data-lineage" ? <SttmLineageWorkspacePanel /> : null}
+          <DbtConversionTab
+            active={tab === "dbt-conversion"}
+            validatedSql={finalPreviewSql}
+            generatedSql={finalGeneratedSql}
+            sourceQuerySql={sourceQueryPreviewSql}
+            onCompleted={() => setDbtCacheVersion((current) => current + 1)}
+          />
         </Box>
       </Box>
     </Box>

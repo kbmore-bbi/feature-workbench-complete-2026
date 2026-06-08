@@ -1,4 +1,4 @@
-import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
+import { createSlice, createAsyncThunk, createAction, type PayloadAction } from "@reduxjs/toolkit";
 import { getApiErrorMessage } from "@/api/axiosInstance";
 import { conversationService } from "@/services/conversationService";
 import { dbService } from "@/services/dbService";
@@ -9,6 +9,8 @@ import type {
   AssistantPreferenceState,
   AssistantSignal,
   ConversationEnvelopeResponse,
+  MappingIntent,
+  SemanticLevel,
   SemanticContextItem,
   SourceMappingResult,
   STTMBuilderEnvelopeResponse,
@@ -180,6 +182,22 @@ function isDerivedSourceGenerationText(text: string): boolean {
   }
   return (text.includes("create") || text.includes("build") || text.includes("generate")) &&
     text.includes("join");
+}
+
+function getCurrentAssistantPage() {
+  if (typeof window === "undefined") {
+    return "builder" as const;
+  }
+  const pathname = window.location.pathname;
+  if (pathname.includes("/summary")) return "summary" as const;
+  if (pathname.includes("/mapping")) return "mapping" as const;
+  return "builder" as const;
+}
+
+function getCurrentAssistantSurface(page: "builder" | "mapping" | "summary", isDerivedSourcePrompt: boolean) {
+  if (page === "mapping") return "MAPPING" as const;
+  if (isDerivedSourcePrompt) return "DERIVED_SOURCE" as const;
+  return "SOURCE_SELECTION" as const;
 }
 
 function createChatMessageId() {
@@ -396,8 +414,11 @@ function extractNarrativeReviewFields(response: STTMBuilderEnvelopeResponse) {
   const codeBlockMatch = text.match(/```(?:sql)?\s*([\s\S]*?)```/i);
   const generatedRuleMatch = text.match(/Generated Rule:\s*([\s\S]*?)(?:\n\s*\n|Rule Details:|How It Works:|SQL Fragment Required:|$)/i);
   const preprocessingRuleMatch = text.match(/Preprocessing Rule(?:\s*\([^)]+\))?:\s*([\s\S]*?)(?:\n\s*\n|Rule Details:|How It Works:|SQL Fragment Required:|$)/i);
-  const sourceLineMatch = text.match(/Source Attribute[s]?:\s*([^\n]+)/i);
-  const targetLineMatch = text.match(/Target Attribute:\s*([^\n]+)/i);
+  const transformationLogicMatch = text.match(
+    /Transformation Logic(?:\s*\(SQL\))?:\s*([\s\S]*?)(?:\n\s*\n|This rule will:|Rule Details:|How It Works:|Status:|$)/i,
+  );
+  const sourceLineMatch = text.match(/Source(?: Attribute[s]?)?:\s*([^\n|]+)/i);
+  const targetLineMatch = text.match(/Target Attribute:\s*([^\n|]+)/i);
   const confidenceMatch = text.match(/Confidence:\s*(\d{1,3})%/i);
   const processingOrderMatch = text.match(/Processing Order:\s*(\d+)/i);
   const typeMatch = text.match(/Type:\s*([^\n]+)/i);
@@ -405,6 +426,7 @@ function extractNarrativeReviewFields(response: STTMBuilderEnvelopeResponse) {
 
   const parsedRule = (
     codeBlockMatch?.[1] ||
+    transformationLogicMatch?.[1] ||
     generatedRuleMatch?.[1] ||
     preprocessingRuleMatch?.[1] ||
     ""
@@ -906,7 +928,7 @@ function applySemanticRefreshToState(
   state.semanticBundleLabel = refresh.bundle_label ?? state.semanticBundleLabel;
   state.semanticLevel = refresh.achieved_level ?? state.semanticLevel;
   state.semanticStatus = refresh.status ?? state.semanticStatus;
-  state.semanticViewName = refresh.semantic_view_name ?? state.semanticViewName;
+  state.semanticViewName = refresh.semantic_view_name ?? null;
   state.semanticContextSummary = refresh.summary ?? state.semanticContextSummary;
   state.semanticContextItems =
     normalizeSemanticContextItems(refresh.semantic_context) ?? state.semanticContextItems;
@@ -916,6 +938,48 @@ function applySemanticRefreshToState(
     typeof refresh.datahub_context?.status === "string"
       ? refresh.datahub_context.status
       : state.datahubStatus;
+}
+
+function extractSemanticViewNameFromStatus(
+  status: Record<string, unknown> | null | undefined,
+  fallback: string | null,
+): string | null {
+  if (!status || typeof status !== 'object') {
+    return fallback;
+  }
+  if (!Object.prototype.hasOwnProperty.call(status, 'semantic_view_name')) {
+    return fallback;
+  }
+  const value = status.semantic_view_name;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function normalizeSemanticIdentifier(value: string | null | undefined): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+function estimateAutoMapComplexity(
+  targetAttribute: string,
+  sourceColumnNames: string[],
+): number {
+  const targetKey = normalizeSemanticIdentifier(targetAttribute);
+  if (!targetKey) {
+    return 99;
+  }
+  const normalizedSources = sourceColumnNames.map((name) => normalizeSemanticIdentifier(name));
+  if (normalizedSources.includes(targetKey)) {
+    return 0;
+  }
+  if (normalizedSources.some((name) => name.endsWith(targetKey) || targetKey.endsWith(name))) {
+    return 1;
+  }
+  if (normalizedSources.some((name) => name.includes(targetKey) || targetKey.includes(name))) {
+    return 2;
+  }
+  return 3;
 }
 
 // ─── state shape ───────────────────────────────────────────────────
@@ -940,6 +1004,7 @@ type SttmBuilderState = {
   assistantInferences: AssistantInferenceRecord[];
   assistantPreferences: AssistantPreferenceState;
   assistantUnreadCount: number;
+  mappingIntent: MappingIntent | null;
   agentThreadId: string | null;
   agentParentMessageId: number | null;
   semanticBundleId: string | null;
@@ -973,11 +1038,102 @@ type SttmBuilderState = {
   mappings: MappingState[];
   selectedMappingIds: string[];
   mappingSql: string;
+  mappingPreviewSql: string;
+  mappingSqlVariant: "original" | "optimized" | null;
   isPreProcessModalOpen: boolean;
   activeMappingId: string | null;
   pendingAiMappingReviews: PendingAiMappingReview[];
   autoMapStatusMessage: string | null;
+  autoMapProcessingIds: string[];
 };
+
+export type PersistedSttmBuilderSession = {
+  sourceDatabases: DatabaseNode[];
+  targetDatabases: DatabaseNode[];
+  sources: TableNode[];
+  targets: TableNode[];
+  sourceInfo: SourceTargetInfo;
+  targetInfo: SourceTargetInfo;
+  sourceAttributeGroups: ColumnGroup[];
+  targetAttributeGroup: ColumnGroup | null;
+  mappingSuggestions: MappingSuggestion[];
+  chatMessages: ChatMessage[];
+  assistantSignals: AssistantSignal[];
+  assistantInferences: AssistantInferenceRecord[];
+  assistantUnreadCount: number;
+  mappingIntent: MappingIntent | null;
+  agentThreadId: string | null;
+  agentParentMessageId: number | null;
+  semanticBundleId: string | null;
+  semanticBundleLabel: string | null;
+  semanticLevel: string | null;
+  semanticStatus: string | null;
+  semanticViewName: string | null;
+  semanticContextSummary: Record<string, unknown> | null;
+  semanticContextItems: SemanticContextItem[] | null;
+  semanticLineage: Array<Record<string, unknown>>;
+  semanticDatahubContext: Record<string, unknown> | null;
+  datahubStatus: string | null;
+  pendingDerivedSourceDraft: PendingDerivedSourceDraft | null;
+  derivedSourceDraftRequested: boolean;
+  drivingTableId: string | null;
+  relationships: JoinConfig[];
+  derivedSources: DerivedSource[];
+  sourceFilterSql: string;
+  sourceFilterGroups: RuleGroup[];
+  sourceQuerySql: string;
+  sourceGroupBySql: string;
+  sourceOrderBySql: string;
+  mappings: MappingState[];
+  selectedMappingIds: string[];
+  mappingSql: string;
+  mappingPreviewSql: string;
+  mappingSqlVariant: "original" | "optimized" | null;
+  isPreProcessModalOpen: boolean;
+  activeMappingId: string | null;
+  pendingAiMappingReviews: PendingAiMappingReview[];
+};
+
+const autoMapBatchesInitialized = createAction<{
+  totalCount: number;
+}>("sttmBuilder/autoMapBatchesInitialized");
+
+const autoMapBatchStarted = createAction<{
+  processingIds: string[];
+  processedCount: number;
+  totalCount: number;
+}>("sttmBuilder/autoMapBatchStarted");
+
+const autoMapBatchApplied = createAction<{
+  response: STTMBuilderEnvelopeResponse;
+  completedMappingIds: string[];
+  processedCount: number;
+  totalCount: number;
+}>("sttmBuilder/autoMapBatchApplied");
+
+const autoMapBatchFailed = createAction<{
+  completedMappingIds: string[];
+  processedCount: number;
+  totalCount: number;
+  errorMessage: string;
+}>("sttmBuilder/autoMapBatchFailed");
+
+function mergeDerivedSourceLists(
+  existing: DerivedSource[],
+  incoming: DerivedSource[],
+): DerivedSource[] {
+  const existingById = new Map(existing.map((source) => [source.id, source]));
+  const mergedIncoming = incoming.map((source) => {
+    const current = existingById.get(source.id);
+    return {
+      ...source,
+      isSelected: source.isSelected ?? current?.isSelected ?? false,
+    };
+  });
+  const incomingIds = new Set(mergedIncoming.map((source) => source.id));
+  const localOnly = existing.filter((source) => !incomingIds.has(source.id));
+  return [...mergedIncoming, ...localOnly];
+}
 
 function cloneRuleNode(node: RuleGroup | RuleCondition): RuleGroup | RuleCondition {
   if (node.type === "condition") {
@@ -991,6 +1147,15 @@ function cloneRuleNode(node: RuleGroup | RuleCondition): RuleGroup | RuleConditi
 
 function cloneRuleGroups(groups: RuleGroup[]) {
   return groups.map((group) => cloneRuleNode(group) as RuleGroup);
+}
+
+function chunkItems<T>(items: T[], chunkSize: number): T[][] {
+  if (chunkSize <= 0) return [items];
+  const chunks: T[][] = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+  return chunks;
 }
 
 function extractAssistantDisplayText(
@@ -1021,7 +1186,11 @@ function extractAssistantDisplayText(
     const previewRows = Array.isArray(artifact.preview_rows) ? artifact.preview_rows : [];
     const requestSummary =
       typeof artifact.request_summary === "string" ? artifact.request_summary.trim() : "";
-    const detailText = artifactAnswerText || rootMessage;
+    const detailText =
+      artifactAnswerText ||
+      (rootMessage.includes("{")
+        ? rootMessage.slice(0, rootMessage.indexOf("{")).trim()
+        : rootMessage);
     const lines = ["## Derived Source Ready"];
 
     if (requestSummary) {
@@ -1108,6 +1277,7 @@ const initialState: SttmBuilderState = {
     recommendations_enabled: true,
   },
   assistantUnreadCount: 0,
+  mappingIntent: null,
   agentThreadId: null,
   agentParentMessageId: null,
   semanticBundleId: null,
@@ -1141,11 +1311,117 @@ const initialState: SttmBuilderState = {
   mappings: [],
   selectedMappingIds: [],
   mappingSql: "",
+  mappingPreviewSql: "",
+  mappingSqlVariant: null,
   isPreProcessModalOpen: false,
   activeMappingId: null,
   pendingAiMappingReviews: [],
   autoMapStatusMessage: null,
+  autoMapProcessingIds: [],
 };
+
+function applyAutoMapResponseToState(
+  state: SttmBuilderState,
+  response: STTMBuilderEnvelopeResponse,
+) {
+  state.semanticBundleId = response.data?.semantic_refresh_status?.bundle_id ?? state.semanticBundleId;
+  state.semanticBundleLabel =
+    (response.data?.semantic_refresh_status?.bundle_label as string | undefined) ??
+    (typeof response.data?.artifact?.summary === "object" &&
+    response.data?.artifact?.summary &&
+    "bundle_label" in response.data.artifact.summary
+      ? (response.data.artifact.summary.bundle_label as string | null)
+      : state.semanticBundleLabel);
+  state.semanticLevel = response.data?.semantic_level_achieved ?? state.semanticLevel;
+  state.semanticStatus = response.data?.semantic_refresh_status?.status ?? state.semanticStatus;
+  state.semanticViewName = extractSemanticViewNameFromStatus(
+    response.data?.semantic_refresh_status as Record<string, unknown> | undefined,
+    state.semanticViewName,
+  );
+  state.semanticContextSummary =
+    response.data?.artifact_type === "semantic_context"
+      ? (response.data?.artifact as Record<string, unknown> | null) ?? state.semanticContextSummary
+      : state.semanticContextSummary;
+  state.semanticContextItems =
+    normalizeSemanticContextItems(
+      response.context?.semantic_context as Array<Record<string, unknown>> | undefined,
+    ) ?? state.semanticContextItems;
+  state.semanticLineage = Array.isArray(response.context?.derived_source_lineage)
+    ? response.context.derived_source_lineage
+    : state.semanticLineage;
+  state.semanticDatahubContext =
+    (response.context?.datahub_context as Record<string, unknown> | null | undefined) ??
+    state.semanticDatahubContext;
+
+  const result = response.result;
+  const mappings =
+    result && "mappings" in result
+      ? result.mappings
+      : {};
+  const entries = Object.entries(mappings as Record<
+    string,
+    {
+      source_attributes?: string[];
+      confidence_score?: number;
+      confidence_reason?: string | null;
+      candidate_source_attributes?: string[];
+      unmatched_reason?: string | null;
+      preprocessing_rule?: string | null;
+      preprocessing_rule_type?: string | null;
+      preprocessing_nl_rule?: string | null;
+      processing_order?: number | null;
+      description?: string | null;
+    }
+  >);
+
+  for (const [target, val] of entries) {
+    const existing = state.mappingSuggestions.find(
+      (item) => normalizeTargetKey(item.targetAttribute) === normalizeTargetKey(target),
+    );
+    const nextSuggestion = {
+      targetAttribute: target,
+      sourceAttributes: val?.source_attributes ?? [],
+      confidenceScore: val?.confidence_score ?? 0,
+      confidenceReason: val?.confidence_reason ?? null,
+      candidateSourceAttributes: val?.candidate_source_attributes ?? [],
+      unmatchedReason: val?.unmatched_reason ?? null,
+      preprocessingRule: val?.preprocessing_rule ?? null,
+      preprocessingRuleType: val?.preprocessing_rule_type ?? null,
+      preprocessingNlRule: val?.preprocessing_nl_rule ?? null,
+      processingOrder: val?.processing_order ?? null,
+      description: val?.description ?? null,
+    };
+    if (existing) {
+      Object.assign(existing, nextSuggestion);
+    } else {
+      state.mappingSuggestions.push(nextSuggestion);
+    }
+  }
+
+  for (const mapping of state.mappings) {
+    const match = entries.find(([target]) =>
+      targetKeyVariants(target).has(normalizeTargetKey(mapping.targetColumn)),
+    );
+    if (!match) continue;
+    const [, val] = match;
+    applyMappingSuggestion(mapping, {
+      sourceAttributes: val?.source_attributes ?? [],
+      confidenceScore: val?.confidence_score ?? 0,
+      confidenceReason: val?.confidence_reason ?? null,
+      candidateSourceAttributes: val?.candidate_source_attributes ?? [],
+      unmatchedReason: val?.unmatched_reason ?? null,
+      preprocessingRule: val?.preprocessing_rule ?? null,
+      preprocessingRuleType: val?.preprocessing_rule_type ?? null,
+      preprocessingNlRule: val?.preprocessing_nl_rule ?? null,
+      processingOrder: val?.processing_order ?? null,
+      description: val?.description ?? null,
+    });
+  }
+
+  if (response.message) {
+    state.chatMessages.push({ role: "assistant", content: response.message });
+  }
+}
 
 function applyAssistantSignalsData(
   state: SttmBuilderState,
@@ -1154,12 +1430,14 @@ function applyAssistantSignalsData(
     signals: AssistantSignal[];
     inferences: AssistantInferenceRecord[];
     unread_count: number;
+    mapping_intent?: MappingIntent | null;
   },
 ) {
   state.assistantPreferences = payload.settings;
   state.assistantSignals = payload.signals;
   state.assistantInferences = payload.inferences;
   state.assistantUnreadCount = payload.unread_count;
+  state.mappingIntent = payload.mapping_intent ?? state.mappingIntent;
 }
 
 // ─── async thunks ──────────────────────────────────────────────────
@@ -1445,53 +1723,199 @@ export const runAutoMap = createAsyncThunk(
     if (!selectedSourceTables.length || !state.targetAttributeGroup) return null;
 
     try {
-      let response = null as Awaited<ReturnType<typeof workbenchService.invoke>> | null;
-      dispatch(autoMapStreamStatus({ text: "Preparing mapping-ready semantic context." }));
-      for await (const event of workbenchService.invokeStream({
-        interface: "AUTO_MAP",
-        thread_id: null,
-        source_tables: selectedSourceTables.map((t) => makeTableRef(t.qualifiedName)),
-        target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
-        driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
-        relationships: buildRelationshipPayload(state.relationships),
-        semantic_context: state.semanticContextItems,
-        selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
-        selected_derived_sources: getSelectedDerivedSourceIds(state.derivedSources),
-        semantic_bundle_id: state.semanticBundleId,
-        semantic_view_name: state.semanticViewName,
-        derived_source_lineage: state.semanticLineage,
-        datahub_context: state.semanticDatahubContext,
-        surface: "MAPPING",
-        semantic_level_requested: "L3_MAPPING_ENRICHED",
-        attributes: state.targetAttributeGroup.columns
-          .filter((col) => !!col.name)
-          .map((col) => ({
-            target_table: makeTableRef(state.targetAttributeGroup!.qualifiedName),
-            target_attribute: col.name as string,
-            target_data_type: col.type ?? null,
-            target_description: null,
-            source_mappings: null,
-          })),
-      })) {
-        if (event.event === "status") {
-          const statusText =
-            typeof event.data.message === "string" ? event.data.message : "";
-          if (statusText) {
-            dispatch(autoMapStreamStatus({ text: statusText }));
+      const sourceColumnNames = state.sourceAttributeGroups.flatMap((group) =>
+        group.columns.map((column) => String(column.name || '')).filter(Boolean),
+      );
+      const derivedColumnNames = state.derivedSources
+        .filter((source) => source.isSelected)
+        .flatMap((source) =>
+          (source.previewColumns ?? source.columns ?? [])
+            .map((column) => String(column.name || ''))
+            .filter(Boolean),
+        );
+      const candidateSourceNames = [...sourceColumnNames, ...derivedColumnNames];
+      const targetAttributes = state.targetAttributeGroup.columns
+        .filter((col) => !!col.name)
+        .map((col, index) => ({
+          target_table: makeTableRef(state.targetAttributeGroup!.qualifiedName),
+          target_attribute: col.name as string,
+          target_data_type: col.type ?? null,
+          target_description: null,
+          source_mappings: null,
+          _original_index: index,
+        }))
+        .sort((left, right) => {
+          const leftScore = estimateAutoMapComplexity(left.target_attribute, candidateSourceNames);
+          const rightScore = estimateAutoMapComplexity(right.target_attribute, candidateSourceNames);
+          if (leftScore !== rightScore) {
+            return leftScore - rightScore;
           }
-          continue;
-        }
-        if (event.event === "error") {
-          throw new Error(event.data.message || "Auto-map streaming request failed.");
-        }
-        if (event.event === "final") {
-          response = event.data;
+          return left._original_index - right._original_index;
+        })
+        .map(({ _original_index: _ignored, ...attribute }) => attribute);
+      if (!targetAttributes.length) {
+        throw new Error("No target attributes are available for auto-map.");
+      }
+      const mappingIdsByTarget = new Map(
+        state.mappings.map((mapping) => [normalizeTargetKey(mapping.targetColumn), mapping.id]),
+      );
+      dispatch(
+        autoMapBatchesInitialized({
+          totalCount: targetAttributes.length,
+        }),
+      );
+      let semanticBundleId = state.semanticBundleId;
+      let semanticViewName = state.semanticViewName;
+      let semanticContextItems = state.semanticContextItems;
+      let semanticLineage = state.semanticLineage;
+      let semanticDatahubContext = state.semanticDatahubContext;
+      let processedCount = 0;
+      const failures: string[] = [];
+      const selectedDerivedSourceIds = getSelectedDerivedSourceIds(state.derivedSources);
+      if (!semanticBundleId || !semanticViewName || !isAnalystReadyLevel(state.semanticLevel)) {
+        dispatch(
+          autoMapStreamStatus({
+            text: 'Preparing mapping-ready semantic context for auto-map...',
+          }),
+        );
+        const semanticRefresh = await dbService.refreshSemanticContext({
+          selected_source_tables: selectedSourceTables.map((table) => makeTableRef(table.qualifiedName)),
+          selected_derived_sources: selectedDerivedSourceIds,
+          target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
+          relationships: buildRelationshipPayload(state.relationships),
+          requested_level: 'L3_MAPPING_ENRICHED',
+          force: false,
+        });
+        semanticBundleId = semanticRefresh.bundle_id;
+        semanticViewName = semanticRefresh.semantic_view_name ?? null;
+        semanticContextItems =
+          normalizeSemanticContextItems(semanticRefresh.semantic_context) ?? semanticContextItems;
+        semanticLineage = semanticRefresh.lineage ?? semanticLineage;
+        semanticDatahubContext = semanticRefresh.datahub_context ?? semanticDatahubContext;
+        dispatch(applySemanticRefresh(semanticRefresh));
+      }
+      if (!semanticBundleId || !semanticViewName) {
+        throw new Error(
+          'Auto-map requires a promoted semantic view for the current source and target selection.',
+        );
+      }
+      dispatch(
+        autoMapStreamStatus({
+          text:
+            semanticBundleId && semanticViewName
+              ? "Reusing the current mapping-ready semantic context."
+              : "Starting auto-map with the current mapping context.",
+        }),
+      );
+
+      const attributeBatches = chunkItems(targetAttributes, 5);
+      for (let batchIndex = 0; batchIndex < attributeBatches.length; batchIndex += 1) {
+        const batch = attributeBatches[batchIndex];
+        const batchMappingIds = batch
+          .map((attribute) => mappingIdsByTarget.get(normalizeTargetKey(attribute.target_attribute)))
+          .filter((value): value is string => Boolean(value));
+        dispatch(
+          autoMapBatchStarted({
+            processingIds: batchMappingIds,
+            processedCount,
+            totalCount: targetAttributes.length,
+          }),
+        );
+        dispatch(
+          autoMapStreamStatus({
+            text: `Auto-mapping batch ${batchIndex + 1}/${attributeBatches.length} (${processedCount + 1}-${Math.min(processedCount + batch.length, targetAttributes.length)} of ${targetAttributes.length})...`,
+          }),
+        );
+        let response = null as Awaited<ReturnType<typeof workbenchService.invoke>> | null;
+        try {
+          for await (const event of workbenchService.invokeStream({
+            interface: "AUTO_MAP",
+            thread_id: null,
+            source_tables: selectedSourceTables.map((t) => makeTableRef(t.qualifiedName)),
+            target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
+            driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
+            relationships: buildRelationshipPayload(state.relationships),
+            semantic_context: semanticContextItems,
+            selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
+            selected_derived_sources: selectedDerivedSourceIds,
+            semantic_bundle_id: semanticBundleId,
+            semantic_view_name: semanticViewName,
+            derived_source_lineage: semanticLineage,
+            datahub_context: semanticDatahubContext,
+            surface: "MAPPING",
+            semantic_level_requested: "L3_MAPPING_ENRICHED",
+            attributes: batch,
+          })) {
+            if (event.event === "status") {
+              const statusText =
+                typeof event.data.message === "string" ? event.data.message : "";
+              if (statusText) {
+                dispatch(
+                  autoMapStreamStatus({
+                    text: `Batch ${batchIndex + 1}/${attributeBatches.length}: ${statusText}`,
+                  }),
+                );
+              }
+              continue;
+            }
+            if (event.event === "error") {
+              throw new Error(event.data.message || "Auto-map streaming request failed.");
+            }
+            if (event.event === "final") {
+              response = event.data;
+            }
+          }
+          if (!response) {
+            throw new Error(
+              `The auto-map stream ended without a final response for batch ${batchIndex + 1}.`,
+            );
+          }
+          semanticBundleId =
+            response.data?.semantic_refresh_status?.bundle_id ?? semanticBundleId;
+          semanticViewName = extractSemanticViewNameFromStatus(
+            response.data?.semantic_refresh_status as Record<string, unknown> | undefined,
+            semanticViewName,
+          );
+          semanticContextItems =
+            normalizeSemanticContextItems(
+              response.context?.semantic_context as Array<Record<string, unknown>> | undefined,
+            ) ?? semanticContextItems;
+          semanticLineage = Array.isArray(response.context?.derived_source_lineage)
+            ? response.context.derived_source_lineage
+            : semanticLineage;
+          semanticDatahubContext =
+            (response.context?.datahub_context as Record<string, unknown> | null | undefined) ??
+            semanticDatahubContext;
+          processedCount += batch.length;
+          dispatch(
+            autoMapBatchApplied({
+              response,
+              completedMappingIds: batchMappingIds,
+              processedCount,
+              totalCount: targetAttributes.length,
+            }),
+          );
+        } catch (err) {
+          processedCount += batch.length;
+          failures.push(...batch.map((attribute) => attribute.target_attribute));
+          dispatch(
+            autoMapBatchFailed({
+              completedMappingIds: batchMappingIds,
+              processedCount,
+              totalCount: targetAttributes.length,
+              errorMessage: getErrorMessage(
+                err,
+                `Auto-map failed for batch ${batchIndex + 1}.`,
+              ),
+            }),
+          );
         }
       }
-      if (!response) {
-        throw new Error("The auto-map stream ended without a final response.");
-      }
-      return response;
+      return {
+        processedCount,
+        totalCount: targetAttributes.length,
+        failedTargets: failures,
+      };
     } catch (err) {
       return rejectWithValue(getErrorMessage(err, "Auto-map failed."));
     }
@@ -1521,31 +1945,38 @@ export const sendChatMessage = createAsyncThunk(
     const selectedMappingIds = state.selectedMappingIds;
     const selectedDerivedSourceIds = getSelectedDerivedSourceIds(state.derivedSources);
     const relationships = buildRelationshipPayload(state.relationships);
-    const surface = state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION";
     const loweredMessage = trimmed.toLowerCase();
+    const isDerivedSourcePrompt = isDerivedSourceGenerationText(loweredMessage);
+    const currentAssistantPage = getCurrentAssistantPage();
+    const surface = getCurrentAssistantSurface(currentAssistantPage, isDerivedSourcePrompt);
     const needsAnalystReadyContext =
-      surface !== "MAPPING" &&
-      (isDerivedSourceGenerationText(loweredMessage) || isAnalystSqlText(loweredMessage));
-    const requestedSemanticLevel = state.targetAttributeGroup
+      currentAssistantPage !== "mapping" &&
+      (isDerivedSourcePrompt || isAnalystSqlText(loweredMessage));
+    const requestedSemanticLevel = currentAssistantPage === "mapping"
       ? "L3_MAPPING_ENRICHED"
       : needsAnalystReadyContext
         ? "L2_ANALYST_READY"
         : "L1_CONTEXT";
+    const shouldUseStructuredTransformationIntent =
+      currentAssistantPage === "mapping" && isTransformationPrompt(loweredMessage);
+    const useDirectWorkbenchStream = isDerivedSourcePrompt || shouldUseStructuredTransformationIntent;
     const selectedTableIds = [
       ...getSelectedSourceTables(state.sourceDatabases).map((table) => table.qualifiedName),
       ...selectedDerivedSourceIds,
     ];
-    const shouldUseStructuredTransformationIntent =
-      surface === "MAPPING" && isTransformationPrompt(loweredMessage);
     let semanticRefresh: SemanticRefreshResult | null = null;
     let semanticBundleId = state.semanticBundleId;
     let semanticViewName = state.semanticViewName;
+    let semanticContextItems = state.semanticContextItems;
+    let semanticLineage = state.semanticLineage;
+    let semanticDatahubContext = state.semanticDatahubContext;
+    let semanticLevelForRequest: SemanticLevel = requestedSemanticLevel;
     let threadId =
-      isDerivedSourceGenerationText(loweredMessage) || shouldUseStructuredTransformationIntent
+      isDerivedSourcePrompt || shouldUseStructuredTransformationIntent
         ? null
         : state.agentThreadId;
     let parentMessageId =
-      isDerivedSourceGenerationText(loweredMessage) || shouldUseStructuredTransformationIntent
+      isDerivedSourcePrompt || shouldUseStructuredTransformationIntent
         ? null
         : state.agentParentMessageId;
     try {
@@ -1554,16 +1985,25 @@ export const sendChatMessage = createAsyncThunk(
 
       if (
         (selectedSourceTables.length > 0 || selectedDerivedSourceIds.length > 0) &&
-        needsAnalystReadyContext &&
-        (!semanticBundleId || !semanticViewName || !isAnalystReadyLevel(state.semanticLevel))
+        (
+          (currentAssistantPage === "mapping" && useDirectWorkbenchStream) ||
+          (
+            needsAnalystReadyContext &&
+            (!semanticBundleId || !semanticViewName || !isAnalystReadyLevel(state.semanticLevel))
+          )
+        )
       ) {
-        pushStatus("Preparing analyst-ready semantic context for the current selection.");
+        pushStatus(
+          currentAssistantPage === "mapping"
+            ? "Preparing mapping semantic context for the current selection."
+            : "Preparing analyst-ready semantic context for the current selection.",
+        );
         semanticRefresh = await dbService.refreshSemanticContext({
           selected_source_tables: selectedSourceTables,
           selected_derived_sources: selectedDerivedSourceIds,
           target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
           relationships: relationships as Array<Record<string, unknown>>,
-          requested_level: "L2_ANALYST_READY",
+          requested_level: currentAssistantPage === "mapping" ? "L3_MAPPING_ENRICHED" : "L2_ANALYST_READY",
           force: false,
         });
         const promotedBundleChanged =
@@ -1572,37 +2012,75 @@ export const sendChatMessage = createAsyncThunk(
           !isAnalystReadyLevel(state.semanticLevel);
         semanticBundleId = semanticRefresh.bundle_id;
         semanticViewName = semanticRefresh.semantic_view_name ?? null;
+        semanticContextItems =
+          (semanticRefresh.semantic_context as SemanticContextItem[] | null | undefined) ??
+          semanticContextItems;
+        semanticLineage = semanticRefresh.lineage ?? semanticLineage;
+        semanticDatahubContext = semanticRefresh.datahub_context ?? semanticDatahubContext;
+        semanticLevelForRequest =
+          (semanticRefresh.achieved_level as SemanticLevel | undefined) ?? requestedSemanticLevel;
         if (promotedBundleChanged) {
           threadId = null;
           parentMessageId = null;
         }
       }
 
+      const stream = useDirectWorkbenchStream
+        ? workbenchService.invokeStream({
+            interface: shouldUseStructuredTransformationIntent ? "TRANSFORM" : "CHAT",
+            thread_id: null,
+            parent_message_id: null,
+            message: trimmed,
+            source_tables: selectedSourceTables,
+            target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
+            driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
+            relationships,
+            selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
+            selected_derived_sources: selectedDerivedSourceIds,
+            semantic_context: semanticContextItems,
+            surface,
+            semantic_level_requested: semanticLevelForRequest,
+            session_id: state.session ? String(state.session.user_id) : null,
+            semantic_bundle_id: semanticBundleId,
+            semantic_view_name: semanticViewName,
+            derived_source_lineage: semanticLineage,
+            datahub_context: semanticDatahubContext,
+            mapping_intent: state.mappingIntent,
+          })
+        : conversationService.invokeStream({
+            operation: "conversation.ask",
+            thread_id: threadId,
+            parent_message_id: threadId ? parentMessageId : null,
+            session_id: state.session ? String(state.session.user_id) : null,
+            message: trimmed,
+            source_tables: selectedSourceTables,
+            target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
+            driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
+            relationships,
+            selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
+            selected_derived_sources: selectedDerivedSourceIds,
+            requested_sources: ["relationships", "semantic", "recommendations", "feedback", "conversations"],
+            semantic_context: semanticContextItems,
+            semantic_bundle_label: state.semanticBundleLabel,
+            semantic_bundle_id: semanticBundleId,
+            semantic_view_name: semanticViewName,
+            derived_source_lineage: semanticLineage,
+            datahub_context: semanticDatahubContext,
+            surface,
+            semantic_level_requested: semanticLevelForRequest,
+            mapping_intent: state.mappingIntent,
+          });
       let response = null as AssistantEnvelopeResponse | null;
-      for await (const event of conversationService.invokeStream({
-        operation: "conversation.ask",
-        thread_id: threadId,
-        parent_message_id: threadId ? parentMessageId : null,
-        message: trimmed,
-        source_tables: selectedSourceTables,
-        target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
-        driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
-        relationships,
-        selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
-        selected_derived_sources: selectedDerivedSourceIds,
-        requested_sources: ["relationships", "semantic", "recommendations", "feedback", "conversations"],
-        semantic_context: state.semanticContextItems,
-        semantic_bundle_label: state.semanticBundleLabel,
-        semantic_bundle_id: semanticBundleId,
-        semantic_view_name: semanticViewName,
-        derived_source_lineage: state.semanticLineage,
-        datahub_context: state.semanticDatahubContext,
-        surface,
-        semantic_level_requested: requestedSemanticLevel,
-      })) {
+      for await (const event of stream) {
         if (event.event === "status") {
-          const statusText =
+          let statusText =
             typeof event.data.message === "string" ? event.data.message : "";
+          if (
+            isDerivedSourcePrompt &&
+            statusText === "Checking semantic context for the current selection."
+          ) {
+            statusText = "Looking for an existing semantic context for this selection.";
+          }
           if (statusText) pushStatus(statusText);
           continue;
         }
@@ -1685,6 +2163,8 @@ export const submitChatFeedback = createAsyncThunk(
         datahub_context: state.semanticDatahubContext,
         surface: state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION",
         semantic_level_requested: (state.semanticLevel as any) ?? "L1_CONTEXT",
+        session_id: state.session ? String(state.session.user_id) : null,
+        mapping_intent: state.mappingIntent,
         feedback: {
           category: "agent_quality",
           rating: payload.rating,
@@ -1730,7 +2210,14 @@ export const updateAssistantPreferences = createAsyncThunk(
 
 export const evaluateAssistantSignals = createAsyncThunk(
   "sttmBuilder/evaluateAssistantSignals",
-  async (_, { getState, rejectWithValue }) => {
+  async (
+    payload: {
+      activityType?: string;
+      page?: "builder" | "mapping" | "summary";
+      surface?: "SOURCE_SELECTION" | "MAPPING";
+    } | undefined,
+    { getState, rejectWithValue },
+  ) => {
     const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
     try {
       const selectedSourceTables = state.sources
@@ -1739,8 +2226,9 @@ export const evaluateAssistantSignals = createAsyncThunk(
       const selectedDerivedSourceIds = getSelectedDerivedSourceIds(state.derivedSources);
       const selectedTargetTable = state.targets.find((table) => table.isSelected);
       return await conversationService.evaluateSignals({
-        activity_type: state.targetAttributeGroup ? "mapping_context_changed" : "selection_changed",
-        page: state.targetAttributeGroup ? "mapping" : "builder",
+        activity_type: payload?.activityType ?? (state.targetAttributeGroup ? "mapping_context_changed" : "selection_changed"),
+        page: payload?.page ?? (state.targetAttributeGroup ? "mapping" : "builder"),
+        session_id: state.session ? String(state.session.user_id) : null,
         source_tables: selectedSourceTables,
         target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
         driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
@@ -1750,24 +2238,31 @@ export const evaluateAssistantSignals = createAsyncThunk(
         semantic_bundle_id: state.semanticBundleId,
         semantic_bundle_label: state.semanticBundleLabel,
         semantic_view_name: state.semanticViewName,
-        surface: state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION",
+        surface: payload?.surface ?? (state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION"),
         mapping_summary: {
           mapped_count: state.mappings.filter((item) => item.status === "MAPPED").length,
           unmapped_count: state.mappings.filter((item) => item.status !== "MAPPED").length,
           selected_mapping_count: state.selectedMappingIds.length,
         },
+        mapping_intent: state.mappingIntent,
       });
     } catch (err) {
       const errorCode =
         typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
       const errorName =
         typeof err === "object" && err !== null && "name" in err ? String((err as { name?: unknown }).name ?? "") : "";
-      if (errorCode === "ERR_CANCELED" || errorName === "CanceledError" || errorName === "AbortError") {
+      const isTimeout =
+        typeof err === "object" &&
+        err !== null &&
+        "message" in err &&
+        String((err as { message?: unknown }).message ?? "").toLowerCase().includes("timeout");
+      if (errorCode === "ERR_CANCELED" || errorName === "CanceledError" || errorName === "AbortError" || isTimeout) {
         return {
           settings: state.assistantPreferences,
           signals: state.assistantSignals,
           inferences: state.assistantInferences,
           unread_count: state.assistantUnreadCount,
+          mapping_intent: state.mappingIntent,
         };
       }
       return rejectWithValue(getErrorMessage(err, "Could not evaluate assistant signals."));
@@ -2136,6 +2631,58 @@ export const sttmBuilderSlice = createSlice({
       state.pendingDerivedSourceDraft = null;
       state.derivedSourceDraftRequested = false;
     },
+    hydrateBuilderSession: (state, action: PayloadAction<PersistedSttmBuilderSession>) => {
+      state.sourceDatabases = action.payload.sourceDatabases;
+      state.targetDatabases = action.payload.targetDatabases;
+      state.sources = action.payload.sources;
+      state.targets = action.payload.targets;
+      state.sourceInfo = action.payload.sourceInfo;
+      state.targetInfo = action.payload.targetInfo;
+      state.sourceAttributeGroups = action.payload.sourceAttributeGroups;
+      state.targetAttributeGroup = action.payload.targetAttributeGroup;
+      state.mappingSuggestions = action.payload.mappingSuggestions;
+      state.chatMessages = action.payload.chatMessages.length
+        ? action.payload.chatMessages
+        : initialState.chatMessages;
+      state.assistantSignals = action.payload.assistantSignals;
+      state.assistantInferences = action.payload.assistantInferences;
+      state.assistantUnreadCount = action.payload.assistantUnreadCount;
+      state.mappingIntent = action.payload.mappingIntent;
+      state.agentThreadId = action.payload.agentThreadId;
+      state.agentParentMessageId = action.payload.agentParentMessageId;
+      state.semanticBundleId = action.payload.semanticBundleId;
+      state.semanticBundleLabel = action.payload.semanticBundleLabel;
+      state.semanticLevel = action.payload.semanticLevel;
+      state.semanticStatus = action.payload.semanticStatus;
+      state.semanticViewName = action.payload.semanticViewName;
+      state.semanticContextSummary = action.payload.semanticContextSummary;
+      state.semanticContextItems = action.payload.semanticContextItems;
+      state.semanticLineage = action.payload.semanticLineage;
+      state.semanticDatahubContext = action.payload.semanticDatahubContext;
+      state.datahubStatus = action.payload.datahubStatus;
+      state.pendingDerivedSourceDraft = action.payload.pendingDerivedSourceDraft;
+      state.derivedSourceDraftRequested = action.payload.derivedSourceDraftRequested;
+      state.drivingTableId = action.payload.drivingTableId;
+      state.relationships = action.payload.relationships;
+      state.derivedSources = action.payload.derivedSources;
+      state.sourceFilterSql = action.payload.sourceFilterSql;
+      state.sourceFilterGroups = cloneRuleGroups(action.payload.sourceFilterGroups);
+      state.sourceQuerySql = action.payload.sourceQuerySql;
+      state.sourceGroupBySql = action.payload.sourceGroupBySql;
+      state.sourceOrderBySql = action.payload.sourceOrderBySql;
+      state.mappings = action.payload.mappings;
+      state.selectedMappingIds = action.payload.selectedMappingIds;
+      state.mappingSql = action.payload.mappingSql;
+      state.mappingPreviewSql = action.payload.mappingPreviewSql;
+      state.mappingSqlVariant = action.payload.mappingSqlVariant;
+      state.isPreProcessModalOpen = action.payload.isPreProcessModalOpen;
+      state.activeMappingId = action.payload.activeMappingId;
+      state.pendingAiMappingReviews = action.payload.pendingAiMappingReviews;
+      state.mappingLoading = false;
+      state.chatLoading = false;
+      state.autoMapStatusMessage = null;
+      state.autoMapProcessingIds = [];
+    },
 
     // UI Mapping Reducers
     loadMappingWorkspaceSnapshot: (
@@ -2231,6 +2778,15 @@ export const sttmBuilderSlice = createSlice({
     setMappingSql: (state, action: PayloadAction<{ sql: string }>) => {
       state.mappingSql = action.payload.sql;
     },
+    setMappingPreviewSql: (state, action: PayloadAction<{ sql: string }>) => {
+      state.mappingPreviewSql = action.payload.sql;
+    },
+    setMappingSqlVariant: (
+      state,
+      action: PayloadAction<{ variant: "original" | "optimized" | null }>,
+    ) => {
+      state.mappingSqlVariant = action.payload.variant;
+    },
   },
 
   extraReducers: (builder) => {
@@ -2265,10 +2821,13 @@ export const sttmBuilderSlice = createSlice({
       });
 
     builder.addCase(fetchDerivedSources.fulfilled, (state, action) => {
-      state.derivedSources = action.payload.map((source: DerivedSource) => ({
-        ...source,
-        isSelected: source.isSelected ?? false,
-      }));
+      state.derivedSources = mergeDerivedSourceLists(
+        state.derivedSources,
+        action.payload.map((source: DerivedSource) => ({
+          ...source,
+          isSelected: source.isSelected ?? false,
+        })),
+      );
     });
 
     // ── fetchSchemas ──
@@ -2425,102 +2984,66 @@ export const sttmBuilderSlice = createSlice({
 
     // ── runAutoMap ──
     builder
+      .addCase(autoMapBatchesInitialized, (state, action) => {
+        state.autoMapProcessingIds = [];
+        state.autoMapStatusMessage = `Auto-mapping 0/${action.payload.totalCount} target columns...`;
+      })
+      .addCase(autoMapBatchStarted, (state, action) => {
+        state.autoMapProcessingIds = action.payload.processingIds;
+        for (const mapping of state.mappings) {
+          if (action.payload.processingIds.includes(mapping.id) && mapping.status !== "MAPPED") {
+            mapping.status = "PROCESSING";
+          }
+        }
+        const nextCount = Math.min(
+          action.payload.processedCount + action.payload.processingIds.length,
+          action.payload.totalCount,
+        );
+        state.autoMapStatusMessage = `Auto-mapping ${action.payload.processedCount + 1}-${nextCount} of ${action.payload.totalCount} target columns...`;
+      })
+      .addCase(autoMapBatchApplied, (state, action) => {
+        state.autoMapProcessingIds = state.autoMapProcessingIds.filter(
+          (id) => !action.payload.completedMappingIds.includes(id),
+        );
+        applyAutoMapResponseToState(state, action.payload.response);
+        state.autoMapStatusMessage =
+          action.payload.processedCount < action.payload.totalCount
+            ? `Auto-mapped ${action.payload.processedCount}/${action.payload.totalCount} target columns...`
+            : `Auto-mapped ${action.payload.totalCount}/${action.payload.totalCount} target columns.`;
+      })
+      .addCase(autoMapBatchFailed, (state, action) => {
+        state.autoMapProcessingIds = state.autoMapProcessingIds.filter(
+          (id) => !action.payload.completedMappingIds.includes(id),
+        );
+        for (const mapping of state.mappings) {
+          if (action.payload.completedMappingIds.includes(mapping.id) && mapping.status === "PROCESSING") {
+            mapping.status = "UNMAPPED";
+          }
+        }
+        state.errorState.autoMap = action.payload.errorMessage;
+        state.autoMapStatusMessage =
+          action.payload.processedCount < action.payload.totalCount
+            ? `Auto-mapped ${action.payload.processedCount}/${action.payload.totalCount} target columns...`
+            : action.payload.errorMessage;
+      })
       .addCase(runAutoMap.pending, (state) => {
         state.mappingLoading = true;
         state.autoMapStatusMessage = "Preparing mapping-ready semantic context.";
+        state.autoMapProcessingIds = [];
         state.errorState.autoMap = undefined;
       })
       .addCase(runAutoMap.fulfilled, (state, action) => {
         state.mappingLoading = false;
-        state.autoMapStatusMessage = null;
+        state.autoMapProcessingIds = [];
         if (!action.payload) return;
-        const response = action.payload;
-        state.semanticBundleId = response.data?.semantic_refresh_status?.bundle_id ?? state.semanticBundleId;
-        state.semanticBundleLabel =
-          (response.data?.semantic_refresh_status?.bundle_label as string | undefined) ??
-          (typeof response.data?.artifact?.summary === "object" &&
-          response.data?.artifact?.summary &&
-          "bundle_label" in response.data.artifact.summary
-            ? (response.data.artifact.summary.bundle_label as string | null)
-            : state.semanticBundleLabel);
-        state.semanticLevel = response.data?.semantic_level_achieved ?? state.semanticLevel;
-        state.semanticStatus = response.data?.semantic_refresh_status?.status ?? state.semanticStatus;
-        state.semanticViewName = response.data?.semantic_refresh_status?.semantic_view_name ?? state.semanticViewName;
-        state.semanticContextSummary =
-          response.data?.artifact_type === "semantic_context"
-            ? (response.data?.artifact as Record<string, unknown> | null) ?? state.semanticContextSummary
-            : state.semanticContextSummary;
-        state.semanticContextItems =
-          normalizeSemanticContextItems(
-            response.context?.semantic_context as Array<Record<string, unknown>> | undefined,
-          ) ?? state.semanticContextItems;
-        state.semanticLineage = Array.isArray(response.context?.derived_source_lineage)
-          ? response.context.derived_source_lineage
-          : state.semanticLineage;
-        state.semanticDatahubContext =
-          (response.context?.datahub_context as Record<string, unknown> | null | undefined) ??
-          state.semanticDatahubContext;
-
-        const result = response.result;
-        const mappings =
-          result && "mappings" in result
-            ? result.mappings
-            : {};
-        const entries = Object.entries(mappings as Record<
-          string,
-          {
-            source_attributes?: string[];
-            confidence_score?: number;
-            confidence_reason?: string | null;
-            candidate_source_attributes?: string[];
-            unmatched_reason?: string | null;
-            preprocessing_rule?: string | null;
-            preprocessing_rule_type?: string | null;
-            preprocessing_nl_rule?: string | null;
-            processing_order?: number | null;
-            description?: string | null;
-          }
-        >);
-        state.mappingSuggestions = entries.map(([target, val]) => ({
-          targetAttribute: target,
-          sourceAttributes: val?.source_attributes ?? [],
-          confidenceScore: val?.confidence_score ?? 0,
-          confidenceReason: val?.confidence_reason ?? null,
-          candidateSourceAttributes: val?.candidate_source_attributes ?? [],
-          unmatchedReason: val?.unmatched_reason ?? null,
-          preprocessingRule: val?.preprocessing_rule ?? null,
-          preprocessingRuleType: val?.preprocessing_rule_type ?? null,
-          preprocessingNlRule: val?.preprocessing_nl_rule ?? null,
-          processingOrder: val?.processing_order ?? null,
-          description: val?.description ?? null,
-        }));
-
-        for (const mapping of state.mappings) {
-          const match = entries.find(([target]) =>
-            targetKeyVariants(target).has(normalizeTargetKey(mapping.targetColumn)),
-          );
-          if (!match) continue;
-          const [, val] = match;
-          applyMappingSuggestion(mapping, {
-            sourceAttributes: val?.source_attributes ?? [],
-            confidenceScore: val?.confidence_score ?? 0,
-            confidenceReason: val?.confidence_reason ?? null,
-            candidateSourceAttributes: val?.candidate_source_attributes ?? [],
-            unmatchedReason: val?.unmatched_reason ?? null,
-            preprocessingRule: val?.preprocessing_rule ?? null,
-            preprocessingRuleType: val?.preprocessing_rule_type ?? null,
-            preprocessingNlRule: val?.preprocessing_nl_rule ?? null,
-            processingOrder: val?.processing_order ?? null,
-            description: val?.description ?? null,
-          });
-        }
-
-        if (response.message) {
-          state.chatMessages.push({ role: "assistant", content: response.message });
-        }
+        state.autoMapStatusMessage =
+          action.payload.failedTargets.length > 0
+            ? `Auto-map finished with ${action.payload.failedTargets.length} issue(s).`
+            : null;
       })
       .addCase(runAutoMap.rejected, (state, action) => {
         state.mappingLoading = false;
+        state.autoMapProcessingIds = [];
         state.autoMapStatusMessage = null;
         state.errorState.autoMap =
           (action.payload as string | undefined) ?? "Auto-map failed.";
@@ -2587,8 +3110,10 @@ export const sttmBuilderSlice = createSlice({
           action.payload.response.data?.semantic_level_achieved ?? state.semanticLevel;
         state.semanticStatus =
           action.payload.response.data?.semantic_refresh_status?.status ?? state.semanticStatus;
-        state.semanticViewName =
-          action.payload.response.data?.semantic_refresh_status?.semantic_view_name ?? state.semanticViewName;
+        state.semanticViewName = extractSemanticViewNameFromStatus(
+          action.payload.response.data?.semantic_refresh_status as Record<string, unknown> | undefined,
+          state.semanticViewName,
+        );
         state.semanticContextItems =
           normalizeSemanticContextItems(
             action.payload.response.context?.semantic_context as Array<Record<string, unknown>> | undefined,
@@ -2599,38 +3124,40 @@ export const sttmBuilderSlice = createSlice({
         state.semanticDatahubContext =
           (action.payload.response.context?.datahub_context as Record<string, unknown> | null | undefined) ??
           state.semanticDatahubContext;
-        if (action.payload.response.data?.artifact_type === "semantic_context") {
+        const resolved = resolveAgentResponseParts(action.payload.response);
+        if (resolved.artifactType === "semantic_context") {
           state.semanticContextSummary =
-            (action.payload.response.data?.artifact as Record<string, unknown> | null) ??
+            (resolved.artifact as Record<string, unknown> | null) ??
             state.semanticContextSummary;
         }
-        if (
-          action.payload.response.data?.artifact_type === "derived_source_draft" &&
-          action.payload.response.data?.artifact &&
-          typeof action.payload.response.data.artifact.sql_text === "string"
-        ) {
+        if (resolved.artifactType === "derived_source_draft" && resolved.artifact) {
+          const artifact = resolved.artifact;
+          if (typeof artifact.sql_text === "string") {
           const artifactSelectedColumns =
-            typeof action.payload.response.data.artifact.selected_columns_by_table === "object" &&
-            action.payload.response.data.artifact.selected_columns_by_table !== null
-              ? (action.payload.response.data.artifact.selected_columns_by_table as Record<string, string[]>)
+            typeof artifact.selected_columns_by_table === "object" &&
+            artifact.selected_columns_by_table !== null
+              ? (artifact.selected_columns_by_table as Record<string, string[]>)
               : null;
           state.pendingDerivedSourceDraft = {
-            sqlText: action.payload.response.data.artifact.sql_text as string,
+            sqlText: artifact.sql_text as string,
             sourceNameSuggestion:
-              (action.payload.response.data.artifact.source_name_suggestion as string | null) ?? null,
+              (artifact.source_name_suggestion as string | null) ?? null,
             semanticViewName:
-              (action.payload.response.data.artifact.semantic_view_name as string | null) ??
+              (artifact.semantic_view_name as string | null) ??
               state.semanticViewName,
             semanticBundleLabel: state.semanticBundleLabel,
             previewRows:
-              (action.payload.response.data.artifact.preview_rows as Array<Record<string, unknown>> | undefined) ??
+              (artifact.preview_rows as Array<Record<string, unknown>> | undefined) ??
               [],
             selectedColumnsByTable: artifactSelectedColumns,
             selectedTableIds: action.payload.selectedTableIds,
             drivingTableId: action.payload.drivingTableId,
-            requestSummary: action.payload.userMessage,
+            requestSummary:
+              (artifact.request_summary as string | null) ??
+              action.payload.userMessage,
           };
           state.derivedSourceDraftRequested = false;
+          }
         }
         const clarificationOptions = extractClarificationOptions(action.payload.response);
         const responseStatus = action.payload.response.data?.status as
@@ -2701,6 +3228,15 @@ export const sttmBuilderSlice = createSlice({
       .addCase(evaluateAssistantSignals.fulfilled, (state, action) => {
         applyAssistantSignalsData(state, action.payload);
       })
+      .addCase(respondToAssistantSignal.pending, (state, action) => {
+        const signalId = action.meta.arg.signalId;
+        const nextStatus = action.meta.arg.status ?? "responded";
+        const signal = state.assistantSignals.find((item) => item.signal_id === signalId);
+        if (signal) {
+          signal.status = nextStatus as any;
+        }
+        state.assistantUnreadCount = state.assistantSignals.filter((item) => item.status === "new").length;
+      })
       .addCase(respondToAssistantSignal.fulfilled, (state, action) => {
         const signal = state.assistantSignals.find((item) => item.signal_id === action.payload.signalId);
         if (signal) {
@@ -2736,6 +3272,7 @@ export const {
   acknowledgePendingDerivedSourceDraft,
   dismissPendingDerivedSourceDraft,
   loadMappingWorkspaceSnapshot,
+  hydrateBuilderSession,
   initializeMappings,
   updateMapping,
   applyPendingAiMappingReview,
@@ -2746,6 +3283,8 @@ export const {
   bulkSetDirect,
   setPreProcessModalOpen,
   setMappingSql,
+  setMappingPreviewSql,
+  setMappingSqlVariant,
 } = sttmBuilderSlice.actions;
 
 export default sttmBuilderSlice.reducer;

@@ -20,8 +20,7 @@ import type {
 } from "@/types/api-contract";
 import { mockInvokeStream } from "@/services/mock/workbenchMockData";
 import { throwMockError, useMockDb } from "@/services/mock/mockConfig";
-
-let activeSignalEvaluationController: AbortController | null = null;
+import { extractSseChunk } from "@/services/streaming/sse";
 
 export type ConversationRequestPayload = {
   operation?: Extract<ConversationOperation, "conversation.ask" | "conversation.recommend" | "conversation.feedback">;
@@ -37,12 +36,14 @@ export type ConversationRequestPayload = {
   surface?: SemanticSurface | null;
   semantic_level_requested?: SemanticLevel | null;
   target_table?: TableRef | null;
+  session_id?: string | null;
   selected_derived_sources?: string[] | null;
   semantic_bundle_id?: string | null;
   semantic_bundle_label?: string | null;
   semantic_view_name?: string | null;
   derived_source_lineage?: Array<Record<string, unknown>> | null;
   datahub_context?: Record<string, unknown> | null;
+  mapping_intent?: Record<string, unknown> | null;
 };
 
 type ConversationStreamEvent =
@@ -84,6 +85,7 @@ function toEnvelope(payload: ConversationRequestPayload): ConversationEnvelopeRe
     {
       thread_id: payload.thread_id ?? null,
       parent_message_id: payload.parent_message_id ?? null,
+      session_id: payload.session_id ?? null,
       source_tables: payload.source_tables ?? null,
       driving_table: payload.driving_table ?? null,
       relationships: payload.relationships ?? null,
@@ -98,6 +100,7 @@ function toEnvelope(payload: ConversationRequestPayload): ConversationEnvelopeRe
       semantic_view_name: payload.semantic_view_name ?? null,
       derived_source_lineage: payload.derived_source_lineage ?? null,
       datahub_context: payload.datahub_context ?? null,
+      mapping_intent: payload.mapping_intent ?? null,
     },
   ) as ConversationEnvelopeRequest;
 }
@@ -124,6 +127,7 @@ export const conversationService = {
       {
         thread_id: payload.thread_id ?? null,
         parent_message_id: payload.parent_message_id ?? null,
+        session_id: payload.session_id ?? null,
         source_tables: payload.source_tables ?? null,
         driving_table: payload.driving_table ?? null,
         relationships: payload.relationships ?? null,
@@ -138,6 +142,7 @@ export const conversationService = {
         semantic_view_name: payload.semantic_view_name ?? null,
         derived_source_lineage: payload.derived_source_lineage ?? null,
         datahub_context: payload.datahub_context ?? null,
+        mapping_intent: payload.mapping_intent ?? null,
       },
     ) as ConversationEnvelopeRequest;
     const response = await api.post<ConversationEnvelopeResponse>("/v1/workbench/conversation/invoke", envelope, {
@@ -186,15 +191,14 @@ export const conversationService = {
       const { value, done } = await reader.read();
       if (done) break;
       buffer += decoder.decode(value, { stream: true });
-      let boundary = buffer.indexOf("\n\n");
-      while (boundary !== -1) {
-        const chunk = buffer.slice(0, boundary);
-        buffer = buffer.slice(boundary + 2);
-        const parsed = parseChunk(chunk);
+      let extracted = extractSseChunk(buffer);
+      while (extracted !== null) {
+        const parsed = parseChunk(extracted.chunk);
+        buffer = extracted.remaining;
         if (parsed) {
           yield parsed as ConversationStreamEvent;
         }
-        boundary = buffer.indexOf("\n\n");
+        extracted = extractSseChunk(buffer);
       }
     }
 
@@ -221,21 +225,11 @@ export const conversationService = {
     return response.data.data as ConversationSignalsResponseData;
   },
   evaluateSignals: async (payload: Record<string, unknown>): Promise<ConversationSignalsResponseData> => {
-    activeSignalEvaluationController?.abort();
-    const controller = new AbortController();
-    activeSignalEvaluationController = controller;
     const envelope = buildApiEnvelope("conversation.signals.evaluate", payload, {}) as ConversationEnvelopeRequest;
-    try {
-      const response = await api.post("/v1/workbench/conversation/signals/evaluate", envelope, {
-        timeout: 12000,
-        signal: controller.signal,
-      });
-      return response.data.data as ConversationSignalsResponseData;
-    } finally {
-      if (activeSignalEvaluationController === controller) {
-        activeSignalEvaluationController = null;
-      }
-    }
+    const response = await api.post("/v1/workbench/conversation/signals/evaluate", envelope, {
+      timeout: 18000,
+    });
+    return response.data.data as ConversationSignalsResponseData;
   },
   respondToSignal: async (payload: {
     signal_id: string;

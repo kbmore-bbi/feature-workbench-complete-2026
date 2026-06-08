@@ -1,8 +1,7 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material';
 import { ContentCopyRoundedIcon } from '@/utils/icons';
-
 import { SqlPreviewStatPills, type SqlPreviewStat } from './sql-preview-stat-pills';
 
 const COPY_FEEDBACK_MS = 1500;
@@ -14,6 +13,7 @@ export type SqlPreviewHeaderProps = {
   copyValue?: string;
   onCopy?: () => void | Promise<void>;
   showCopy?: boolean;
+  actions?: ReactNode;
 };
 
 export function SqlPreviewHeader({
@@ -23,6 +23,7 @@ export function SqlPreviewHeader({
   copyValue = '',
   onCopy,
   showCopy = true,
+  actions,
 }: SqlPreviewHeaderProps) {
   const [copied, setCopied] = useState(false);
 
@@ -100,6 +101,7 @@ export function SqlPreviewHeader({
         sx={{ ml: 'auto', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center' }}
       >
         <SqlPreviewStatPills stats={stats} />
+        {actions}
         {showCopy ? (
           <Tooltip title={copied ? 'Copied' : 'Copy SQL'}>
             <span>

@@ -56,6 +56,8 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
     derivedSources,
     relationships,
     applySemanticRefresh,
+    semanticBundleId,
+    semanticViewName,
   } = useSttmBuilderContext();
 
   const selectedSourceTables = useMemo(
@@ -134,82 +136,64 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
       open: true,
       loading: true,
       progress: 12,
-      title: 'Preparing semantic view',
-      detail: 'Checking the selected sources, joins, and target table.',
+      title: 'Opening mapping workspace',
+      detail: 'Using the current source, join, and target context while semantic preparation continues in the background.',
       error: null,
     });
 
-    try {
-      setSemanticPrepState((current) => ({
-        ...current,
-        progress: 46,
-        detail: 'Checking freshness and required semantic level for the current source-to-target context.',
-      }));
+    setSemanticPrepState((current) => ({
+      ...current,
+      progress: 52,
+      detail: semanticBundleId || semanticViewName
+        ? 'Reusing the current semantic context and opening mapping now.'
+        : 'Opening mapping now and continuing semantic preparation in the background.',
+    }));
 
-      const refresh = await dbService.refreshSemanticContext({
-        selected_source_tables: selectedSourceTables.map((table) => makeTableRef(table.qualifiedName)),
-        selected_derived_sources: selectedDerivedSourceIds,
-        target_table: makeTableRef(selectedTarget.qualifiedName),
-        relationships: relationships
-          .filter((join) => join.leftTableId && join.rightTableId && join.conditions?.length)
-          .map((join) => ({
-            left_table: makeTableRef(join.leftTableId as string),
-            right_table: makeTableRef(join.rightTableId as string),
-            constraint_name: join.constraintName ?? null,
-            join_type: join.joinType ?? 'INNER',
-            source: join.source ?? 'USER_DEFINED',
-            locked: join.locked ?? false,
-            conditions: (join.conditions ?? []).map((condition) => ({
-              left_column: condition.leftColumn,
-              right_column: condition.rightColumn,
-              operator: condition.operator ?? '=',
-            })),
+    void dbService.refreshSemanticContext({
+      selected_source_tables: selectedSourceTables.map((table) => makeTableRef(table.qualifiedName)),
+      selected_derived_sources: selectedDerivedSourceIds,
+      target_table: makeTableRef(selectedTarget.qualifiedName),
+      relationships: relationships
+        .filter((join) => join.leftTableId && join.rightTableId && join.conditions?.length)
+        .map((join) => ({
+          left_table: makeTableRef(join.leftTableId as string),
+          right_table: makeTableRef(join.rightTableId as string),
+          constraint_name: join.constraintName ?? null,
+          join_type: join.joinType ?? 'INNER',
+          source: join.source ?? 'USER_DEFINED',
+          locked: join.locked ?? false,
+          conditions: (join.conditions ?? []).map((condition) => ({
+            left_column: condition.leftColumn,
+            right_column: condition.rightColumn,
+            operator: condition.operator ?? '=',
           })),
-        requested_level: 'L3_MAPPING_ENRICHED',
-        force: false,
+        })),
+      requested_level: 'L3_MAPPING_ENRICHED',
+      force: false,
+    })
+      .then((refresh) => {
+        applySemanticRefresh(refresh);
+      })
+      .catch((error) => {
+        console.warn("Background semantic refresh did not complete before mapping opened.", error);
       });
 
-      applySemanticRefresh(refresh);
-
-      const completionDetail = refresh.cache_hit
-        ? (
-            refresh.semantic_view_name
-              ? `Semantic view ${refresh.semantic_view_name} is already fresh. Opening mapping.`
-              : 'Semantic bundle is already fresh. Opening mapping.'
-          )
-        : refresh.promoted
-          ? (
-              refresh.semantic_view_name
-                ? `Semantic view ${refresh.semantic_view_name} is ready. Opening mapping.`
-                : 'Semantic context has been promoted. Opening mapping.'
-            )
-          : refresh.status === 'partial'
-            ? 'Semantic context is partially ready with the freshest available metadata. Opening mapping.'
-            : 'Semantic context has been refreshed. Opening mapping.';
-
+    window.setTimeout(() => {
       setSemanticPrepState({
         open: true,
         loading: false,
         progress: 100,
-        title: refresh.cache_hit ? 'Semantic view already ready' : 'Semantic view ready',
-        detail: completionDetail,
+        title: semanticBundleId || semanticViewName ? 'Opening mapping with current context' : 'Opening mapping',
+        detail: semanticBundleId || semanticViewName
+          ? 'Mapping is opening with the current semantic context while freshness checks continue in the background.'
+          : 'Mapping is opening now. Semantic preparation will continue in the background and update the current context when it completes.',
         error: null,
       });
-
       window.setTimeout(() => {
         setSemanticPrepState(initialSemanticPrepState);
         router.push('/sttm/builder/new/mapping');
-      }, 350);
-    } catch (error) {
-      setSemanticPrepState({
-        open: true,
-        loading: false,
-        progress: 100,
-        title: 'Semantic preparation failed',
-        detail: 'The mapping page was not opened because the semantic view could not be prepared.',
-        error: error instanceof Error ? error.message : 'Unable to prepare the semantic view.',
-      });
-    }
+      }, 250);
+    }, 150);
   };
 
   useEffect(() => {

@@ -85,6 +85,9 @@ fi
 
 "${ROOT_DIR}/scripts/configure_client_snow_connection.sh" "${configure_args[@]}"
 
+"${ROOT_DIR}/scripts/bootstrap_dbt_repo_infra.sh" --env-file "${ENV_FILE}"
+"${ROOT_DIR}/scripts/bootstrap_sttm_metadata_infra.sh" --env-file "${ENV_FILE}"
+
 deploy_args=(--env-file "${ENV_FILE}")
 if [[ -n "${IMAGE_TAG}" ]]; then
   deploy_args+=(--image-tag "${IMAGE_TAG}")

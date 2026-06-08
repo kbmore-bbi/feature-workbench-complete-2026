@@ -1,8 +1,9 @@
 "use client";
+
 import { Box, Button } from "@mui/material";
+import { EastRoundedIcon, PublishRoundedIcon } from '@/utils/icons';
 import { BuilderHeaderStatsPill } from "./builder-header-stats-pill";
 import { BuilderStepNav, type BuilderStepId } from "./builder-step-nav";
-import { EastRoundedIcon, PublishRoundedIcon } from '@/utils/icons';
 
 type BuilderContentHeaderProps = {
   currentStep: BuilderStepId;

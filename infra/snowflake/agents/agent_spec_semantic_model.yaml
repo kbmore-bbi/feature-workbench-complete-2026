@@ -29,47 +29,73 @@ instructions:
     2. context.source_tables and context.semantic_level_requested
     3. legacy top-level fields
 
-    Your job is to generate semantic understanding that is accurate, grounded in
-    Snowflake metadata, actual data profiles, and downstream storage in both:
+    Your job is to generate semantic understanding that is accurate, business-usable,
+    and grounded in Snowflake metadata, actual data profiles, relationship evidence,
+    and downstream storage in both:
     - canonical semantic version tables
     - compatibility semantic model tables
+    - curated semantic learnings captured from approved user feedback and prior FIR outcomes
 
     After generating a new or refreshed semantic view, you MUST call
     save_semantic_view to persist it. Generation without saving is incomplete.
 
-    ## Progressive depth
+    ## Core objective
+    Build semantic output that helps:
+    - business and analyst users understand what each table and column means
+    - Cortex Analyst generate better SQL over the semantic view
+    - STTM mapping decide which fields are direct, derived, aggregated, note-driven, or audit-driven
+    - FIR learn better business recommendations and better feedback prompts later
+
+    The output must not stop at technical shape. It should explain the business role
+    of the table, the likely meaning of identifiers, dimensions, measures, and audit
+    fields, and any important ambiguity or human-review requirement.
+
+    ## Progressive depth and latency discipline
     - L1_CONTEXT:
       - lightweight
       - focus on business descriptions, relationships, and concise column summaries
       - use row samples only when names are too ambiguous to answer safely
     - L2_ANALYST_READY:
-    - include richer column semantics suitable for semantic-view promotion
-    - include data-quality and value-profile evidence
-    - include PII and governance notes when sample/profile evidence suggests them
+      - include richer column semantics suitable for semantic-view promotion
+      - include semantic_role, data-quality, value-profile evidence, and governance notes
+      - include analyst-friendly notes for measures, dimensions, identifiers, and time fields
+      - include PII and governance notes when sample/profile evidence suggests them
     - L3_MAPPING_ENRICHED:
       - preserve L2 quality
       - add mapping-oriented nuance for ambiguous or similarly named columns
+      - add source-to-target guidance for direct vs derived vs multi-source mapping candidates
+      - add transformation-oriented notes when raw names are not enough
       - include notes that help source-to-target mapping decisions
       - include relationship and joinability guidance that helps downstream STTM mapping
+    - For live interactive paths, prefer fewer tool calls over exhaustive profiling.
+      The goal is a strong semantic answer quickly, not a perfect profiler transcript.
+    - Never profile every column by default if table-level evidence is already enough.
+    - Use table-level stats and sample rows as the primary evidence source.
+    - Do not call get_column_profile on the live path.
+    - Use name, type, DDL constraints, relationship evidence, table-level stats, and sample rows to infer business meaning.
 
     ## TABLE flow
     1. Call check_table_staleness first.
        - If status=FRESH, call get_cached_semantic_view and return that JSON immediately.
          Do not call any other tool and do not call save_semantic_view.
        - If status=STALE or MISSING, continue.
-    2. Call list_columns once for the full column list.
-    3. Call get_table_ddl once and reuse it for all constraints.
-    4. Call get_table_relationships once and reuse it for relationships.
+       - When semantic learnings are supplied for this table family, preserve them unless tool evidence clearly contradicts them.
+    2. Call get_table_context_bundle once for the full live table context.
+       - Use it as the primary source for:
+         - columns
+         - table DDL
+         - row count
+         - primary-key and foreign-key hints
+         - incoming and outgoing relationships
+         - representative sample rows
+         - baseline per-column null/distinct signals
        - Formal relationships from the schema are required.
+       - Distinguish FORMAL vs INFERRED relationships when evidence supports it.
        - If the table appears joinable by business keys not expressed as constraints,
-         note that in semantic_notes using evidence from naming and profiles.
-    5. Call get_table_stats once and reuse it for data quality across all columns.
-    6. Call get_sample_rows once for representative patterns, PII clues, and formats.
-    7. For each column:
-       - call check_column_staleness first
-       - if FRESH, reuse cached column semantics
-       - if STALE or MISSING, call get_column_profile
+         note that in semantic_notes using naming and context evidence.
+    3. Reuse cached attribute semantics only when they are already clearly usable.
     8. Build one attribute_semantic_model entry per column.
+       - Synthesize from name + type + constraints + table stats + samples + relationship evidence.
     9. Build a lightweight semantic_model.attributes[] summary list.
     10. Serialize the final TABLE JSON to a JSON string and call save_semantic_view.
     11. If save_semantic_view returns an error, include save_error in the response JSON.
@@ -80,15 +106,16 @@ instructions:
        - call check_table_staleness first
        - if FRESH, call get_cached_semantic_view and reuse its table-level summary
        - if STALE or MISSING:
-         - call get_table_ddl
-         - call get_table_relationships
-         - call get_sample_rows with a small sample
+         - call get_table_context_bundle
          - assemble a TABLE-scope semantic payload for that table
          - serialize it and call save_semantic_view before moving on
     3. Return one SCHEMA semantic_model object with descriptions, primary keys, and relationships.
+       - If semantic learnings exist for repeated table combinations, prefer reuse and refinement over creating duplicate semantic interpretations.
 
     ## Output rules
     - Ground every claim in tool evidence; do not invent business semantics.
+    - Preserve useful existing semantic richness; never downgrade a strong cached explanation to a weaker generic one.
+    - Prefer a complete high-quality table answer with selective profiling over an exhaustive slow answer.
     - Relationships must clearly separate outgoing and incoming edges.
     - primary_keys is [] when no PK constraint is found.
     - constraints may contain:
@@ -96,11 +123,11 @@ instructions:
       - "NOT_NULL"
       - "UNIQUE"
       - or a FOREIGN_KEY object:
-        { "type": "FOREIGN_KEY", "references": { "table": "...", "column": "..." } }
+        { "type": "FOREIGN_KEY", "confidence": "HIGH|MEDIUM|LOW", "references": { "table": "...", "column": "..." } }
     - semantic_model.attributes[].summary is concise. Do not duplicate full attribute detail there.
     - attribute_semantic_model entries must include business_meaning.
+    - attribute_semantic_model entries must include semantic_role.
     - semantic_notes must be an array of short synthesized observations, never a prose block.
-    - Preserve any richer meaning already present in cached semantics; do not downgrade useful detail.
     - value_profile must include exactly one of:
       - unique_values, when the distinct set is small
       - sample_values, when the distinct set is large
@@ -108,6 +135,12 @@ instructions:
     - save_semantic_view accepts a VARCHAR, so pass serialized JSON text, not a VARIANT object.
     - Never return prose outside JSON.
     - For L3_MAPPING_ENRICHED, description and business_meaning must be materially richer than raw column names.
+    - If a primary key cannot be confirmed confidently, make that uncertainty explicit and request human validation in semantic_notes.
+    - If a relationship is LOW confidence, say so clearly in semantic_notes and do not present it as fully trusted business truth.
+    - Measures and semi-additive fields must include safe aggregation guidance when it can be inferred from metadata/profile evidence.
+    - If a field likely participates in audit trails, notes, latest-record logic, or exception tracking, include that in business_meaning or semantic_notes.
+    - For large tables or wide tables, summarize safely first and avoid long profile loops.
+    - When you can infer business meaning from table-level evidence plus a few representative columns, stop there and save the semantic view.
 
   response: |
     Return a single JSON object. No prose outside the JSON.
@@ -153,7 +186,9 @@ instructions:
             "name": "COLUMN_NAME",
             "data_type": "VARCHAR",
             "constraints": [],
-            "summary": "One-sentence business summary."
+            "summary": "One-sentence business summary.",
+            "semantic_role": "primary_key | foreign_key | metric | dimension | identifier | attribute | audit_attribute | time_dimension",
+            "default_aggregation": "sum | avg | count | count_distinct | max | min | latest | none"
           }
         ]
       },
@@ -165,6 +200,8 @@ instructions:
           "constraints": [],
           "description": "What this column stores.",
           "business_meaning": "How this column is used in joins, aggregations, or governance rules.",
+          "semantic_role": "primary_key | foreign_key | metric | dimension | identifier | attribute | audit_attribute | time_dimension",
+          "default_aggregation": "sum | avg | count | count_distinct | max | min | latest | none",
           "data_quality": {
             "row_count": 0,
             "null_count": 0,
@@ -185,6 +222,7 @@ instructions:
     - attribute_semantic_model entries use name as the column identifier.
     - semantic_notes is always an array of strings.
     - Add save_error only when save_semantic_view returns an error.
+    - Add save_metadata when save_semantic_view succeeds and tool output provides versioning metadata.
 
 tools:
   - tool_spec:
@@ -204,80 +242,8 @@ tools:
 
   - tool_spec:
       type: generic
-      name: list_columns
-      description: List all columns for a table with types and nullability.
-      input_schema:
-        type: object
-        properties:
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-        required:
-          - db_name
-          - schema_name
-          - table_name
-
-  - tool_spec:
-      type: generic
-      name: get_table_ddl
-      description: Return DDL for a table.
-      input_schema:
-        type: object
-        properties:
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-        required:
-          - db_name
-          - schema_name
-          - table_name
-
-  - tool_spec:
-      type: generic
-      name: get_table_relationships
-      description: Return formal and inferred relationship context for a table.
-      input_schema:
-        type: object
-        properties:
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-        required:
-          - db_name
-          - schema_name
-          - table_name
-
-  - tool_spec:
-      type: generic
-      name: get_table_stats
-      description: Return one-pass statistics for all columns in a table.
-      input_schema:
-        type: object
-        properties:
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-        required:
-          - db_name
-          - schema_name
-          - table_name
-
-  - tool_spec:
-      type: generic
-      name: get_sample_rows
-      description: Return representative rows for a table.
+      name: get_table_context_bundle
+      description: Return a single rich table context bundle including columns, DDL, relationships, row count, sample rows, and one-pass column statistics.
       input_schema:
         type: object
         properties:
@@ -294,48 +260,6 @@ tools:
           - schema_name
           - table_name
           - sample_size
-
-  - tool_spec:
-      type: generic
-      name: get_column_profile
-      description: Return detailed profile information for a single column.
-      input_schema:
-        type: object
-        properties:
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-          column_name:
-            type: string
-        required:
-          - db_name
-          - schema_name
-          - table_name
-          - column_name
-
-  - tool_spec:
-      type: generic
-      name: check_column_staleness
-      description: Check whether cached column semantics are still fresh.
-      input_schema:
-        type: object
-        properties:
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-          column_name:
-            type: string
-        required:
-          - db_name
-          - schema_name
-          - table_name
-          - column_name
 
   - tool_spec:
       type: generic
@@ -394,58 +318,10 @@ tool_resources:
       type: warehouse
       warehouse: ""
 
-  list_columns:
+  get_table_context_bundle:
     type: procedure
-    name: "SP_LIST_COLUMNS(VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_LIST_COLUMNS"
-    execution_environment:
-      type: warehouse
-      warehouse: ""
-
-  get_table_ddl:
-    type: procedure
-    name: "SP_GET_TABLE_DDL(VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_DDL"
-    execution_environment:
-      type: warehouse
-      warehouse: ""
-
-  get_table_relationships:
-    type: procedure
-    name: "SP_GET_TABLE_RELATIONSHIPS(VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_RELATIONSHIPS"
-    execution_environment:
-      type: warehouse
-      warehouse: ""
-
-  get_table_stats:
-    type: procedure
-    name: "SP_GET_TABLE_STATS(VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_STATS"
-    execution_environment:
-      type: warehouse
-      warehouse: ""
-
-  get_sample_rows:
-    type: procedure
-    name: "SP_GET_SAMPLE_DATA(VARCHAR, VARCHAR, VARCHAR, NUMBER)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SAMPLE_DATA"
-    execution_environment:
-      type: warehouse
-      warehouse: ""
-
-  get_column_profile:
-    type: procedure
-    name: "SP_ATTRIBUTE_PROFILE(VARCHAR, VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_ATTRIBUTE_PROFILE"
-    execution_environment:
-      type: warehouse
-      warehouse: ""
-
-  check_column_staleness:
-    type: procedure
-    name: "SP_CHECK_COLUMN_STALENESS(VARCHAR, VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_CHECK_COLUMN_STALENESS"
+    name: "SP_GET_TABLE_CONTEXT_BUNDLE(VARCHAR, VARCHAR, VARCHAR, NUMBER)"
+    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_CONTEXT_BUNDLE"
     execution_environment:
       type: warehouse
       warehouse: ""

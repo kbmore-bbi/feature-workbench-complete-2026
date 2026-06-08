@@ -14,9 +14,12 @@ from app.core.snowflake import (
 )
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.core.snowflake_analyst import SnowflakeAnalystClient
+from app.core.dbt_conversion import DbtConversionService
 from app.core.derived_source import DerivedSourceService
 from app.core.conversation import ConversationService
 from app.core.conversation_memory import ConversationMemoryService
+from app.core.mapping_sql import MappingSqlService
+from app.core.export_workbook import WorkbookExportService
 from app.core.semantic_context import SemanticContextService
 from app.core.semantic_model import SemanticModelService
 from app.core.table_selection import TableSelectionService
@@ -195,6 +198,32 @@ def get_conversation_service(
         memory_service=conversation_memory,
         settings=settings,
     )
+
+
+def get_mapping_sql_service(
+    analyst_client: Annotated[SnowflakeAnalystClient, Depends(get_snowflake_analyst_client)],
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+) -> MappingSqlService:
+    return MappingSqlService(
+        session=client.session,
+        analyst_client=analyst_client,
+    )
+
+
+def get_dbt_conversion_service(
+    agent_client: Annotated[SnowflakeAgentClient, Depends(get_snowflake_agent_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> DbtConversionService:
+    return DbtConversionService(
+        agent_client=agent_client,
+        settings=settings,
+    )
+
+
+def get_workbook_export_service(
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+) -> WorkbookExportService:
+    return WorkbookExportService(session=client.session)
 
 
 def get_user_service(

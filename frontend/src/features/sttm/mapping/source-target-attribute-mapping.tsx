@@ -17,10 +17,6 @@ import {
   IconButton,
   InputBase,
 } from '@mui/material';
-
-
-
-
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import type { MappingRuleType } from '@/features/sttm/types/sttm.types';
 import {
@@ -329,6 +325,7 @@ const SourceTargetAttributeMapping = () => {
     setPreProcessModalOpen,
     mappingLoading,
     autoMapStatusMessage,
+    autoMapProcessingIds,
     sourceAttributeGroups,
     derivedSources,
   } = useSttmBuilderContext();
@@ -909,6 +906,8 @@ const SourceTargetAttributeMapping = () => {
           <TableBody>
             {paginatedMappings.map((row) => {
               const isSelected = selectedMappingIds.includes(row.id);
+              const isProcessing =
+                autoMapProcessingIds.includes(row.id) || row.status === 'PROCESSING';
               const previewType = row.sourceType ?? row.targetType ?? undefined;
               const sourceColumns =
                 row.sourceColumns && row.sourceColumns.length
@@ -933,6 +932,7 @@ const SourceTargetAttributeMapping = () => {
                   <MappingTargetColumnCell
                     name={row.targetColumn}
                     isMapped={row.status === 'MAPPED'}
+                    isProcessing={isProcessing}
                     width={MAPPING_COLUMN_MIN_WIDTH.targetColumn}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.targetColumn}
                     sx={mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
@@ -1040,7 +1040,7 @@ const SourceTargetAttributeMapping = () => {
                   />
 
                   <MappingStatusCell
-                    status={row.status}
+                    status={isProcessing ? 'PROCESSING' : row.status}
                     width={MAPPING_COLUMN_MIN_WIDTH.status}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.status}
                     sx={scrollableBodyCellSx}
@@ -1086,15 +1086,52 @@ const SourceTargetAttributeMapping = () => {
         <Box
           sx={{
             position: 'absolute',
-            inset: 0,
-            bgcolor: 'rgba(255,255,255,0.6)',
+            top: 12,
+            right: 16,
+            maxWidth: 320,
+            px: 1.5,
+            py: 1,
+            bgcolor: 'rgba(15,23,42,0.92)',
             display: 'flex',
             alignItems: 'center',
-            justifyContent: 'center',
+            justifyContent: 'flex-start',
+            gap: 1,
             zIndex: 5,
+            borderRadius: '12px',
+            boxShadow: '0 12px 28px rgba(15,23,42,0.18)',
+            pointerEvents: 'none',
           }}
         >
-          <Typography sx={{ fontSize: '0.85rem', color: '#4b5563', fontWeight: 600 }}>
+          <Box
+            sx={{
+              width: 18,
+              height: 18,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              borderRadius: '999px',
+              bgcolor: 'rgba(37,99,235,0.16)',
+              flexShrink: 0,
+            }}
+          >
+            <Box
+              component="span"
+              sx={{
+                width: 10,
+                height: 10,
+                borderRadius: '999px',
+                border: '2px solid #93c5fd',
+                borderTopColor: '#eff6ff',
+                display: 'inline-block',
+                animation: 'sttm-auto-map-spin 0.9s linear infinite',
+                '@keyframes sttm-auto-map-spin': {
+                  from: { transform: 'rotate(0deg)' },
+                  to: { transform: 'rotate(360deg)' },
+                },
+              }}
+            />
+          </Box>
+          <Typography sx={{ fontSize: '0.8rem', color: '#e2e8f0', fontWeight: 600 }}>
             {autoMapStatusMessage || 'Running auto-map...'}
           </Typography>
         </Box>

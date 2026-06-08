@@ -1,5 +1,20 @@
-import { buildApiEnvelope, getApiData, postEnvelopeData } from "@/api/axiosInstance";
+import api, {
+  buildApiEnvelope,
+  getApiData,
+  getApiErrorMessage,
+  postEnvelopeData,
+  resolveApiBaseUrl,
+} from "@/api/axiosInstance";
 import { API_ROUTES } from "@/api/routes";
+import type {
+  DbtConversionRequest,
+  DbtConversionResponse,
+  MappingSqlPreviewRequest,
+  MappingSqlPreviewResponse,
+  MappingSqlReviewRequest,
+  MappingSqlReviewResponse,
+  WorkbookExportRequest,
+} from "@/types/api-contract";
 import {
   buildMockSemanticContextRefresh,
   buildMockValidateDerivedSource,
@@ -12,6 +27,7 @@ import {
   saveMockDerivedSource,
 } from "./mock/dbMockData";
 import { mockDelay, throwMockError, useMockDb } from "./mock/mockConfig";
+import { extractSseChunk } from "./streaming/sse";
 
 type TableRef = { database: string; schema: string; table: string };
 
@@ -115,6 +131,31 @@ type DerivedSourceRecord = DerivedSourcePayload & {
   created_at?: string | null;
   updated_at?: string | null;
   is_active?: boolean;
+};
+
+type DbtStreamTelemetryEvent =
+  | {
+      type: "fetch_begin";
+      url: string;
+    }
+  | {
+      type: "fetch_resolved";
+      url: string;
+      status: number;
+      ok: boolean;
+      headers: Record<string, string>;
+    }
+  | {
+      type: "first_chunk";
+      byteLength: number;
+    }
+  | {
+      type: "sse_event";
+      eventName: string;
+    };
+
+type DbtStreamTelemetry = {
+  onEvent?: (event: DbtStreamTelemetryEvent) => void;
 };
 
 type SemanticLevel =
@@ -273,5 +314,211 @@ export const dbService = {
       buildApiEnvelope("semantic_context.refresh", payload),
       { timeout: 120000 },
     );
+  },
+
+  reviewMappingSql: async (
+    payload: MappingSqlReviewRequest,
+  ): Promise<MappingSqlReviewResponse> => {
+    return postEnvelopeData<MappingSqlReviewResponse>(
+      "/v1/workbench/mapping-sql/review",
+      buildApiEnvelope("mapping_sql.review", payload, {
+        source_tables: payload.source_tables,
+        target_table: payload.target_table ?? null,
+        driving_table: payload.driving_table ?? null,
+        relationships: payload.relationships ?? [],
+        semantic_bundle_id: payload.semantic_bundle_id ?? null,
+        semantic_view_name: payload.semantic_view_name ?? null,
+      }),
+      { timeout: 120000 },
+    );
+  },
+
+  previewMappingSql: async (
+    payload: MappingSqlPreviewRequest,
+  ): Promise<MappingSqlPreviewResponse> => {
+    return postEnvelopeData<MappingSqlPreviewResponse>(
+      "/v1/workbench/mapping-sql/preview",
+      buildApiEnvelope("mapping_sql.preview", payload, {
+        source_tables: payload.source_tables,
+        target_table: payload.target_table ?? null,
+        driving_table: payload.driving_table ?? null,
+        relationships: payload.relationships ?? [],
+        semantic_bundle_id: payload.semantic_bundle_id ?? null,
+        semantic_view_name: payload.semantic_view_name ?? null,
+      }),
+      { timeout: 120000 },
+    );
+  },
+
+  generateDbtConversion: async (
+    payload: DbtConversionRequest,
+  ): Promise<DbtConversionResponse> => {
+    return postEnvelopeData<DbtConversionResponse>(
+      "/v1/workbench/dbt-conversion",
+      buildApiEnvelope("dbt_conversion.generate", payload, {
+        target_table: payload.target_table,
+        source_tables: payload.source_tables,
+        driving_table: payload.driving_table ?? null,
+        relationships: payload.relationships ?? [],
+        semantic_bundle_id: payload.semantic_bundle_id ?? null,
+        semantic_view_name: payload.semantic_view_name ?? null,
+      }),
+      { timeout: 300000 },
+    );
+  },
+
+  streamDbtConversion: async function* (
+    payload: DbtConversionRequest,
+    signal?: AbortSignal,
+    telemetry?: DbtStreamTelemetry,
+  ): AsyncGenerator<
+    | { event: "status"; data: Record<string, unknown> }
+    | { event: "artifact"; data: Record<string, unknown> }
+    | { event: "final"; data: Record<string, unknown> }
+    | { event: "error"; data: { message?: string; code?: string } }
+  > {
+    const url = `${resolveApiBaseUrl()}/v1/workbench/dbt-conversion/stream`;
+    telemetry?.onEvent?.({
+      type: "fetch_begin",
+      url,
+    });
+
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(
+        buildApiEnvelope("dbt_conversion.generate", payload, {
+          target_table: payload.target_table,
+          source_tables: payload.source_tables,
+          driving_table: payload.driving_table ?? null,
+          relationships: payload.relationships ?? [],
+          semantic_bundle_id: payload.semantic_bundle_id ?? null,
+          semantic_view_name: payload.semantic_view_name ?? null,
+        }),
+      ),
+      signal,
+    });
+
+    telemetry?.onEvent?.({
+      type: "fetch_resolved",
+      url,
+      status: response.status,
+      ok: response.ok,
+      headers: Object.fromEntries(response.headers.entries()),
+    });
+
+    if (!response.ok || !response.body) {
+      const errorText = await response.text().catch(() => "");
+      throw new Error(
+        errorText
+          ? `DBT conversion stream failed with HTTP ${response.status}: ${errorText}`
+          : `DBT conversion stream failed with HTTP ${response.status}`,
+      );
+    }
+
+    const decoder = new TextDecoder();
+    const reader = response.body.getReader();
+    let buffer = "";
+    let receivedFirstChunk = false;
+
+    const parseChunk = (chunk: string) => {
+      let eventName = "message";
+      const dataParts: string[] = [];
+      for (const line of chunk.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        if (line.startsWith("event:")) {
+          eventName = line.slice(6).trim();
+          continue;
+        }
+        if (line.startsWith("data:")) {
+          dataParts.push(line.slice(5).trimStart());
+        }
+      }
+      if (!dataParts.length) return null;
+      const raw = dataParts.join("\n");
+      try {
+        return { event: eventName, data: JSON.parse(raw) };
+      } catch {
+        return { event: eventName, data: { message: raw } };
+      }
+    };
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!receivedFirstChunk) {
+        receivedFirstChunk = true;
+        telemetry?.onEvent?.({
+          type: "first_chunk",
+          byteLength: value.byteLength,
+        });
+      }
+      buffer += decoder.decode(value, { stream: true });
+      let extracted = extractSseChunk(buffer);
+      while (extracted) {
+        const parsed = parseChunk(extracted.chunk);
+        buffer = extracted.remaining;
+        if (parsed) {
+          telemetry?.onEvent?.({
+            type: "sse_event",
+            eventName: parsed.event,
+          });
+          yield parsed as
+            | { event: "status"; data: Record<string, unknown> }
+            | { event: "artifact"; data: Record<string, unknown> }
+            | { event: "final"; data: Record<string, unknown> }
+            | { event: "error"; data: { message?: string; code?: string } };
+        }
+        extracted = extractSseChunk(buffer);
+      }
+    }
+
+    if (buffer.trim()) {
+      const parsed = parseChunk(buffer);
+      if (parsed) {
+        yield parsed as
+          | { event: "status"; data: Record<string, unknown> }
+          | { event: "artifact"; data: Record<string, unknown> }
+          | { event: "final"; data: Record<string, unknown> }
+          | { event: "error"; data: { message?: string; code?: string } };
+      }
+    }
+  },
+
+  exportSttmWorkbook: async (
+    payload: WorkbookExportRequest,
+  ): Promise<Blob> => {
+    try {
+      const response = await api.post(
+        "/v1/workbench/exports/sttm-excel",
+        buildApiEnvelope("workbook.export.sttm_excel", payload, {
+          source_tables: payload.source_tables ?? [],
+          target_table: payload.target_table ?? null,
+        }),
+        {
+          responseType: "blob",
+          timeout: 120000,
+          headers: { "Content-Type": "application/json" },
+        },
+      );
+      return response.data as Blob;
+    } catch (error) {
+      const blobData = (error as { response?: { data?: unknown } })?.response?.data;
+      if (blobData instanceof Blob) {
+        try {
+          const text = await blobData.text();
+          const parsed = JSON.parse(text) as { message?: string; error?: { detail?: string; title?: string } };
+          throw new Error(
+            parsed.error?.detail ||
+            parsed.error?.title ||
+            parsed.message ||
+            "Unable to generate the Excel workbook."
+          );
+        } catch {
+          // Fall back to the standard API error parser below.
+        }
+      }
+      throw new Error(getApiErrorMessage(error, "Unable to generate the Excel workbook."));
+    }
   },
 };

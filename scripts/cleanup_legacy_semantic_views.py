@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""List or drop legacy semantic views and analyst tools no longer referenced by active bundles."""
+"""List or drop semantic view assets no longer referenced by active bundles."""
 
 from __future__ import annotations
 
@@ -23,8 +23,13 @@ def _settings() -> Settings:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--apply", action="store_true", help="Actually drop stale legacy assets.")
-    parser.add_argument("--include-analyst-tools", action="store_true", help="Also inspect ANALYST_SEM_* tools.")
+    parser.add_argument("--apply", action="store_true", help="Actually drop stale semantic view assets.")
+    parser.add_argument(
+        "--prefix",
+        action="append",
+        default=["SV_STTM_%", "SV_SEM_%"],
+        help="Optional semantic-view name pattern to inspect. Repeat for multiple patterns.",
+    )
     args = parser.parse_args()
 
     settings = _settings()
@@ -41,7 +46,16 @@ def main() -> int:
     ).collect()
     active_views = {str(row.as_dict()["OBJECT_NAME"]).strip() for row in active_view_rows}
 
-    view_rows = session.sql(f"SHOW VIEWS LIKE 'SV_SEM_%' IN SCHEMA {semantic_schema}").collect()
+    view_rows = []
+    seen_names: set[str] = set()
+    for prefix in args.prefix:
+        rows = session.sql(f"SHOW SEMANTIC VIEWS LIKE '{prefix}' IN SCHEMA {semantic_schema}").collect()
+        for row in rows:
+            data = row.as_dict()
+            qualified = f"{data.get('database_name')}.{data.get('schema_name')}.{data.get('name')}".upper()
+            if qualified not in seen_names:
+                seen_names.add(qualified)
+                view_rows.append(row)
     stale_views: list[str] = []
     for row in view_rows:
         data = row.as_dict()
@@ -49,39 +63,16 @@ def main() -> int:
         if qualified not in active_views:
             stale_views.append(qualified)
 
-    stale_tools: list[str] = []
-    if args.include_analyst_tools:
-        tool_rows = session.sql(f"SHOW CORTEX ANALYST SEMANTIC VIEWS IN SCHEMA {semantic_schema}").collect()
-        active_tool_names = {
-            view.replace(".SV_", ".ANALYST_")
-            for view in active_views
-            if ".SV_" in view
-        }
-        for row in tool_rows:
-            data = row.as_dict()
-            qualified = f"{data.get('database_name')}.{data.get('schema_name')}.{data.get('name')}".upper()
-            if qualified.startswith(f"{semantic_schema}.ANALYST_SEM_") and qualified not in active_tool_names:
-                stale_tools.append(qualified)
-
     if not args.apply:
-        print("Stale legacy semantic views:")
+        print("Stale semantic views:")
         for item in stale_views:
             print(f"  {item}")
-        if args.include_analyst_tools:
-            print("\nStale legacy analyst tools:")
-            for item in stale_tools:
-                print(f"  {item}")
         return 0
 
     for item in stale_views:
-        session.sql(f"DROP VIEW IF EXISTS {item}").collect()
-    if args.include_analyst_tools:
-        for item in stale_tools:
-            session.sql(f"DROP CORTEX ANALYST SEMANTIC VIEW IF EXISTS {item}").collect()
+        session.sql(f"DROP SEMANTIC VIEW IF EXISTS {item}").collect()
 
     print(f"Dropped {len(stale_views)} stale semantic views.")
-    if args.include_analyst_tools:
-        print(f"Dropped {len(stale_tools)} stale analyst tools.")
     return 0
 
 

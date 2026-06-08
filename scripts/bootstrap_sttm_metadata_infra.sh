@@ -16,6 +16,8 @@ Creates the STTM metadata schema objects in the configured Snowflake database/sc
 - tables
 - derived source table
 - relationship/sample/profile procedures
+- semantic bundle/cache procedures
+- dbt tool procedures
 - sub-agent procedures
 - Cortex agents
 

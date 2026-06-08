@@ -15,12 +15,6 @@ import {
   InputBase,
   Typography,
 } from "@mui/material";
-
-
-
-
-
-
 import { dbService } from "@/services/dbService";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import { AiaButton } from "@/components/ui/aia-button";
@@ -77,7 +71,8 @@ function parseRelationshipHandleId(
   const suffix = `-${kind}`;
   if (!handleId.endsWith(suffix)) return null;
   const withoutKind = handleId.slice(0, -suffix.length);
-  return withoutKind.slice(withoutKind.lastIndexOf(".") + 1);
+  const columnPart = withoutKind.slice(withoutKind.lastIndexOf(".") + 1);
+  return columnPart.replace(/-\d+$/, "");
 }
 
 interface AddDerivedModalProps {
@@ -773,8 +768,8 @@ export function AddDerivedModal({
   const previewColumns = useMemo(() => {
     return [
       { key: "index", label: "#", align: "left" as const },
-      ...previewColumnsState.map((column, index) => ({
-        key: `${column.name}-${index}`,
+      ...previewColumnsState.map((column) => ({
+        key: column.name,
         label: (
           <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
             <Typography sx={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>

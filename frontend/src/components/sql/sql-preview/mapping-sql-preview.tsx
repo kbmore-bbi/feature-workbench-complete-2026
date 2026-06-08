@@ -1,12 +1,13 @@
 'use client';
 
-import { Box, Paper } from '@mui/material';
+import type { ReactNode } from 'react';
+import CircularProgress from '@mui/material/CircularProgress';
+import { Box, Button, Paper } from '@mui/material';
 import { SqlPreviewHeader } from './sql-preview-header';
 import { SqlPreviewMetaBox } from './sql-preview-meta-box';
 import { SqlPreviewSection } from './sql-preview-section';
 import { SqlPreviewSqlBlock } from './sql-preview-sql-block';
 import { SQL_PREVIEW_WORKSPACE_BG } from './sql-preview-styles';
-import { SqlValidationFooter } from './sql-validation-footer';
 
 export type MappingSqlPreviewProps = {
   targetLabel?: string | null;
@@ -19,7 +20,14 @@ export type MappingSqlPreviewProps = {
   onCopyGeneratedSql?: () => void | Promise<void>;
   onValidate?: () => void;
   validateDisabled?: boolean;
+  validateLoading?: boolean;
+  validateLabel?: string;
+  onRunPreview?: () => void;
+  runDisabled?: boolean;
+  runLoading?: boolean;
+  runLabel?: string;
   readOnly?: boolean;
+  statusPanel?: ReactNode;
 };
 
 export function MappingSqlPreview({
@@ -33,13 +41,15 @@ export function MappingSqlPreview({
   onCopyGeneratedSql,
   onValidate,
   validateDisabled,
+  validateLoading = false,
+  validateLabel = 'Validate SQL',
+  onRunPreview,
+  runDisabled = true,
+  runLoading = false,
+  runLabel = 'Run Preview',
   readOnly = false,
+  statusPanel,
 }: MappingSqlPreviewProps) {
-  const validationMessage =
-    mappedCount > 0
-      ? 'Validate the live SQL generated from source prep and mapping rules.'
-      : 'Map at least one attribute to generate a validation-ready SQL statement.';
-
   return (
     <Box
       sx={{
@@ -76,9 +86,63 @@ export function MappingSqlPreview({
           ]}
           copyValue={generatedSql}
           onCopy={onCopyGeneratedSql}
+          actions={
+            !readOnly ? (
+              <>
+                <Button
+                  variant="contained"
+                  size="small"
+                  disabled={validateDisabled ?? mappedCount === 0}
+                  onClick={onValidate}
+                  startIcon={validateLoading ? <CircularProgress size={14} color="inherit" /> : undefined}
+                  sx={{
+                    minWidth: 118,
+                    borderRadius: '12px',
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    bgcolor: '#133d5b',
+                    boxShadow: 'none',
+                    '&:hover': {
+                      bgcolor: '#1d4f74',
+                      boxShadow: 'none',
+                    },
+                  }}
+                >
+                  {validateLabel}
+                </Button>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  disabled={runDisabled}
+                  onClick={onRunPreview}
+                  startIcon={runLoading ? <CircularProgress size={14} color="inherit" /> : undefined}
+                  sx={{
+                    minWidth: 118,
+                    borderRadius: '12px',
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    borderColor: 'rgba(148,163,184,0.28)',
+                    color: '#e2e8f0',
+                    '&.Mui-disabled': {
+                      borderColor: 'rgba(148,163,184,0.14)',
+                      color: 'rgba(226,232,240,0.45)',
+                    },
+                  }}
+                >
+                  {runLabel}
+                </Button>
+              </>
+            ) : null
+          }
         />
 
         <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 2.5, py: 2.25 }}>
+          {statusPanel ? (
+            <Box sx={{ mb: 2 }}>
+              {statusPanel}
+            </Box>
+          ) : null}
+
           <SqlPreviewSection
             title="Source query foundation"
             subtitle="Lowest-level Step 1 SQL with joins, filters, grouping, and ordering."
@@ -97,14 +161,6 @@ export function MappingSqlPreview({
 
           <SqlPreviewSqlBlock sql={generatedSql} />
         </Box>
-
-        {!readOnly ? (
-          <SqlValidationFooter
-            message={validationMessage}
-            onValidate={onValidate}
-            validateDisabled={validateDisabled ?? mappedCount === 0}
-          />
-        ) : null}
       </Paper>
     </Box>
   );

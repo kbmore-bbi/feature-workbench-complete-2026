@@ -1,6 +1,10 @@
 
 import type { UserSession } from "@/types/user";
 import type {
+  AssistantInferenceRecord,
+  AssistantPreferenceState,
+  AssistantSignal,
+  MappingIntent,
   SemanticContextBundleResponse,
   SemanticContextItem,
   TableRef,
@@ -277,10 +281,16 @@ export type SttmBuilderContextValue = {
   mappingSuggestions: MappingSuggestion[];
   mappingLoading: boolean;
   autoMapStatusMessage: string | null;
+  autoMapProcessingIds: string[];
 
   // Chat
   chatMessages: ChatMessage[];
   chatLoading: boolean;
+  assistantSignals: AssistantSignal[];
+  assistantInferences: AssistantInferenceRecord[];
+  assistantPreferences: AssistantPreferenceState;
+  assistantUnreadCount: number;
+  mappingIntent: MappingIntent | null;
   semanticBundleId: string | null;
   semanticBundleLabel: string | null;
   semanticLevel: string | null;
@@ -315,6 +325,21 @@ export type SttmBuilderContextValue = {
   // Actions — AI
   runAutoMap: () => void;
   sendChatMessage: (message: string) => void;
+  submitChatFeedback: (payload: {
+    messageId: string;
+    rating: number;
+    comment?: string | null;
+  }) => void;
+  refreshAssistantSignals: () => void;
+  requestSemanticRefresh: () => Promise<void>;
+  respondToAssistantSignal: (payload: {
+    signalId: string;
+    status?: "acknowledged" | "responded" | "dismissed";
+    optionSelected?: string | null;
+    rating?: number | null;
+    comment?: string | null;
+  }) => void;
+  updateAssistantPreferences: (settings: AssistantPreferenceState) => void;
   openPendingDerivedSourceDraft: () => void;
   acknowledgePendingDerivedSourceDraft: () => void;
   dismissPendingDerivedSourceDraft: () => void;
@@ -356,6 +381,8 @@ export type SttmBuilderContextValue = {
   mappings: MappingState[];
   selectedMappingIds: string[];
   mappingSql: string;
+  mappingPreviewSql: string;
+  mappingSqlVariant: "original" | "optimized" | null;
   isPreProcessModalOpen: boolean;
   activeMappingId: string | null;
   pendingAiMappingReviews: PendingAiMappingReview[];
@@ -369,9 +396,11 @@ export type SttmBuilderContextValue = {
   bulkSetDirect: (ids: string[]) => void;
   setPreProcessModalOpen: (open: boolean, mappingId?: string | null) => void;
   setMappingSql: (sql: string) => void;
+  setMappingPreviewSql: (sql: string) => void;
+  setMappingSqlVariant: (variant: "original" | "optimized" | null) => void;
 };
 
-export type MappingStatus = "MAPPED" | "UNMAPPED";
+export type MappingStatus = "MAPPED" | "UNMAPPED" | "PROCESSING";
 export type MappingRuleType = "Direct" | "Select..." | "Custom" | string;
 
 export interface MappingState {

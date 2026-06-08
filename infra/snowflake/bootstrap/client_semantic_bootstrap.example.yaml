@@ -1,0 +1,22 @@
+defaults:
+  table_semantic_level: L2_ANALYST_READY
+  bundle_semantic_level: L3_MAPPING_ENRICHED
+  allow_agent_refresh_for_bundles: false
+  force: false
+
+table_groups:
+  - name: loan_income_sources
+    tables:
+      - FFP_HDP_DLAB_DB_DEV.SCH_CRM_SOURCE.LOAN_INCOME_AMOUNT_CALCULATION
+      - FFP_HDP_DLAB_DB_DEV.SCH_CRM_SOURCE.NOTE
+  - name: crm_targets
+    schemas:
+      - FFP_HDP_DLAB_DB_DEV.SCHM_CRM_TARGET
+
+bundles:
+  - name: loan_income_to_target
+    source_tables:
+      - FFP_HDP_DLAB_DB_DEV.SCH_CRM_SOURCE.LOAN_INCOME_AMOUNT_CALCULATION
+      - FFP_HDP_DLAB_DB_DEV.SCH_CRM_SOURCE.NOTE
+    target_table: FFP_HDP_DLAB_DB_DEV.SCHM_CRM_TARGET.LOAN_INCOME_AMOUNT_CALCULATION
+    requested_level: L3_MAPPING_ENRICHED

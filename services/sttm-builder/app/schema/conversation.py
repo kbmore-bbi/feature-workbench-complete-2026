@@ -87,6 +87,16 @@ class AssistantPreferenceState(BaseModel):
     recommendations_enabled: bool = True
 
 
+class MappingIntent(BaseModel):
+    business_goal: str | None = None
+    lifecycle: Literal["new", "update", "unknown"] = "unknown"
+    target_outcome: str | None = None
+    domain_hints: list[str] = Field(default_factory=list)
+    source: str = "user"
+    confidence: float | None = None
+    updated_at: str | None = None
+
+
 class AssistantSignalType(str, Enum):
     FEEDBACK = "feedback"
     RECOMMENDATION = "recommendation"
@@ -143,6 +153,7 @@ class ConversationSettingsResponseData(BaseModel):
 class ConversationSignalEvaluationData(BaseModel):
     activity_type: str = "selection_changed"
     page: str | None = None
+    session_id: str | None = None
     source_tables: list[TableRef] = Field(default_factory=list)
     target_table: TableRef | None = None
     driving_table: TableRef | None = None
@@ -154,6 +165,7 @@ class ConversationSignalEvaluationData(BaseModel):
     semantic_view_name: str | None = None
     surface: str | None = None
     mapping_summary: dict[str, Any] | None = None
+    mapping_intent: MappingIntent | None = None
 
 
 class ConversationSignalsResponseData(BaseModel):
@@ -161,6 +173,7 @@ class ConversationSignalsResponseData(BaseModel):
     signals: list[AssistantSignal] = Field(default_factory=list)
     inferences: list[AssistantInferenceRecord] = Field(default_factory=list)
     unread_count: int = 0
+    mapping_intent: MappingIntent | None = None
 
 
 class AssistantSignalResponseData(BaseModel):
@@ -181,6 +194,7 @@ class AssistantSignalResponseInput(BaseModel):
 class ConversationContext(OperationContext):
     surface: str | None = None
     semantic_level_requested: str | None = None
+    session_id: str | None = None
     source_tables: list[TableRef] | None = None
     driving_table: TableRef | None = None
     target_table: TableRef | None = None
@@ -193,6 +207,7 @@ class ConversationContext(OperationContext):
     relationships: list[dict[str, Any]] | None = None
     selected_columns_by_table: dict[str, list[str]] | None = None
     datahub_context: dict[str, Any] | None = None
+    mapping_intent: MappingIntent | None = None
 
 
 class ConversationRequestData(BaseModel):
@@ -281,6 +296,7 @@ class ConversationIndexSyncRequestData(BaseModel):
     include_recommendation_docs: bool = True
     include_semantic_docs: bool = True
     include_relationship_docs: bool = True
+    include_client_knowledge_docs: bool = True
 
 
 class ConversationIndexSyncRequestEnvelope(BaseModel):

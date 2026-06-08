@@ -12,6 +12,7 @@ type MappingStatusCellProps = {
 
 const STATUS_LABELS: Record<MappingStatus, string> = {
   MAPPED: 'Mapped',
+  PROCESSING: 'Processing',
   UNMAPPED: 'Unmapped',
 };
 
@@ -35,6 +36,16 @@ const UNMAPPED_SX = {
   borderRadius: '999px',
 } as const;
 
+const PROCESSING_SX = {
+  height: 22,
+  fontSize: '0.7rem',
+  fontWeight: 700,
+  bgcolor: '#eff6ff',
+  color: '#1d4ed8',
+  border: '1px solid #bfdbfe',
+  borderRadius: '999px',
+} as const;
+
 export const MappingStatusCell = ({
   status,
   align = 'left',
@@ -45,7 +56,7 @@ export const MappingStatusCell = ({
   <AiaChipCell
     align={align}
     label={STATUS_LABELS[status]}
-    chipSx={status === 'MAPPED' ? MAPPED_SX : UNMAPPED_SX}
+    chipSx={status === 'MAPPED' ? MAPPED_SX : status === 'PROCESSING' ? PROCESSING_SX : UNMAPPED_SX}
     width={width}
     minWidth={minWidth}
     sx={sx}

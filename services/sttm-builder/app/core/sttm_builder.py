@@ -36,10 +36,17 @@ from app.schema.sttm_builder import (
     SubAgent,
     TransformationRule,
     TransformationResult,
+    _coerce_api_error,
 )
 
 logger = logging.getLogger(__name__)
 _local_chat_threads: dict[str, list[dict[str, Any]]] = {}
+_SEMANTIC_LEVEL_ORDER = {
+    SemanticLevel.L0_RELATIONSHIP: 0,
+    SemanticLevel.L1_CONTEXT: 1,
+    SemanticLevel.L2_ANALYST_READY: 2,
+    SemanticLevel.L3_MAPPING_ENRICHED: 3,
+}
 
 
 class STTMBuilderService:
@@ -96,6 +103,7 @@ class STTMBuilderService:
         *,
         governance_decision: GovernanceDecision | None = None,
     ) -> STTMBuilderResponse:
+        req = self._sanitize_request_semantic_context(req)
         decision = governance_decision or self._build_governance_decision(req)
         started_at = time.perf_counter()
         req, semantic_refresh = self._with_semantic_context(req)
@@ -283,16 +291,35 @@ class STTMBuilderService:
         *,
         governance_decision: GovernanceDecision | None = None,
     ) -> Iterator[str]:
+        req = self._sanitize_request_semantic_context(req)
         def emit(event: str, data: dict[str, Any]) -> str:
             return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
         def iterator() -> Iterator[str]:
             decision = governance_decision or self._build_governance_decision(req)
+            reusing_prefetched_context = self._should_reuse_prefetched_semantic_context(req)
+            bypassing_semantic_refresh = self._should_bypass_semantic_refresh(req)
             yield emit(
                 "status",
                 {
-                    "phase": "semantic_refresh_started",
-                    "message": "Checking semantic context for the current selection.",
+                    "phase": (
+                        "semantic_context_bypass"
+                        if bypassing_semantic_refresh
+                        else
+                        "semantic_context_reuse_check"
+                        if reusing_prefetched_context
+                        else "semantic_refresh_started"
+                    ),
+                    "message": (
+                        "Using the current mapping context for this batch."
+                        if bypassing_semantic_refresh
+                        else
+                        "Reusing the current semantic context for this selection."
+                        if reusing_prefetched_context
+                        else "Looking for an existing semantic context for this selection."
+                        if req.context.surface == SemanticSurface.DERIVED_SOURCE
+                        else "Checking semantic context for the current selection."
+                    ),
                 },
             )
             req_with_context, semantic_refresh = self._with_semantic_context(req)
@@ -502,7 +529,17 @@ class STTMBuilderService:
         selected_derived_sources = req.context.selected_derived_sources or []
         if not source_tables and not selected_derived_sources:
             return req, None
-        if self._should_reuse_prefetched_semantic_context(req):
+        reusable_semantic_view = self._current_semantic_view_is_usable(req)
+        if self._should_bypass_semantic_refresh(req) and reusable_semantic_view:
+            logger.info(
+                "Bypassing semantic refresh for auto-map mapping request: request_id=%s bundle=%s surface=%s level=%s",
+                req.request_id,
+                req.context.semantic_bundle_id,
+                req.context.surface.value,
+                req.context.semantic_level_requested.value,
+            )
+            return req, None
+        if self._should_reuse_prefetched_semantic_context(req) and reusable_semantic_view:
             logger.info(
                 "Reusing prefetched semantic context without refresh: request_id=%s bundle=%s surface=%s level=%s",
                 req.request_id,
@@ -513,6 +550,7 @@ class STTMBuilderService:
             return req, None
         try:
             requested_level = self._determine_semantic_level(req)
+            allow_agent_refresh = req.context.surface != SemanticSurface.DERIVED_SOURCE
             semantic_refresh = self._semantic_context_service.refresh_bundle(
                 SemanticContextRefreshRequest(
                     selected_source_tables=source_tables,
@@ -526,13 +564,18 @@ class STTMBuilderService:
                     force=False,
                 ),
                 agent_client=self._agent,
-                allow_agent_refresh=True,
+                allow_agent_refresh=allow_agent_refresh,
+            )
+            normalized_semantic_context = self._normalize_nested_semantic_context(
+                semantic_context=semantic_refresh.semantic_context,
+                semantic_view_name=semantic_refresh.semantic_view_name,
+                semantic_bundle_id=semantic_refresh.bundle_id,
             )
             context = req.context.model_copy(
                 update={
                     "semantic_context": [
                         SemanticContextItem.model_validate(item)
-                        for item in semantic_refresh.semantic_context
+                        for item in normalized_semantic_context
                     ],
                     "semantic_bundle_id": semantic_refresh.bundle_id,
                     "semantic_bundle_label": semantic_refresh.bundle_label,
@@ -552,22 +595,158 @@ class STTMBuilderService:
             )
             return req, None
 
+    def resolve_usable_semantic_context(
+        self,
+        *,
+        semantic_bundle_id: str | None,
+        semantic_view_name: str | None,
+    ) -> tuple[str | None, str | None]:
+        resolved_bundle_id = (semantic_bundle_id or "").strip()
+        resolved_view_name = (semantic_view_name or "").strip()
+        if not resolved_bundle_id:
+            return None, None
+        bundle = self._semantic_context_service.get_bundle(bundle_id=resolved_bundle_id)
+        if not bundle:
+            return None, None
+        bundle_view_name = str(bundle.get("semantic_view_name") or "").strip()
+        if not bundle_view_name:
+            return None, None
+        if resolved_view_name and resolved_view_name != bundle_view_name:
+            logger.info(
+                "Semantic view mismatch for bundle %s; requested=%s bundle=%s. Reusing bundle semantic view.",
+                resolved_bundle_id,
+                resolved_view_name,
+                bundle_view_name,
+            )
+        try:
+            self._session.sql(f"DESCRIBE SEMANTIC VIEW {bundle_view_name}").collect()
+        except Exception:
+            logger.info(
+                "Semantic view %s is no longer available; a refresh will be attempted.",
+                bundle_view_name,
+            )
+            return None, None
+        return resolved_bundle_id, bundle_view_name
+
+    def _sanitize_request_semantic_context(
+        self,
+        req: STTMBuilderEnvelopeRequest,
+    ) -> STTMBuilderEnvelopeRequest:
+        resolved_bundle_id, resolved_view_name = self.resolve_usable_semantic_context(
+            semantic_bundle_id=req.context.semantic_bundle_id,
+            semantic_view_name=req.context.semantic_view_name,
+        )
+        normalized_semantic_context = self._normalize_nested_semantic_context(
+            semantic_context=req.context.semantic_context,
+            semantic_view_name=resolved_view_name,
+            semantic_bundle_id=resolved_bundle_id,
+        )
+        if (
+            resolved_bundle_id == req.context.semantic_bundle_id
+            and resolved_view_name == req.context.semantic_view_name
+            and normalized_semantic_context == [
+                item.model_dump(mode="json") if hasattr(item, "model_dump") else item
+                for item in (req.context.semantic_context or [])
+            ]
+        ):
+            return req
+        return req.model_copy(
+            update={
+                "context": req.context.model_copy(
+                    update={
+                        "semantic_bundle_id": resolved_bundle_id,
+                        "semantic_view_name": resolved_view_name,
+                        "semantic_context": [
+                            SemanticContextItem.model_validate(item)
+                            for item in normalized_semantic_context
+                        ],
+                    }
+                )
+            }
+        )
+
+    @staticmethod
+    def _normalize_nested_semantic_context(
+        *,
+        semantic_context: Any,
+        semantic_view_name: str | None,
+        semantic_bundle_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if not isinstance(semantic_context, list):
+            return []
+
+        normalized_items: list[dict[str, Any]] = []
+        for item in semantic_context:
+            if hasattr(item, "model_dump"):
+                item_dict = item.model_dump(mode="json")
+            elif isinstance(item, dict):
+                item_dict = dict(item)
+            else:
+                continue
+
+            semantic_model = item_dict.get("semantic_model")
+            if isinstance(semantic_model, dict):
+                normalized_model = dict(semantic_model)
+                nested_view = normalized_model.get("semantic_view")
+                if isinstance(nested_view, dict):
+                    normalized_view = dict(nested_view)
+                    if semantic_view_name:
+                        normalized_view["name"] = semantic_view_name
+                        if semantic_bundle_id:
+                            normalized_view["bundle_id"] = semantic_bundle_id
+                        normalized_model["semantic_view"] = normalized_view
+                    else:
+                        normalized_model.pop("semantic_view", None)
+                elif not semantic_view_name:
+                    normalized_model.pop("semantic_view", None)
+                item_dict["semantic_model"] = normalized_model
+
+            normalized_items.append(item_dict)
+
+        return normalized_items
+
+    def _current_semantic_view_is_usable(
+        self,
+        req: STTMBuilderEnvelopeRequest,
+    ) -> bool:
+        resolved_bundle_id, resolved_view_name = self.resolve_usable_semantic_context(
+            semantic_bundle_id=req.context.semantic_bundle_id,
+            semantic_view_name=req.context.semantic_view_name,
+        )
+        return bool(resolved_bundle_id and resolved_view_name)
+
     @staticmethod
     def _should_reuse_prefetched_semantic_context(req: STTMBuilderEnvelopeRequest) -> bool:
-        if req.context.surface != SemanticSurface.MAPPING:
-            return False
-        if req.context.semantic_level_requested != SemanticLevel.L3_MAPPING_ENRICHED:
-            return False
         if not req.context.semantic_bundle_id or not req.context.semantic_view_name:
             return False
         semantic_context = req.context.semantic_context or []
         if not semantic_context:
             return False
-        return req.data.intent in {
+        if req.data.intent not in {
             Interface.AUTO_MAP,
             Interface.CHAT,
             Interface.TRANSFORM,
-        }
+        }:
+            return False
+        requested_level = req.context.semantic_level_requested or SemanticLevel.L1_CONTEXT
+        minimum_level = (
+            SemanticLevel.L3_MAPPING_ENRICHED
+            if req.context.surface == SemanticSurface.MAPPING
+            else SemanticLevel.L2_ANALYST_READY
+        )
+        return _SEMANTIC_LEVEL_ORDER.get(requested_level, 0) >= _SEMANTIC_LEVEL_ORDER.get(
+            minimum_level,
+            0,
+        )
+
+    @staticmethod
+    def _should_bypass_semantic_refresh(req: STTMBuilderEnvelopeRequest) -> bool:
+        return (
+            req.data.intent == Interface.AUTO_MAP
+            and req.context.surface == SemanticSurface.MAPPING
+            and bool(req.context.semantic_bundle_id)
+            and bool(req.context.semantic_view_name)
+        )
 
     def _build_chat_response(
         self,
@@ -1344,19 +1523,6 @@ class STTMBuilderService:
                     )
                 )
 
-        semantic_view = semantic_model.get("semantic_view")
-        compact_semantic_view = None
-        if isinstance(semantic_view, dict):
-            compact_semantic_view = _prune_empty(
-                {
-                    "name": semantic_view.get("name"),
-                    "bundle_id": semantic_view.get("bundle_id"),
-                    "bundle_label": semantic_view.get("bundle_label"),
-                    "semantic_level": semantic_view.get("semantic_level"),
-                    "analyst_tool_name": semantic_view.get("analyst_tool_name"),
-                }
-            )
-
         relationships = semantic_model.get("relationships")
         compact_relationships = None
         if isinstance(relationships, dict):
@@ -1385,7 +1551,6 @@ class STTMBuilderService:
                 "domain_summary": cls._trim_string(semantic_model.get("domain_summary"), 300),
                 "attributes": compact_attributes or None,
                 "relationships": compact_relationships,
-                "semantic_view": compact_semantic_view,
             }
         )
 
@@ -1436,7 +1601,12 @@ class STTMBuilderService:
             ) from exc
 
         try:
-            parsed = STTMAgentResponseEnvelope.model_validate(envelope)
+            normalized_envelope = dict(envelope)
+            if isinstance(normalized_envelope.get("error"), dict):
+                normalized_error = _coerce_api_error(normalized_envelope["error"])
+                if normalized_error is not None:
+                    normalized_envelope["error"] = normalized_error.model_dump(mode="json")
+            parsed = STTMAgentResponseEnvelope.model_validate(normalized_envelope)
         except ValidationError:
             parsed = None
 
@@ -1488,7 +1658,8 @@ class STTMBuilderService:
         raw_result: dict[str, Any] | None = data.get("result") or envelope.get("result")
         message: str | None = data.get("message") or envelope.get("message")
         warnings = envelope.get("warnings") if isinstance(envelope.get("warnings"), list) else []
-        error = envelope.get("error") if isinstance(envelope.get("error"), dict) else None
+        raw_error = envelope.get("error")
+        error = _coerce_api_error(raw_error if isinstance(raw_error, (dict, ApiError)) else None)
         meta = envelope.get("meta") if isinstance(envelope.get("meta"), dict) else {}
         status = _status_from_payload(data)
 

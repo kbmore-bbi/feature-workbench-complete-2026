@@ -1,7 +1,7 @@
 'use client';
+
 import { Box, Typography } from '@mui/material';
 import { FiberManualRecordIcon } from '@/utils/icons';
-
 import { SqlEditorActions } from './sql-editor-actions';
 import type { SqlEditorActionsProps } from './sql-editor-actions';
 

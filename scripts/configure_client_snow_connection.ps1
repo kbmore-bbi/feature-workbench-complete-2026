@@ -87,7 +87,16 @@ foreach ($name in $required) {
 $authenticator = if ($cfg.ContainsKey("SNOWFLAKE_AUTHENTICATOR") -and $cfg["SNOWFLAKE_AUTHENTICATOR"]) {
     $cfg["SNOWFLAKE_AUTHENTICATOR"]
 } else {
-    "externalbrowser"
+    ""
+}
+$password = if ($cfg.ContainsKey("SNOWFLAKE_PASSWORD") -and $cfg["SNOWFLAKE_PASSWORD"]) {
+    $cfg["SNOWFLAKE_PASSWORD"]
+} else {
+    ""
+}
+$usePasswordAuth = -not [string]::IsNullOrWhiteSpace($password)
+if (-not $usePasswordAuth -and [string]::IsNullOrWhiteSpace($authenticator)) {
+    $authenticator = "externalbrowser"
 }
 
 try {
@@ -112,16 +121,32 @@ if ($ForceRecreate) {
 }
 
 Write-Host "Creating Snow CLI connection '$($cfg["SNOWFLAKE_CONNECTION"])'"
-& $SnowExe connection add `
-    --connection-name $cfg["SNOWFLAKE_CONNECTION"] `
-    --account $cfg["SNOWFLAKE_ACCOUNT"] `
-    --user $cfg["SNOWFLAKE_USER"] `
-    --role $cfg["SNOWFLAKE_ROLE"] `
-    --warehouse $cfg["SNOWFLAKE_WAREHOUSE"] `
-    --database $cfg["SNOWFLAKE_DATABASE"] `
-    --authenticator $authenticator `
-    --default `
-    --format TABLE
+$connectionArgs = @(
+    "connection", "add",
+    "--connection-name", $cfg["SNOWFLAKE_CONNECTION"],
+    "--account", $cfg["SNOWFLAKE_ACCOUNT"],
+    "--user", $cfg["SNOWFLAKE_USER"],
+    "--role", $cfg["SNOWFLAKE_ROLE"],
+    "--warehouse", $cfg["SNOWFLAKE_WAREHOUSE"],
+    "--database", $cfg["SNOWFLAKE_DATABASE"],
+    "--default",
+    "--format", "TABLE"
+)
+
+if ($cfg.ContainsKey("SNOWFLAKE_SCHEMA") -and -not [string]::IsNullOrWhiteSpace($cfg["SNOWFLAKE_SCHEMA"])) {
+    $connectionArgs += @("--schema", $cfg["SNOWFLAKE_SCHEMA"])
+}
+
+if ($usePasswordAuth) {
+    $connectionArgs += @("--password", $password)
+    if (-not [string]::IsNullOrWhiteSpace($authenticator) -and $authenticator -ne "snowflake") {
+        $connectionArgs += @("--authenticator", $authenticator)
+    }
+} elseif (-not [string]::IsNullOrWhiteSpace($authenticator)) {
+    $connectionArgs += @("--authenticator", $authenticator)
+}
+
+& $SnowExe @connectionArgs
 
 Write-Host ""
 Write-Host "Testing connection '$($cfg["SNOWFLAKE_CONNECTION"])'"

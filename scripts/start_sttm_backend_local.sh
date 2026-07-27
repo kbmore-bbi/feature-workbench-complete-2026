@@ -114,19 +114,52 @@ to_lower() {
 }
 
 validate_local_auth_config() {
+  local auth_mode
   local local_dev_auth_enabled
   local snowflake_authenticator
   local snowflake_account
   local snowflake_user
   local snowflake_password
   local snowflake_warehouse
+  local oauth_client_id
+  local oauth_client_secret
+  local oauth_authorize_url
+  local oauth_token_url
+  local oauth_redirect_uri
+  local auth_session_secret
+  local auth_session_encryption_key
 
+  auth_mode="$(env_value AUTH_MODE)"
   local_dev_auth_enabled="$(env_value LOCAL_DEV_AUTH_ENABLED)"
   snowflake_authenticator="$(env_value SNOWFLAKE_AUTHENTICATOR)"
   snowflake_account="$(env_value SNOWFLAKE_ACCOUNT)"
   snowflake_user="$(env_value SNOWFLAKE_USER)"
   snowflake_password="$(env_value SNOWFLAKE_PASSWORD)"
   snowflake_warehouse="$(env_value SNOWFLAKE_WAREHOUSE)"
+  oauth_client_id="$(env_value SNOWFLAKE_OAUTH_CLIENT_ID)"
+  oauth_client_secret="$(env_value SNOWFLAKE_OAUTH_CLIENT_SECRET)"
+  oauth_authorize_url="$(env_value SNOWFLAKE_OAUTH_AUTHORIZE_URL)"
+  oauth_token_url="$(env_value SNOWFLAKE_OAUTH_TOKEN_URL)"
+  oauth_redirect_uri="$(env_value SNOWFLAKE_OAUTH_REDIRECT_URI)"
+  auth_session_secret="$(env_value AUTH_SESSION_SECRET)"
+  auth_session_encryption_key="$(env_value AUTH_SESSION_ENCRYPTION_KEY)"
+
+  if [[ "$(to_lower "${auth_mode}")" == "custom_oauth" ]]; then
+    local oauth_missing=()
+    [[ -n "${oauth_client_id}" ]] || oauth_missing+=("SNOWFLAKE_OAUTH_CLIENT_ID")
+    [[ -n "${oauth_client_secret}" ]] || oauth_missing+=("SNOWFLAKE_OAUTH_CLIENT_SECRET")
+    [[ -n "${oauth_authorize_url}" ]] || oauth_missing+=("SNOWFLAKE_OAUTH_AUTHORIZE_URL")
+    [[ -n "${oauth_token_url}" ]] || oauth_missing+=("SNOWFLAKE_OAUTH_TOKEN_URL")
+    [[ -n "${oauth_redirect_uri}" ]] || oauth_missing+=("SNOWFLAKE_OAUTH_REDIRECT_URI")
+    [[ -n "${auth_session_secret}" ]] || oauth_missing+=("AUTH_SESSION_SECRET")
+    [[ -n "${auth_session_encryption_key}" ]] || oauth_missing+=("AUTH_SESSION_ENCRYPTION_KEY")
+
+    if (( ${#oauth_missing[@]} > 0 )); then
+      die "Missing required OAuth settings in ${ENV_FILE}: ${oauth_missing[*]}"
+    fi
+
+    return 0
+  fi
 
   if [[ "$(to_lower "${local_dev_auth_enabled}")" != "true" ]]; then
     die "LOCAL_DEV_AUTH_ENABLED is not set to true in ${ENV_FILE}. Local STTM auth will fail without Snowflake ingress headers."
@@ -201,11 +234,16 @@ start_backend() {
   log "Health check: http://127.0.0.1:${PORT}/health"
   log "Docs: http://127.0.0.1:${PORT}/docs"
   log "Local note: Snowflake ingress auth headers are not present on localhost."
-  log "Default mode still expects deployed SPCS ingress and caller context."
-  log "For local frontend/API testing, set LOCAL_DEV_AUTH_ENABLED=true in ${ENV_FILE}"
-  log "and provide either SNOWFLAKE_USER / SNOWFLAKE_PASSWORD"
-  log "or SNOWFLAKE_USER with SNOWFLAKE_AUTHENTICATOR=externalbrowser"
-  log "so the backend can connect as that developer's Snowflake identity."
+  if [[ "$(to_lower "$(env_value AUTH_MODE)")" == "custom_oauth" ]]; then
+    log "Local auth mode: custom Snowflake OAuth."
+    log "Use the frontend login button to start the OAuth flow."
+  else
+    log "Default mode still expects deployed SPCS ingress and caller context."
+    log "For local frontend/API testing, set LOCAL_DEV_AUTH_ENABLED=true in ${ENV_FILE}"
+    log "and provide either SNOWFLAKE_USER / SNOWFLAKE_PASSWORD"
+    log "or SNOWFLAKE_USER with SNOWFLAKE_AUTHENTICATOR=externalbrowser"
+    log "so the backend can connect as that developer's Snowflake identity."
+  fi
 
   cd "${SERVICE_DIR}"
   if (( ${#reload_args[@]} > 0 )); then

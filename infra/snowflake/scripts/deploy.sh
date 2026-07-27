@@ -20,6 +20,30 @@ export SNOWFLAKE_SCHEMA_LOWER="$(printf "%s" "${SNOWFLAKE_SCHEMA}" | tr '[:upper
 export SNOWFLAKE_IMAGE_REPOSITORY_LOWER="$(printf "%s" "${SNOWFLAKE_IMAGE_REPOSITORY}" | tr '[:upper:]' '[:lower:]')"
 export IMAGE_TAG
 
+SPCS_EXECUTE_AS_CALLER_ENABLED="${SPCS_EXECUTE_AS_CALLER_ENABLED:-true}"
+SPCS_ENABLE_CUSTOM_CREDENTIALS="false"
+SNOWFLAKE_OAUTH_SECRET_MAPPINGS=""
+if [[ "${AUTH_MODE:-}" == "custom_oauth" ]]; then
+  : "${SNOWFLAKE_OAUTH_CLIENT_SECRET_OBJECT:?password secret for OAuth client credentials is required}"
+  : "${SNOWFLAKE_OAUTH_SESSION_SECRET_OBJECT:?password secret for OAuth session keys is required}"
+  SPCS_ENABLE_CUSTOM_CREDENTIALS="true"
+  SNOWFLAKE_OAUTH_SECRET_MAPPINGS="$(printf '%s\n' \
+    '      secrets:' \
+    "        - snowflakeSecret: ${SNOWFLAKE_OAUTH_CLIENT_SECRET_OBJECT}" \
+    '          secretKeyRef: username' \
+    '          envVarName: SNOWFLAKE_OAUTH_CLIENT_ID' \
+    "        - snowflakeSecret: ${SNOWFLAKE_OAUTH_CLIENT_SECRET_OBJECT}" \
+    '          secretKeyRef: password' \
+    '          envVarName: SNOWFLAKE_OAUTH_CLIENT_SECRET' \
+    "        - snowflakeSecret: ${SNOWFLAKE_OAUTH_SESSION_SECRET_OBJECT}" \
+    '          secretKeyRef: username' \
+    '          envVarName: AUTH_SESSION_SECRET' \
+    "        - snowflakeSecret: ${SNOWFLAKE_OAUTH_SESSION_SECRET_OBJECT}" \
+    '          secretKeyRef: password' \
+    '          envVarName: AUTH_SESSION_ENCRYPTION_KEY')"
+fi
+export SPCS_EXECUTE_AS_CALLER_ENABLED SPCS_ENABLE_CUSTOM_CREDENTIALS SNOWFLAKE_OAUTH_SECRET_MAPPINGS
+
 if ! command -v snowsql &>/dev/null; then
   echo "ERROR: SnowSQL ('snowsql') not found." >&2
   echo "       Install SnowSQL and ensure it is available on PATH." >&2

@@ -1,6 +1,7 @@
 "use client";
+import { AiaBox, AiaTablePagination } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { Box, TablePagination, Typography } from "@mui/material";
 import { MAPPINGS_BORDER_RADIUS } from "./mappings-ui-styles";
 
 type MappingsTableFooterProps = {
@@ -23,20 +24,20 @@ type SummaryItemProps = {
 
 function SummaryItem({ value, label, valueColor = "#111827" }: SummaryItemProps) {
   return (
-    <Box className="flex items-baseline gap-1">
-      <Typography
+    <AiaBox className="flex items-baseline gap-1">
+      <AiaText
         component="span"
         sx={{ fontSize: "13px", fontWeight: 700, color: valueColor, lineHeight: 1 }}
       >
         {value}
-      </Typography>
-      <Typography
+      </AiaText>
+      <AiaText
         component="span"
         sx={{ fontSize: "13px", fontWeight: 400, color: "#9CA3AF", lineHeight: 1 }}
       >
         {label}
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }
 
@@ -52,7 +53,7 @@ export default function MappingsTableFooter({
   onRowsPerPageChange,
 }: MappingsTableFooterProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "flex",
         flexWrap: "wrap",
@@ -67,14 +68,14 @@ export default function MappingsTableFooter({
         borderBottomRightRadius: MAPPINGS_BORDER_RADIUS,
       }}
     >
-      <Box className="flex flex-wrap items-center gap-5">
+      <AiaBox className="flex flex-wrap items-center gap-5">
         <SummaryItem value={total} label="Total" />
         <SummaryItem value={complete} label="Complete" valueColor="#16A34A" />
         <SummaryItem value={partial} label="Partial" valueColor="#EA580C" />
         <SummaryItem value={draft} label="Draft" />
-      </Box>
+      </AiaBox>
 
-      <TablePagination
+      <AiaTablePagination
         component="div"
         count={filteredCount}
         page={page}
@@ -105,6 +106,6 @@ export default function MappingsTableFooter({
           },
         }}
       />
-    </Box>
+    </AiaBox>
   );
 }

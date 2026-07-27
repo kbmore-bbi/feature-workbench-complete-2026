@@ -28,6 +28,9 @@ class CurrentPrincipal(BaseModel):
     app_persona: AppPersona
     permissions: PermissionSet
     snowflake_user_token: str
+    snowflake_role: str | None = None
+    oauth_session_id: str | None = None
+    auth_source: str = "ingress_headers"
 
 
 class SessionResponse(BaseModel):

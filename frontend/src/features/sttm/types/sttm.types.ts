@@ -4,6 +4,7 @@ import type {
   AssistantInferenceRecord,
   AssistantPreferenceState,
   AssistantSignal,
+  FIRRecommendation,
   MappingIntent,
   SemanticContextBundleResponse,
   SemanticContextItem,
@@ -97,6 +98,17 @@ export interface DerivedSource {
   semanticViewName?: string | null;
   semanticLevel?: string | null;
   upstreamHash?: string | null;
+  sourceDependencyHash?: string | null;
+  physicalViewName?: string | null;
+  generatedByRequestId?: string | null;
+  purpose?: string | null;
+  businessDescription?: string | null;
+  grain?: string | null;
+  keys?: string[];
+  outputColumns?: Array<Record<string, unknown>>;
+  columnSemantics?: Array<Record<string, unknown>>;
+  semanticProjection?: Record<string, unknown>;
+  semanticQuality?: string | null;
   lineageDepth?: number;
   alias?: string;
   drivingTableId?: string;
@@ -193,6 +205,9 @@ export type MappingSuggestion = {
   preprocessingNlRule?: string | null;
   processingOrder?: number | null;
   description?: string | null;
+  usedInferenceIds?: string[];
+  usedRecommendationIds?: string[];
+  usedLearningIds?: string[];
 };
 
 export type PendingAiMappingReview = {
@@ -208,12 +223,32 @@ export type PendingAiMappingReview = {
   preprocessingNlRule?: string | null;
   processingOrder?: number | null;
   description?: string | null;
+  usedInferenceIds?: string[];
+  usedRecommendationIds?: string[];
+  usedLearningIds?: string[];
+  mappingMode?: "source" | "constant";
+  constantValue?: string | null;
+  sourceDependencies?: string[];
+  valueBindingIds?: string[];
+  transformationClassification?: string | null;
+  precedentDecision?: string | null;
+  precedentMappingId?: string | null;
+  overrideEvidence?: string[];
 };
+
+export type StreamingStatusPhase =
+  | "preparing"
+  | "semantic"
+  | "learning"
+  | "invoking"
+  | "processing"
+  | "finalizing";
 
 export type ChatMessage = {
   id?: string;
   role: "user" | "assistant";
   content: string;
+  streamingSql?: string;
   status?: "completed" | "needs_input" | "failed";
   requestId?: string | null;
   conversationId?: string | null;
@@ -222,6 +257,9 @@ export type ChatMessage = {
   options?: string[];
   isStreaming?: boolean;
   traceSteps?: string[];
+  statusPhase?: StreamingStatusPhase | null;
+  statusMessage?: string | null;
+  elapsedSeconds?: number | null;
 };
 
 export type PendingDerivedSourceDraft = {
@@ -234,6 +272,13 @@ export type PendingDerivedSourceDraft = {
   selectedTableIds: string[];
   drivingTableId?: string | null;
   requestSummary?: string | null;
+  purpose?: string | null;
+  businessDescription?: string | null;
+  grain?: string | null;
+  keys?: string[];
+  outputColumns?: Array<Record<string, unknown>>;
+  columnSemantics?: Array<Record<string, unknown>>;
+  generatedByRequestId?: string | null;
 };
 
 export type LoadStatus = "idle" | "loading" | "success" | "error";
@@ -290,8 +335,21 @@ export type SttmBuilderContextValue = {
   assistantInferences: AssistantInferenceRecord[];
   assistantPreferences: AssistantPreferenceState;
   assistantUnreadCount: number;
+  firRecommendations: FIRRecommendation[];
+  firPrimaryQuestion: FIRRecommendation | null;
+  firRecommendationLoading: boolean;
+  firRecommendationCheckpoint: string | null;
+  firRecommendationContextKey: string | null;
   mappingIntent: MappingIntent | null;
   semanticBundleId: string | null;
+  semanticBundleHash: string | null;
+  learningContextId: string | null;
+  learningContextHash: string | null;
+  workspaceContextId: string | null;
+  workspaceContextHash: string | null;
+  workspaceContextStatus: "idle" | "updating" | "ready" | "partial" | "failed";
+  workspaceContextCacheStatus: string | null;
+  workspaceContextError: string | null;
   semanticBundleLabel: string | null;
   semanticLevel: string | null;
   semanticStatus: string | null;
@@ -307,6 +365,20 @@ export type SttmBuilderContextValue = {
   // Session
   session: UserSession | null;
 
+  // Project/Mapping identity
+  activeProjectId: string | null;
+  activeSttmId: string | null;
+  activeProjectName: string | null;
+  activeSttmName: string | null;
+  activeSnapshotId: string | null;
+
+  // Saved-workspace hydration lifecycle. Navigation and autosave stay disabled
+  // until the backend snapshot and its attributes have finished loading.
+  sessionHydrated: boolean;
+  openSttmStatus: 'idle' | 'loading' | 'success' | 'error';
+  openSttmTargetPage: string | null;
+  openSttmErrorMessage: string | null;
+
   // Loading / error
   loadState: BuilderLoadState;
   errorState: BuilderErrorState;
@@ -319,19 +391,23 @@ export type SttmBuilderContextValue = {
   // Actions — selection
   toggleSource: (tableId: string) => void;
   selectTarget: (tableId: string) => void;
+  selectAllSources: () => void;
   clearSources: () => void;
   clearTargets: () => void;
 
   // Actions — AI
   runAutoMap: () => void;
   sendChatMessage: (message: string) => void;
+  resetChatSession: () => void;
+  restoreChatSession: (payload: { messages: ChatMessage[] }) => void;
   submitChatFeedback: (payload: {
     messageId: string;
     rating: number;
     comment?: string | null;
   }) => void;
-  refreshAssistantSignals: () => void;
+  refreshAssistantSignals: (activityType?: string) => void;
   requestSemanticRefresh: () => Promise<void>;
+  refreshPreparedWorkspaceContext: () => Promise<void>;
   respondToAssistantSignal: (payload: {
     signalId: string;
     status?: "acknowledged" | "responded" | "dismissed";
@@ -383,6 +459,9 @@ export type SttmBuilderContextValue = {
   mappingSql: string;
   mappingPreviewSql: string;
   mappingSqlVariant: "original" | "optimized" | null;
+  compiledMappingSql: string;
+  compiledMappingPreviewSql: string;
+  compiledMappingContextHash: string | null;
   isPreProcessModalOpen: boolean;
   activeMappingId: string | null;
   pendingAiMappingReviews: PendingAiMappingReview[];
@@ -398,6 +477,26 @@ export type SttmBuilderContextValue = {
   setMappingSql: (sql: string) => void;
   setMappingPreviewSql: (sql: string) => void;
   setMappingSqlVariant: (variant: "original" | "optimized" | null) => void;
+  setCompiledMappingResult: (payload: {
+    generatedSql: string;
+    previewSql: string;
+    contextHash: string;
+  }) => void;
+  applyParsedSqlWorkspace: (payload: ParsedSqlWorkspaceApplyPayload) => void;
+};
+
+export type ParsedSqlWorkspaceApplyPayload = {
+  sourceTableFqns: string[];
+  targetTableFqn?: string | null;
+  relationships: JoinConfig[];
+  mappings: MappingState[];
+  derivedSources: Array<{
+    name: string;
+    sqlText?: string | null;
+    inputTables?: string[];
+  }>;
+  filterSql: string;
+  sql: string;
 };
 
 export type MappingStatus = "MAPPED" | "UNMAPPED" | "PROCESSING";
@@ -410,6 +509,8 @@ export interface MappingState {
   sourceColumn: string | null;
   sourceType: string | null;
   sourceColumns?: string[];
+  mappingMode?: "source" | "constant";
+  constantValue?: string | null;
   expression: string | null;
   rule: MappingRuleType;
   status: MappingStatus;
@@ -421,6 +522,15 @@ export interface MappingState {
   confidenceReason?: string | null;
   candidateSourceColumns?: string[];
   unmatchedReason?: string | null;
+  usedInferenceIds?: string[];
+  usedRecommendationIds?: string[];
+  usedLearningIds?: string[];
   aiSuggestedRule?: string | null;
   aiSuggestedRuleType?: string | null;
+  sourceDependencies?: string[];
+  valueBindingIds?: string[];
+  transformationClassification?: string | null;
+  precedentDecision?: string | null;
+  precedentMappingId?: string | null;
+  overrideEvidence?: string[];
 }

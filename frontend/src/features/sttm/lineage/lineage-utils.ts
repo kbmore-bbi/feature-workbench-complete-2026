@@ -202,7 +202,7 @@ function buildDerivedNode(source: DerivedSource): LineageGraphNode {
 
 function buildTargetNode(target: TableNode, columns: Column[]): LineageGraphNode {
   return {
-    id: target.tableId,
+    id: `target:${target.tableId}`,
     kind: "target",
     label: target.tableName,
     database: target.qualifiedName.split(".")[0] ?? "TARGET",
@@ -438,7 +438,7 @@ export function buildLineageGraph(params: {
   }
 
   if (selectedTarget) {
-    const targetNode = nodeById.get(selectedTarget.tableId) ?? null;
+    const targetNode = nodeById.get(`target:${selectedTarget.tableId}`) ?? null;
     const edgeMap = new Map<string, LineageGraphEdge>();
 
     for (const mapping of mappings.filter(
@@ -526,7 +526,7 @@ export function buildLineageGraph(params: {
     visibleNodeIds.add(edge.target);
   });
   if (selectedTarget?.tableId) {
-    visibleNodeIds.add(selectedTarget.tableId);
+    visibleNodeIds.add(`target:${selectedTarget.tableId}`);
   }
   const visibleNodes =
     selectedTargetColumn && visibleNodeIds.size > 0
@@ -536,7 +536,7 @@ export function buildLineageGraph(params: {
   return {
     nodes: visibleNodes,
     edges: visibleEdges,
-    targetNodeId: selectedTarget?.tableId ?? null,
+    targetNodeId: selectedTarget ? `target:${selectedTarget.tableId}` : null,
     mappedCount: mappings.filter(
       (mapping) =>
         mapping.status === "MAPPED" &&

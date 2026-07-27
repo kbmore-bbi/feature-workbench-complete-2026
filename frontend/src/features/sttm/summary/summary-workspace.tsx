@@ -1,18 +1,23 @@
 "use client";
+import { AiaAlert, AiaBox, AiaIconButton, AiaLinearProgress } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   AccountTreeOutlinedIcon,
   AutoAwesomeRoundedIcon,
   KeyboardDoubleArrowRightRoundedIcon,
+  ScienceOutlinedIcon,
   TableChartOutlinedIcon,
   TerminalRoundedIcon,
 } from "@/utils/icons";
-import { Alert, Box, IconButton, LinearProgress, Typography } from "@mui/material";
+
 import { AiaResizeHandle } from "@/components/ui/aia-resize-handle";
 import { MappingSqlPreview } from "@/components/sql";
 import { SttmLineageWorkspacePanel } from "@/features/sttm/lineage/sttm-lineage-workspace-panel";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+import { useTour } from "@/features/tour/engine/tour-context";
 import {
   buildFallbackSourceQuerySql,
   buildMappingInsertSql,
@@ -37,8 +42,13 @@ import {
   buildTableLineageMermaid,
 } from "./summary-utils";
 import { SttmSheetTab } from "./sttm-sheet-tab";
+import {
+  getCachedTestCaseGeneration,
+  TestCasesTab,
+} from "./test-cases-tab";
+import type { TestCaseGenerationRequest } from "@/types/api-contract";
 
-type SummaryTab = "sttm-sheet" | "sql-preview" | "data-lineage" | "dbt-conversion";
+type SummaryTab = "sttm-sheet" | "sql-preview" | "data-lineage" | "dbt-conversion" | "test-cases";
 
 const MIN_AI_SUMMARY_WIDTH = 280;
 const MAX_AI_SUMMARY_WIDTH = 420;
@@ -83,15 +93,25 @@ export function SummaryWorkspace() {
     mappingSql,
     mappingPreviewSql,
     mappingSqlVariant,
+    compiledMappingSql,
+    compiledMappingPreviewSql,
     drivingTableId,
     semanticLineage,
     semanticContextItems,
     semanticDatahubContext,
     sourceAttributeGroups,
     semanticBundleId,
+    activeProjectId,
+    activeSttmId,
+    activeProjectName,
   } = useSttmBuilderContext();
 
   const [tab, setTab] = useState<SummaryTab>("sttm-sheet");
+  const { notifyTourContextChanged } = useTour();
+
+  useEffect(() => {
+    notifyTourContextChanged();
+  }, [tab, notifyTourContextChanged]);
   const [excelExportLoading, setExcelExportLoading] = useState(false);
   const [excelExportStage, setExcelExportStage] = useState<string | null>(null);
   const [excelExportProgress, setExcelExportProgress] = useState(0);
@@ -99,6 +119,7 @@ export function SummaryWorkspace() {
   const [excelExportNotice, setExcelExportNotice] = useState<string | null>(null);
   const [gitPushNotice, setGitPushNotice] = useState<string | null>(null);
   const [dbtCacheVersion, setDbtCacheVersion] = useState(0);
+  const [testCaseCacheVersion, setTestCaseCacheVersion] = useState(0);
   const exportProgressTimerRef = useRef<number | null>(null);
 
   const selectedTargetQualifiedName =
@@ -287,12 +308,18 @@ export function SummaryWorkspace() {
     ],
   );
   const finalGeneratedSql = useMemo(
-    () => (mappingSql?.trim() ? mappingSql : generatedSql),
-    [generatedSql, mappingSql],
+    () => (mappingSql?.trim() ? mappingSql : compiledMappingSql?.trim() ? compiledMappingSql : generatedSql),
+    [compiledMappingSql, generatedSql, mappingSql],
   );
   const finalPreviewSql = useMemo(
-    () => (mappingPreviewSql?.trim() ? mappingPreviewSql : previewSql),
-    [mappingPreviewSql, previewSql],
+    () => (
+      mappingSql?.trim()
+        ? mappingPreviewSql?.trim() ? mappingPreviewSql : mappingSql
+        : compiledMappingPreviewSql?.trim()
+          ? compiledMappingPreviewSql
+          : mappingPreviewSql?.trim() ? mappingPreviewSql : previewSql
+    ),
+    [compiledMappingPreviewSql, mappingPreviewSql, mappingSql, previewSql],
   );
   const sqlVariantLabel = useMemo(() => {
     if (mappingSqlVariant === "optimized") {
@@ -324,6 +351,8 @@ export function SummaryWorkspace() {
   const dbtRequestPayload = useMemo(
     () =>
       buildDbtConversionRequestPayload({
+        projectId: activeProjectId,
+        sttmId: activeSttmId,
         targets,
         sources,
         relationships,
@@ -341,6 +370,8 @@ export function SummaryWorkspace() {
         generatedSql: finalGeneratedSql,
       }),
     [
+      activeProjectId,
+      activeSttmId,
       derivedSources,
       finalGeneratedSql,
       finalPreviewSql,
@@ -361,6 +392,59 @@ export function SummaryWorkspace() {
   const cachedDbtConversion = useMemo(
     () => getCachedDbtConversion(dbtRequestPayload),
     [dbtCacheVersion, dbtRequestPayload],
+  );
+  const testCaseRequestPayload = useMemo<TestCaseGenerationRequest | null>(() => {
+    if (!dbtRequestPayload) return null;
+    const validatedSql = (finalPreviewSql || finalGeneratedSql).trim();
+    if (!validatedSql) return null;
+
+    return {
+      project_id: activeProjectId,
+      sttm_id: activeSttmId,
+      project_name: activeProjectName ?? `${dbtRequestPayload.target_table.table} Test Cases`,
+      domain_name: dbtRequestPayload.domain_name ?? null,
+      target_layer: dbtRequestPayload.target_layer ?? null,
+      materialization: dbtRequestPayload.materialization ?? null,
+      source_tables: dbtRequestPayload.source_tables,
+      target_table: dbtRequestPayload.target_table,
+      relationships: dbtRequestPayload.relationships ?? [],
+      validated_sql: validatedSql,
+      mappings: dbtRequestPayload.mappings,
+      semantic_context: dbtRequestPayload.semantic_context ?? [],
+      derived_sources: selectedDerivedSourceRecords.map((source) => ({
+        derived_source_name: source.sourceName,
+        sql_text: source.sqlText ?? null,
+        semantic_view_name: source.semanticViewName ?? null,
+        base_sources: (source.baseSourceTables ?? []).map((table) => {
+          const qualifiedName = `${table.database}.${table.schema}.${table.table}`;
+          const group = sourceAttributeGroups.find(
+            (candidate) => candidate.qualifiedName === qualifiedName,
+          );
+          return {
+            table,
+            attribute_semantic_model: (group?.columns ?? []).map((column) => ({
+              name: column.name ?? null,
+              data_type: column.type ?? null,
+              is_primary_key: column.isPrimaryKey ?? false,
+              is_foreign_key: column.isForeignKey ?? false,
+            })),
+          };
+        }),
+      })),
+    };
+  }, [
+    activeProjectId,
+    activeProjectName,
+    activeSttmId,
+    dbtRequestPayload,
+    finalGeneratedSql,
+    finalPreviewSql,
+    selectedDerivedSourceRecords,
+    sourceAttributeGroups,
+  ]);
+  const cachedTestCaseGeneration = useMemo(
+    () => getCachedTestCaseGeneration(testCaseRequestPayload),
+    [testCaseCacheVersion, testCaseRequestPayload],
   );
 
   const narrative = useMemo(() => {
@@ -460,6 +544,19 @@ export function SummaryWorkspace() {
             source_update: cachedDbtConversion.result.source_update ?? null,
           }
         : null,
+      test_case_generation: cachedTestCaseGeneration?.result
+        ? {
+            status: cachedTestCaseGeneration.result.status,
+            domain_name: cachedTestCaseGeneration.result.domain_name ?? null,
+            target_layer: cachedTestCaseGeneration.result.target_layer ?? null,
+            materialization: cachedTestCaseGeneration.result.materialization ?? null,
+            target_model: cachedTestCaseGeneration.result.target_model ?? null,
+            target_table: cachedTestCaseGeneration.result.target_table ?? null,
+            test_groups: cachedTestCaseGeneration.result.test_groups,
+            seed_files: cachedTestCaseGeneration.result.seed_files,
+            test_case_document: cachedTestCaseGeneration.result.test_case_document,
+          }
+        : null,
       mappings: mappings
         .filter((mapping) => mapping.status === "MAPPED")
         .map((mapping) => ({
@@ -470,6 +567,8 @@ export function SummaryWorkspace() {
             mapping.sourceColumns && mapping.sourceColumns.length
               ? mapping.sourceColumns
               : parseSourceColumns(mapping.sourceColumn),
+          mapping_mode: mapping.mappingMode ?? "source",
+          constant_value: mapping.constantValue ?? null,
           expression: mapping.expression,
           rule: mapping.rule,
           status: mapping.status,
@@ -512,7 +611,7 @@ export function SummaryWorkspace() {
   };
 
   return (
-    <Box sx={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0, flexDirection: "column", overflow: "hidden" }}>
+    <AiaBox sx={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0, flexDirection: "column", overflow: "hidden" }}>
       <BuilderWorkspaceTabBar
         backgroundColor="#ffffff"
         tabs={[
@@ -529,6 +628,7 @@ export function SummaryWorkspace() {
             icon: <AutoAwesomeRoundedIcon sx={{ fontSize: 17 }} />,
           },
           { key: "data-lineage", label: "Data Lineage", icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
+          { key: "test-cases", label: "Test Cases", icon: <ScienceOutlinedIcon sx={{ fontSize: 17 }} /> },
         ]}
         activeTab={tab}
         onTabChange={setTab}
@@ -548,17 +648,17 @@ export function SummaryWorkspace() {
       />
 
       {excelExportStage || gitPushNotice ? (
-        <Box sx={{ px: 2, pt: 1.5, pb: 0.5, backgroundColor: "#ffffff" }}>
+        <AiaBox sx={{ px: 2, pt: 1.5, pb: 0.5, backgroundColor: "#ffffff" }}>
           {excelExportStage ? (
-            <Alert
+            <AiaAlert
               severity={excelExportError ? "error" : excelExportLoading ? "info" : "success"}
               sx={{ borderRadius: 2, alignItems: "center", mb: gitPushNotice ? 1 : 0 }}
             >
-              <Typography sx={{ fontSize: "0.82rem", fontWeight: 700, mb: 0.35 }}>
+              <AiaText sx={{ fontSize: "0.82rem", fontWeight: 700, mb: 0.35 }}>
                 {excelExportStage}
-              </Typography>
+              </AiaText>
               {!excelExportError ? (
-                <LinearProgress
+                <AiaLinearProgress
                   variant={excelExportProgress > 0 ? "determinate" : "indeterminate"}
                   value={excelExportProgress}
                   sx={{
@@ -569,32 +669,32 @@ export function SummaryWorkspace() {
                   }}
                 />
               ) : (
-                <Typography sx={{ fontSize: "0.78rem", lineHeight: 1.5 }}>
+                <AiaText sx={{ fontSize: "0.78rem", lineHeight: 1.5 }}>
                   {excelExportError}
-                </Typography>
+                </AiaText>
               )}
-            </Alert>
+            </AiaAlert>
           ) : null}
           {excelExportNotice ? (
-            <Alert severity="warning" sx={{ borderRadius: 2, mb: gitPushNotice ? 1 : 0 }}>
-              <Typography sx={{ fontSize: "0.8rem", lineHeight: 1.5 }}>
+            <AiaAlert severity="warning" sx={{ borderRadius: 2, mb: gitPushNotice ? 1 : 0 }}>
+              <AiaText sx={{ fontSize: "0.8rem", lineHeight: 1.5 }}>
                 {excelExportNotice}
-              </Typography>
-            </Alert>
+              </AiaText>
+            </AiaAlert>
           ) : null}
           {gitPushNotice ? (
-            <Alert severity="info" sx={{ borderRadius: 2 }}>
-              <Typography sx={{ fontSize: "0.8rem", lineHeight: 1.5 }}>
+            <AiaAlert severity="info" sx={{ borderRadius: 2 }}>
+              <AiaText sx={{ fontSize: "0.8rem", lineHeight: 1.5 }}>
                 {gitPushNotice}
-              </Typography>
-            </Alert>
+              </AiaText>
+            </AiaAlert>
           ) : null}
-        </Box>
+        </AiaBox>
       ) : null}
 
-      <Box sx={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
-        {tab !== "data-lineage" ? (
-        <Box
+      <AiaBox sx={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+        {tab !== "data-lineage" && tab !== "test-cases" ? (
+        <AiaBox
           sx={{
             display: "flex",
             width: aiSummaryCollapsed ? COLLAPSED_AI_SUMMARY_WIDTH : aiSummaryWidth,
@@ -609,7 +709,7 @@ export function SummaryWorkspace() {
           }}
         >
           {aiSummaryCollapsed ? (
-            <Box
+            <AiaBox
               sx={{
                 width: "100%",
                 height: "100%",
@@ -620,8 +720,8 @@ export function SummaryWorkspace() {
               }}
             >
               <SttmSidebarCollapsedRail items={[{ kind: "ai", label: "AI Summary" }]} />
-              <Box sx={{ mt: "auto", pb: 1.25 }}>
-                <IconButton
+              <AiaBox sx={{ mt: "auto", pb: 1.25 }}>
+                <AiaIconButton
                   size="small"
                   aria-label="Expand AI summary"
                   onClick={() => setAiSummaryCollapsed(false)}
@@ -639,12 +739,12 @@ export function SummaryWorkspace() {
                   }}
                 >
                   <KeyboardDoubleArrowRightRoundedIcon sx={{ fontSize: 18 }} />
-                </IconButton>
-              </Box>
-            </Box>
+                </AiaIconButton>
+              </AiaBox>
+            </AiaBox>
           ) : (
-            <Box sx={{ display: "flex", width: "100%", minWidth: 0, minHeight: 0, flex: 1 }}>
-              <Box
+            <AiaBox sx={{ display: "flex", width: "100%", minWidth: 0, minHeight: 0, flex: 1 }}>
+              <AiaBox
                 sx={{
                   minWidth: 0,
                   flex: 1,
@@ -660,36 +760,53 @@ export function SummaryWorkspace() {
                   narrative={narrative}
                   onCollapse={() => setAiSummaryCollapsed(true)}
                 />
-              </Box>
+              </AiaBox>
               <AiaResizeHandle
                 direction="horizontal"
                 onMouseDown={beginAiSummaryResize}
                 sx={{ alignSelf: "stretch", height: "100%" }}
               />
-            </Box>
+            </AiaBox>
           )}
-        </Box>
+        </AiaBox>
         ) : null}
 
-        <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          {tab !== "data-lineage" ? (
+        <AiaBox sx={{ flex: 1, minWidth: 0, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+          {tab !== "data-lineage" && tab !== "test-cases" ? (
             <SummaryStatsRow metrics={metrics} targetQualifiedName={selectedTargetQualifiedName} />
           ) : null}
 
           {tab === "sttm-sheet" ? <SttmSheetTab mappings={mappings} /> : null}
           {tab === "sql-preview" ? (
-            <MappingSqlPreview
-              readOnly
-              targetLabel={selectedTargetQualifiedName?.split(".").pop() ?? null}
-              mappedCount={metrics.mappedCount}
-              tableCount={selectedInputCount}
-              filterCount={filterCount}
-              joinCount={relationships.length}
-              sourceQuerySql={sourceQueryPreviewSql}
-              generatedSql={finalGeneratedSql}
-            />
+            <AiaBox
+              data-tour={TOUR_TARGETS.sttmSqlPreviewPanel}
+              sx={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
+            >
+              <MappingSqlPreview
+                readOnly
+                sqlTitle={mappingSql?.trim() ? "Imported SQL" : "Agent mappings · compiled SQL"}
+                targetLabel={selectedTargetQualifiedName?.split(".").pop() ?? null}
+                mappedCount={metrics.mappedCount}
+                tableCount={selectedInputCount}
+                filterCount={filterCount}
+                joinCount={relationships.length}
+                sourceQuerySql={sourceQueryPreviewSql}
+                generatedSql={finalGeneratedSql}
+              />
+            </AiaBox>
           ) : null}
-          {tab === "data-lineage" ? <SttmLineageWorkspacePanel /> : null}
+          {tab === "data-lineage" ? (
+            <AiaBox data-tour={TOUR_TARGETS.sttmDataLineagePanel} sx={{ flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden" }}>
+              <SttmLineageWorkspacePanel />
+            </AiaBox>
+          ) : null}
+          <TestCasesTab
+            active={tab === "test-cases"}
+            requestPayload={testCaseRequestPayload}
+            workbookLoading={excelExportLoading}
+            onDownloadWorkbook={() => void handleExportExcel()}
+            onCompleted={() => setTestCaseCacheVersion((current) => current + 1)}
+          />
           <DbtConversionTab
             active={tab === "dbt-conversion"}
             validatedSql={finalPreviewSql}
@@ -697,8 +814,8 @@ export function SummaryWorkspace() {
             sourceQuerySql={sourceQueryPreviewSql}
             onCompleted={() => setDbtCacheVersion((current) => current + 1)}
           />
-        </Box>
-      </Box>
-    </Box>
+        </AiaBox>
+      </AiaBox>
+    </AiaBox>
   );
 }

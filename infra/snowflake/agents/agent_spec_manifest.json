@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0",
+  "agents": {
+    "AGT_SOURCE_MAPPING": {
+      "file": "agent_spec_source_mapping.yaml",
+      "sha256": "b3a312d41aeff743a62522e7595098f9e61d9c0fd3735deb530feceb8cac91b3"
+    },
+    "AGT_TRANSFORMATION_RULE": {
+      "file": "agent_spec_transformation_rule.yaml",
+      "sha256": "216ce641971e55b921462f26e117ec08479505d232f64bb1107fc926c3b4a999"
+    },
+    "AGT_STTM_BUILDER": {
+      "file": "agent_spec_sttm_builder.yaml",
+      "sha256": "0db48c6f0d0192c3a5e3e653352181870762a2ae6cf970db0a44067b944c80f7"
+    }
+  }
+}

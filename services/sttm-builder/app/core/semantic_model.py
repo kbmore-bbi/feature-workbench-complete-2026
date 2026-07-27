@@ -1,4 +1,5 @@
 import json
+import hashlib
 import logging
 import re
 import uuid
@@ -11,7 +12,6 @@ from app.core.config import Settings
 from app.core.exceptions import SnowflakeAgentError, SnowflakeQueryError
 from app.core.snowflake import (
     SnowflakeClient,
-    build_caller_token,
     get_local_cached_client,
     get_local_rest_session_context,
     using_local_dev_auth,
@@ -39,6 +39,13 @@ class SemanticModelService:
                 "database/schema configuration."
             )
         self._table = settings.qualify_table_name(settings.snowflake_semantic_model_table)
+        self._table_views_table = settings.resolved_semantic_views_table
+        self._column_views_table = settings.resolved_semantic_column_views_table
+        self._native_views_table = settings.resolved_semantic_native_views_table
+
+    @staticmethod
+    def _sql_literal(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
 
     def submit(self, req: GenerateRequest) -> tuple[str, int]:
         """Register a pending job, return (job_id, total_tasks)."""
@@ -131,17 +138,451 @@ class SemanticModelService:
         session: Session,
         tables: list[TableRef],
     ) -> list[dict[str, Any]]:
-        records: list[dict[str, Any]] = []
-        for table in tables:
-            record = self.get_record(
-                session=session,
-                scope="TABLE",
-                db_name=table.database,
-                schema_name=table.schema,
-                table_name=table.table,
+        if not tables:
+            return []
+
+        v2_records = self._get_v2_table_view_records(session, tables)
+        self._merge_native_views(session, tables, v2_records)
+        self._merge_v2_column_views(session, tables, v2_records)
+        self._overlay_curated_versions(session, v2_records)
+        records_by_fqn = {
+            _record_fqn(record): record
+            for record in v2_records
+            if _record_fqn(record)
+        }
+        missing_tables = [
+            table
+            for table in tables
+            if table.qualified_name.upper() not in records_by_fqn
+        ]
+        if missing_tables:
+            for record in self._get_legacy_table_records(session, missing_tables):
+                fqn = _record_fqn(record)
+                if fqn and fqn not in records_by_fqn:
+                    records_by_fqn[fqn] = record
+
+        return [
+            records_by_fqn[table.qualified_name.upper()]
+            for table in tables
+            if table.qualified_name.upper() in records_by_fqn
+        ]
+
+    def _get_v2_table_view_records(
+        self,
+        session: Session,
+        tables: list[TableRef],
+    ) -> list[dict[str, Any]]:
+        """Read canonical AGT_SEMANTIC_MODEL_V2 table assets.
+
+        V2 owns generation and persistence. Request paths only read the stored
+        JSON from SEM_TABLE_VIEWS and normalize it into the legacy record shape
+        used by the bundle composer. If the client environment has not moved to
+        the V2 registry yet, this method quietly returns no records so callers
+        can fall back to TBL_SEMANTIC_MODELS.
+        """
+        if not tables:
+            return []
+
+        values_sql = ", ".join(
+            "("
+            f"{self._sql_literal(table.database.upper())}, "
+            f"{self._sql_literal(table.schema.upper())}, "
+            f"{self._sql_literal(table.table.upper())}"
+            ")"
+            for table in tables
+        )
+        try:
+            rows = session.sql(f"""
+                WITH requested(DATABASE_NAME, SCHEMA_NAME, TABLE_NAME) AS (
+                    SELECT * FROM VALUES {values_sql}
+                )
+                SELECT
+                    t.VIEW_ID,
+                    t.DATABASE_NAME,
+                    t.SCHEMA_NAME,
+                    t.TABLE_NAME,
+                    t.FQN,
+                    t.VERSION,
+                    t.STATUS,
+                    t.ROW_COUNT,
+                    t.COLUMN_COUNT,
+                    t.COLUMN_SET_HASH,
+                    t.LAST_ALTERED_TS,
+                    t.SEMANTIC_VIEW,
+                    t.GENERATED_AT,
+                    t.GENERATED_AT AS UPDATED_AT
+                FROM {self._table_views_table} AS t
+                INNER JOIN requested AS r
+                    ON UPPER(t.DATABASE_NAME) = r.DATABASE_NAME
+                   AND UPPER(t.SCHEMA_NAME) = r.SCHEMA_NAME
+                   AND UPPER(t.TABLE_NAME) = r.TABLE_NAME
+                WHERE COALESCE(UPPER(t.STATUS), 'ACTIVE') = 'ACTIVE'
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY UPPER(t.DATABASE_NAME), UPPER(t.SCHEMA_NAME), UPPER(t.TABLE_NAME)
+                    ORDER BY t.GENERATED_AT DESC
+                ) = 1
+            """).collect()
+        except Exception as exc:
+            logger.warning(
+                "V2 semantic registry query FAILED at %s (falling back to %s): %s",
+                self._table_views_table,
+                self._table,
+                exc,
             )
-            if record:
-                records.append(record)
+            return []
+
+        records: list[dict[str, Any]] = []
+        for row in rows:
+            r = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+            database = str(_pick_value(r, "DATABASE_NAME") or "").upper()
+            schema_name = str(_pick_value(r, "SCHEMA_NAME") or "").upper()
+            table_name = str(_pick_value(r, "TABLE_NAME") or "").upper()
+            semantic_payload = _json_loads_if_needed(_pick_value(r, "SEMANTIC_VIEW"))
+            registry_meta = {
+                "source": "SEM_TABLE_VIEWS",
+                "view_id": _pick_value(r, "VIEW_ID"),
+                "fqn": _pick_value(r, "FQN") or f"{database}.{schema_name}.{table_name}",
+                "version": _pick_value(r, "VERSION"),
+                "status": _pick_value(r, "STATUS"),
+                "row_count": _pick_value(r, "ROW_COUNT"),
+                "column_count": _pick_value(r, "COLUMN_COUNT"),
+                "column_set_hash": _pick_value(r, "COLUMN_SET_HASH"),
+                "last_altered_ts": _pick_value(r, "LAST_ALTERED_TS"),
+                "physical_view_name": None,
+                "yaml_hash": None,
+                "producer_agent": None,
+                "request_id": None,
+                "parent_view_id": None,
+                "change_reason": None,
+            }
+            records.append(
+                {
+                    "scope": "TABLE",
+                    "database": database,
+                    "schema_name": schema_name,
+                    "table_name": table_name or None,
+                    "attribute_name": None,
+                    "semantic_model": _normalize_v2_semantic_payload(
+                        semantic_payload,
+                        registry_meta=registry_meta,
+                    ),
+                    "generated_at": _pick_value(r, "GENERATED_AT"),
+                    "updated_at": _pick_value(r, "UPDATED_AT"),
+                    "semantic_source": "SEM_TABLE_VIEWS",
+                    "semantic_registry": registry_meta,
+                }
+            )
+        return records
+
+    def _merge_native_views(
+        self,
+        session: Session,
+        tables: list[TableRef],
+        table_records: list[dict[str, Any]],
+    ) -> None:
+        """Attach Snowflake's complete native DDL/YAML without replacing rich JSON."""
+        if not tables:
+            return
+        values_sql = ", ".join(
+            "("
+            f"{self._sql_literal(table.database.upper())}, "
+            f"{self._sql_literal(table.schema.upper())}, "
+            f"{self._sql_literal(table.table.upper())}"
+            ")"
+            for table in tables
+        )
+        try:
+            rows = session.sql(f"""
+                WITH requested(DATABASE_NAME, SCHEMA_NAME, TABLE_NAME) AS (
+                    SELECT * FROM VALUES {values_sql}
+                )
+                SELECT
+                    n.NATIVE_VIEW_ID, n.DATABASE_NAME, n.SCHEMA_NAME, n.TABLE_NAME,
+                    n.SOURCE_FQN, n.TABLE_VIEW_ID, n.VIEW_NAME, n.TARGET_DB,
+                    n.TARGET_SCHEMA, n.TARGET_FQN, n.DDL_TEXT, n.CA_YAML_MODEL,
+                    n.FACTS_COUNT, n.DIMENSIONS_COUNT, n.JOINS_COUNT,
+                    n.HAS_LOW_CONFIDENCE_JOINS, n.HAS_FLAGGED_EXCLUDED,
+                    n.PK_CONFIRMED, n.PHASE2_ENABLED, n.STATUS, n.CREATED_AT,
+                    n.GENERATED_BY, n.ERROR_MESSAGE
+                FROM {self._native_views_table} n
+                INNER JOIN requested r
+                    ON UPPER(n.DATABASE_NAME) = r.DATABASE_NAME
+                   AND UPPER(n.SCHEMA_NAME) = r.SCHEMA_NAME
+                   AND UPPER(n.TABLE_NAME) = r.TABLE_NAME
+                WHERE COALESCE(UPPER(n.STATUS), 'ACTIVE') = 'ACTIVE'
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY UPPER(n.DATABASE_NAME), UPPER(n.SCHEMA_NAME), UPPER(n.TABLE_NAME)
+                    ORDER BY n.CREATED_AT DESC
+                ) = 1
+            """).collect()
+        except Exception as exc:
+            logger.warning("Native semantic registry query failed at %s: %s", self._native_views_table, exc)
+            return
+
+        records_by_fqn = {_record_fqn(record): record for record in table_records}
+        for row in rows:
+            data = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+            fqn = ".".join(
+                str(_pick_value(data, key) or "").upper()
+                for key in ("DATABASE_NAME", "SCHEMA_NAME", "TABLE_NAME")
+            )
+            record = records_by_fqn.get(fqn)
+            if record is None:
+                database, schema_name, table_name = fqn.split(".", 2)
+                record = {
+                    "scope": "TABLE",
+                    "database": database,
+                    "schema_name": schema_name,
+                    "table_name": table_name,
+                    "attribute_name": None,
+                    "semantic_model": {"attributes": [], "relationships": {"outgoing": [], "incoming": []}},
+                    "generated_at": _pick_value(data, "CREATED_AT"),
+                    "updated_at": _pick_value(data, "CREATED_AT"),
+                    "semantic_source": "SEM_NATIVE_VIEWS",
+                    "semantic_registry": {},
+                }
+                table_records.append(record)
+                records_by_fqn[fqn] = record
+            if not isinstance(record.get("semantic_model"), dict):
+                record["semantic_model"] = {}
+            native = {
+                key.lower(): _pick_value(data, key)
+                for key in (
+                    "NATIVE_VIEW_ID", "SOURCE_FQN", "TABLE_VIEW_ID", "VIEW_NAME",
+                    "TARGET_DB", "TARGET_SCHEMA", "TARGET_FQN", "DDL_TEXT",
+                    "CA_YAML_MODEL", "FACTS_COUNT", "DIMENSIONS_COUNT", "JOINS_COUNT",
+                    "HAS_LOW_CONFIDENCE_JOINS", "HAS_FLAGGED_EXCLUDED", "PK_CONFIRMED",
+                    "PHASE2_ENABLED", "STATUS", "CREATED_AT", "GENERATED_BY", "ERROR_MESSAGE",
+                )
+            }
+            yaml_model = str(native.get("ca_yaml_model") or "")
+            model = record["semantic_model"]
+            model["native_semantic_view"] = native
+            semantic_view = model.get("semantic_view")
+            semantic_view = dict(semantic_view) if isinstance(semantic_view, dict) else {}
+            semantic_view.update({
+                "name": native.get("target_fqn"),
+                "ddl": native.get("ddl_text"),
+                "yaml": yaml_model or semantic_view.get("yaml"),
+                "yaml_hash": hashlib.sha256(yaml_model.encode("utf-8")).hexdigest() if yaml_model else semantic_view.get("yaml_hash"),
+                "native_view_id": native.get("native_view_id"),
+                "source": "SEM_NATIVE_VIEWS",
+            })
+            model["semantic_view"] = {key: value for key, value in semantic_view.items() if value is not None}
+            registry = record.get("semantic_registry")
+            if isinstance(registry, dict):
+                registry.update({
+                    "physical_view_name": native.get("target_fqn"),
+                    "native_view_id": native.get("native_view_id"),
+                    "native_table_view_id": native.get("table_view_id"),
+                    "native_semantic_source": self._native_views_table,
+                })
+
+    def _merge_v2_column_views(
+        self,
+        session: Session,
+        tables: list[TableRef],
+        table_records: list[dict[str, Any]],
+    ) -> None:
+        """Overlay the latest active SEM_COLUMN_VIEWS row onto embedded attributes."""
+        if not tables or not table_records:
+            return
+        values_sql = ", ".join(
+            "("
+            f"{self._sql_literal(table.database.upper())}, "
+            f"{self._sql_literal(table.schema.upper())}, "
+            f"{self._sql_literal(table.table.upper())}"
+            ")"
+            for table in tables
+        )
+        try:
+            rows = session.sql(f"""
+                WITH requested(DATABASE_NAME, SCHEMA_NAME, TABLE_NAME) AS (
+                    SELECT * FROM VALUES {values_sql}
+                )
+                SELECT c.DATABASE_NAME, c.SCHEMA_NAME, c.TABLE_NAME, c.COLUMN_NAME,
+                       c.DATA_TYPE, c.ATTRIBUTE_VIEW, c.VIEW_ID, c.TABLE_VIEW_ID,
+                       c.COLUMN_DESCRIPTION, c.GENERATED_AT, c.GENERATED_AT AS UPDATED_AT
+                FROM {self._column_views_table} c
+                INNER JOIN requested r
+                    ON UPPER(c.DATABASE_NAME) = r.DATABASE_NAME
+                   AND UPPER(c.SCHEMA_NAME) = r.SCHEMA_NAME
+                   AND UPPER(c.TABLE_NAME) = r.TABLE_NAME
+                WHERE COALESCE(UPPER(c.STATUS), 'ACTIVE') = 'ACTIVE'
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY UPPER(c.DATABASE_NAME), UPPER(c.SCHEMA_NAME),
+                                 UPPER(c.TABLE_NAME), UPPER(c.COLUMN_NAME)
+                    ORDER BY c.GENERATED_AT DESC
+                ) = 1
+            """).collect()
+        except Exception as exc:
+            logger.warning("Column semantic registry query failed: %s", exc)
+            return
+
+        records_by_fqn = {_record_fqn(record): record for record in table_records}
+        columns_by_fqn: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            data = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+            fqn = ".".join(
+                str(_pick_value(data, key) or "").upper()
+                for key in ("DATABASE_NAME", "SCHEMA_NAME", "TABLE_NAME")
+            )
+            payload = _json_loads_if_needed(_pick_value(data, "ATTRIBUTE_VIEW"))
+            payload = dict(payload) if isinstance(payload, dict) else {}
+            payload["name"] = str(payload.get("name") or _pick_value(data, "COLUMN_NAME") or "")
+            payload["data_type"] = str(payload.get("data_type") or _pick_value(data, "DATA_TYPE") or "VARCHAR")
+            column_description = str(_pick_value(data, "COLUMN_DESCRIPTION") or "").strip()
+            if column_description and not payload.get("description"):
+                payload["description"] = column_description
+            if payload.get("role") and not payload.get("semantic_role"):
+                payload["semantic_role"] = payload["role"]
+            payload["semantic_registry"] = {
+                "source": "SEM_COLUMN_VIEWS",
+                "view_id": _pick_value(data, "VIEW_ID"),
+                "table_view_id": _pick_value(data, "TABLE_VIEW_ID"),
+            }
+            columns_by_fqn.setdefault(fqn, []).append(payload)
+
+        for fqn, columns in columns_by_fqn.items():
+            record = records_by_fqn.get(fqn)
+            if not record:
+                continue
+            model = record.get("semantic_model")
+            if not isinstance(model, dict):
+                continue
+            embedded = {
+                str(item.get("name") or "").upper(): item
+                for item in (model.get("attributes") or [])
+                if isinstance(item, dict) and item.get("name")
+            }
+            for column in columns:
+                key = str(column.get("name") or "").upper()
+                embedded[key] = {**embedded.get(key, {}), **column}
+            model["attributes"] = list(embedded.values())
+            model["column_semantic_source"] = "SEM_COLUMN_VIEWS"
+
+    def _overlay_curated_versions(
+        self,
+        session: Session,
+        table_records: list[dict[str, Any]],
+    ) -> None:
+        fqns = [_record_fqn(record) for record in table_records if _record_fqn(record)]
+        if not fqns:
+            return
+        values = ", ".join(self._sql_literal(fqn) for fqn in fqns)
+        try:
+            rows = session.sql(f"""
+                SELECT SEMANTIC_VIEW_FQN, VERSION_ID, VERSION_LABEL, VERSION_NUMBER,
+                       BUSINESS_GLOSSARY, RELATIONSHIP_RULES, TRANSFORMATION_PATTERNS,
+                       COLUMN_SEMANTICS, QA_PAIRS, CONFIDENCE, VALIDATION_STATUS
+                FROM {self._settings.qualify_metadata_object_name('TBL_SEMANTIC_VIEW_VERSIONS')}
+                WHERE UPPER(SEMANTIC_VIEW_FQN) IN ({values})
+                  AND COALESCE(LOWER(VALIDATION_STATUS), 'unvalidated') IN (
+                      'validated', 'approved', 'active', 'confirmed'
+                  )
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY UPPER(SEMANTIC_VIEW_FQN)
+                    ORDER BY VERSION_NUMBER DESC, CREATED_AT DESC
+                ) = 1
+            """).collect()
+        except Exception as exc:
+            logger.debug("No curated semantic overlays available: %s", exc)
+            return
+
+        records_by_fqn = {_record_fqn(record): record for record in table_records}
+        for row in rows:
+            data = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+            fqn = str(_pick_value(data, "SEMANTIC_VIEW_FQN") or "").upper()
+            record = records_by_fqn.get(fqn)
+            if not record or not isinstance(record.get("semantic_model"), dict):
+                continue
+            model = record["semantic_model"]
+            glossary = _json_loads_if_needed(_pick_value(data, "BUSINESS_GLOSSARY"))
+            relationships = _json_loads_if_needed(_pick_value(data, "RELATIONSHIP_RULES"))
+            column_semantics = _json_loads_if_needed(_pick_value(data, "COLUMN_SEMANTICS"))
+            qa_pairs = _json_loads_if_needed(_pick_value(data, "QA_PAIRS"))
+            if isinstance(glossary, dict):
+                for key in ("description", "domain_summary", "business_context", "business_process", "grain"):
+                    if glossary.get(key):
+                        model[key] = glossary[key]
+                model["business_glossary"] = glossary
+            if relationships:
+                model["relationships"] = relationships
+            if isinstance(column_semantics, (list, dict)):
+                overlays = column_semantics if isinstance(column_semantics, list) else [
+                    {"name": key, **value}
+                    for key, value in column_semantics.items()
+                    if isinstance(value, dict)
+                ]
+                embedded = {
+                    str(item.get("name") or "").upper(): item
+                    for item in (model.get("attributes") or [])
+                    if isinstance(item, dict) and item.get("name")
+                }
+                for item in overlays:
+                    key = str(item.get("name") or item.get("column_name") or "").upper()
+                    if key:
+                        embedded[key] = {**embedded.get(key, {}), **item, "name": key}
+                model["attributes"] = list(embedded.values())
+            if isinstance(qa_pairs, list):
+                verified = [item for item in qa_pairs if isinstance(item, dict) and item.get("sql")]
+                if verified:
+                    model["verified_queries"] = verified
+            model["curated_semantic_version"] = {
+                "version_id": _pick_value(data, "VERSION_ID"),
+                "version_label": _pick_value(data, "VERSION_LABEL"),
+                "confidence": _pick_value(data, "CONFIDENCE"),
+                "validation_status": _pick_value(data, "VALIDATION_STATUS"),
+                "transformation_patterns": _json_loads_if_needed(_pick_value(data, "TRANSFORMATION_PATTERNS")),
+            }
+
+    def _get_legacy_table_records(
+        self,
+        session: Session,
+        tables: list[TableRef],
+    ) -> list[dict[str, Any]]:
+        if not tables:
+            return []
+
+        values_sql = ", ".join(
+            "("
+            f"{self._sql_literal(table.database.upper())}, "
+            f"{self._sql_literal(table.schema.upper())}, "
+            f"{self._sql_literal(table.table.upper())}"
+            ")"
+            for table in tables
+        )
+        rows = session.sql(f"""
+            WITH requested(DB_NAME, SCHEMA_NAME, TABLE_NAME) AS (
+                SELECT * FROM VALUES {values_sql}
+            )
+            SELECT m.SCOPE, m.DB_NAME, m.SCHEMA_NAME, m.TABLE_NAME, m.ATTRIBUTE_NAME,
+                   m.SEMANTIC_MODEL, m.GENERATED_AT, m.UPDATED_AT
+            FROM {self._table} AS m
+            INNER JOIN requested AS r
+                ON m.DB_NAME = r.DB_NAME
+               AND m.SCHEMA_NAME = r.SCHEMA_NAME
+               AND m.TABLE_NAME = r.TABLE_NAME
+            WHERE m.SCOPE = 'TABLE'
+              AND COALESCE(m.ATTRIBUTE_NAME, '') = ''
+        """).collect()
+
+        records: list[dict[str, Any]] = []
+        for row in rows:
+            r = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+            sm_raw = r["SEMANTIC_MODEL"]
+            records.append(
+                {
+                    "scope": r["SCOPE"],
+                    "database": r["DB_NAME"],
+                    "schema_name": r["SCHEMA_NAME"],
+                    "table_name": r["TABLE_NAME"] or None,
+                    "attribute_name": r["ATTRIBUTE_NAME"] or None,
+                    "semantic_model": json.loads(sm_raw) if isinstance(sm_raw, str) else sm_raw,
+                    "generated_at": r["GENERATED_AT"],
+                    "updated_at": r["UPDATED_AT"],
+                }
+            )
         return records
 
     def compute_ddl_hash(
@@ -206,7 +647,7 @@ class SemanticModelService:
             should_close_client = True
         try:
             session = sf_client.session
-            agent_client = self._build_agent_client(user_token)
+            agent_client = self._build_agent_client(sf_client, user_token)
 
             for db, schema in _unique_schemas(req.tables):
                 _run_task(
@@ -250,7 +691,11 @@ class SemanticModelService:
             if should_close_client:
                 sf_client.close()
 
-    def _build_agent_client(self, user_token: str) -> SnowflakeAgentClient:
+    def _build_agent_client(
+        self,
+        sf_client: SnowflakeClient,
+        user_token: str,
+    ) -> SnowflakeAgentClient:
         if using_local_dev_auth(self._settings, user_token):
             context = get_local_rest_session_context(self._settings)
             return SnowflakeAgentClient(
@@ -259,9 +704,11 @@ class SemanticModelService:
                 auth_mode="snowflake_token",
             )
 
+        context = sf_client.get_rest_session_context()
         return SnowflakeAgentClient(
-            token=build_caller_token(user_token),
-            host=self._settings.resolved_snowflake_host or None,
+            token=context.token,
+            host=context.host,
+            auth_mode="snowflake_token",
         )
 
 
@@ -1147,6 +1594,94 @@ def _upsert(
         return
 
     _merge_row(session, sm_table, scope, db, schema, tbl, "", semantic_model, ddl_hash)
+
+
+def _pick_value(row: dict[str, Any], name: str) -> Any:
+    for candidate in (name, name.upper(), name.lower()):
+        if candidate in row:
+            return row[candidate]
+    return None
+
+
+def _json_loads_if_needed(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+
+def _record_fqn(record: dict[str, Any]) -> str:
+    database = str(record.get("database") or "").upper()
+    schema = str(record.get("schema_name") or "").upper()
+    table = str(record.get("table_name") or "").upper()
+    if not database or not schema or not table:
+        return ""
+    return f"{database}.{schema}.{table}"
+
+
+def _normalize_v2_semantic_payload(
+    semantic_payload: Any,
+    *,
+    registry_meta: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize a rich V2 semantic registry row without losing the original.
+
+    The composer and agents expect a table-level semantic model with common
+    fields like description, attributes, relationships, and semantic_view. V2
+    stores a richer envelope. This function preserves that envelope under
+    `_v2_payload` while lifting the common fields to the top level.
+    """
+    if not isinstance(semantic_payload, dict):
+        semantic_payload = {"raw_value": semantic_payload}
+
+    model = semantic_payload.get("semantic_model")
+    normalized: dict[str, Any]
+    if isinstance(model, dict):
+        normalized = dict(model)
+    else:
+        normalized = {}
+
+    for key in (
+        "description",
+        "domain_summary",
+        "business_context",
+        "business_process",
+        "grain",
+        "relationships",
+        "relationship_candidates",
+        "metrics",
+        "verified_queries",
+        "custom_instructions",
+    ):
+        if key not in normalized and key in semantic_payload:
+            normalized[key] = semantic_payload[key]
+
+    attributes = normalized.get("attributes")
+    if not isinstance(attributes, list) or not attributes:
+        payload_attributes = semantic_payload.get("attribute_semantic_model")
+        if isinstance(payload_attributes, list):
+            normalized["attributes"] = payload_attributes
+        elif isinstance(payload_attributes, dict):
+            normalized["attributes"] = payload_attributes.get("attributes") or []
+
+    semantic_view = normalized.get("semantic_view")
+    if not isinstance(semantic_view, dict):
+        semantic_view = {}
+    if registry_meta.get("physical_view_name"):
+        semantic_view.setdefault("name", registry_meta.get("physical_view_name"))
+    if registry_meta.get("yaml_hash"):
+        semantic_view.setdefault("yaml_hash", registry_meta.get("yaml_hash"))
+    if semantic_view:
+        normalized["semantic_view"] = semantic_view
+
+    if semantic_payload.get("pk_detection") is not None:
+        normalized.setdefault("pk_detection", semantic_payload.get("pk_detection"))
+    normalized["semantic_registry"] = registry_meta
+    normalized["_v2_payload"] = semantic_payload
+    normalized["_projection_source"] = "AGT_SEMANTIC_MODEL_V2"
+    return normalized
 
 
 def _merge_row(

@@ -2,7 +2,6 @@
 import type { MouseEvent } from "react";
 import { CloseRoundedIcon, SearchRoundedIcon } from '@/utils/icons';
 
-
 import { Box, IconButton } from "@mui/material";
 import type { SxProps, Theme } from "@mui/material/styles";
 import { AiaInput } from "@/components/ui/aia-input";
@@ -12,7 +11,10 @@ type AiaSearchboxProps = {
   onChange?: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
+  /** Shows a clear button when the field has a value. */
   clearable?: boolean;
+  /** Shows the leading search icon. Off by default. */
+  showSearchIcon?: boolean;
   fullWidth?: boolean;
   size?: "small" | "medium";
   sx?: SxProps<Theme>;
@@ -25,8 +27,10 @@ const defaultWrapperSx: SxProps<Theme> = {
   display: "flex",
   alignItems: "center",
   gap: 1,
+  width: "100%",
   px: 1.5,
-  height: 40,
+  height: "40px",
+  minHeight: "40px",
   boxSizing: "border-box",
   borderRadius: "8px",
   backgroundColor: "var(--color-surface-muted, #f3f4f6)",
@@ -61,7 +65,7 @@ const defaultInputSx: SxProps<Theme> = {
   "& .MuiInputBase-input": {
     padding: "0 !important",
     margin: 0,
-    height: "20px",
+    height: "auto",
     lineHeight: "20px",
     fontSize: 13,
     color: "var(--color-text, #111827)",
@@ -78,6 +82,7 @@ export function AiaSearchbox({
   placeholder = "Search...",
   disabled = false,
   clearable = true,
+  showSearchIcon = false,
   fullWidth = true,
   size = "small",
   sx,
@@ -98,18 +103,20 @@ export function AiaSearchbox({
       onClick={onClick}
       sx={[
         defaultWrapperSx,
-        fullWidth ? { width: "100%" } : { width: "auto" },
+        ...(fullWidth === false ? [{ width: "auto" }] : []),
         ...(Array.isArray(sx) ? sx : sx ? [sx] : []),
       ]}
     >
-      <SearchRoundedIcon
-        sx={{
-          fontSize: size === "small" ? 18 : 20,
-          color: "var(--color-muted, #9ca3af)",
-          flexShrink: 0,
-          display: "block",
-        }}
-      />
+      {showSearchIcon ? (
+        <SearchRoundedIcon
+          sx={{
+            fontSize: size === "small" ? 18 : 20,
+            color: "var(--color-muted, #9ca3af)",
+            flexShrink: 0,
+            display: "block",
+          }}
+        />
+      ) : null}
       <Box sx={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center" }}>
         <AiaInput
           value={value}

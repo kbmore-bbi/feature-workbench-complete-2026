@@ -1,6 +1,6 @@
 "use client";
-
-import { Box, Typography } from "@mui/material";
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 type ProjectProgressBarProps = {
   label?: string;
@@ -14,12 +14,12 @@ export default function ProjectProgressBar({
   barColor,
 }: ProjectProgressBarProps) {
   return (
-    <Box>
-      <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 0.75 }}>
-        <Typography sx={{ fontSize: 11, color: "#94A3B8" }}>{label}</Typography>
-        <Typography sx={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{percent}%</Typography>
-      </Box>
-      <Box
+    <AiaBox>
+      <AiaBox sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mb: 0.75 }}>
+        <AiaText sx={{ fontSize: 11, color: "#94A3B8" }}>{label}</AiaText>
+        <AiaText sx={{ fontSize: 12, fontWeight: 700, color: "#111827" }}>{percent}%</AiaText>
+      </AiaBox>
+      <AiaBox
         sx={{
           height: 5,
           borderRadius: "999px",
@@ -27,7 +27,7 @@ export default function ProjectProgressBar({
           overflow: "hidden",
         }}
       >
-        <Box
+        <AiaBox
           sx={{
             width: `${percent}%`,
             height: "100%",
@@ -35,7 +35,7 @@ export default function ProjectProgressBar({
             bgcolor: barColor,
           }}
         />
-      </Box>
-    </Box>
+      </AiaBox>
+    </AiaBox>
   );
 }

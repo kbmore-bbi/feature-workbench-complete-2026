@@ -1,9 +1,11 @@
 "use client";
+import { AiaAvatar, AiaBox, AiaButton } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import Image from "next/image";
 import { EastRoundedIcon, KeyboardArrowDownRoundedIcon } from '@/utils/icons';
 
 
-import { Avatar, Box, Button, Typography } from "@mui/material";
+
 
 type BuilderHeaderProps = {
   userName?: string;
@@ -31,9 +33,9 @@ export default function BuilderHeader({
     .toUpperCase();
 
   return (
-    <Box className="flex h-[84px] w-full items-center justify-between border-b border-[#a8a8a8] bg-white px-6" sx={{backgroundColor: '#f9f9f9', borderBottomWidth: '1px'}}>
-      <Box className="flex items-center gap-3">
-         <Box className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white"> 
+    <AiaBox className="flex h-[84px] w-full items-center justify-between border-b border-[#a8a8a8] bg-white px-6" sx={{backgroundColor: '#f9f9f9', borderBottomWidth: '1px'}}>
+      <AiaBox className="flex items-center gap-3">
+        <AiaBox className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-white">
           <Image
             src="/images/focus_home_logo.svg"
             alt="STTM Builder Logo"
@@ -41,26 +43,26 @@ export default function BuilderHeader({
             height={44}
             className="object-contain"
           />
-         </Box> 
+        </AiaBox>
 
-        <Box>
-          <Typography className="text-[17px] font-bold text-[#111827]">
+        <AiaBox>
+          <AiaText className="text-[17px] font-bold text-[#111827]">
             STTM Builder
-          </Typography>
-          <Typography className="text-[12px] text-[#6B7280]">
+          </AiaText>
+          <AiaText className="text-[12px] text-[#6B7280]">
             Source To Target Mapping
-          </Typography>
-        </Box>
-      </Box>
-      <Box className="flex items-center">
+          </AiaText>
+        </AiaBox>
+      </AiaBox>
+      <AiaBox className="flex items-center">
           {steps.map((step, index) => {
             const isActive = currentStep === step.id;
             const isCompleted = currentStep > step.id;
 
             return (
-              <Box key={step.id} className="flex items-center">
-                <Box className="flex items-center gap-3">
-                  <Box
+              <AiaBox key={step.id} className="flex items-center">
+                <AiaBox className="flex items-center gap-3">
+                  <AiaBox
                     className={`flex h-8 w-8 items-center justify-center rounded-full border text-[13px] font-semibold ${
                       isActive || isCompleted
                         ? "border-[#2563EB] bg-[#2563EB] text-white"
@@ -68,9 +70,9 @@ export default function BuilderHeader({
                     }`}
                   >
                     {step.id}
-                  </Box>
+                  </AiaBox>
 
-                  <Typography
+                  <AiaText
                     className={`text-[13px] font-medium ${
                       isActive || isCompleted
                         ? "text-[#111827]"
@@ -78,35 +80,35 @@ export default function BuilderHeader({
                     }`}
                   >
                     {step.label}
-                  </Typography>
-                </Box>
+                  </AiaText>
+                </AiaBox>
 
                 {index < steps.length - 1 ? (
-                  <Box
+                  <AiaBox
                     className={`mx-4 h-[2px] w-16 rounded-full ${
                       currentStep > step.id ? "bg-[#2563EB]" : "bg-[#E5E7EB]"
                     }`}
                   />
                 ) : null}
-              </Box>
+              </AiaBox>
             );
           })}
-        </Box>
+        </AiaBox>
 
-      <Box className="flex items-center gap-4">
+      <AiaBox className="flex items-center gap-4">
 
 
-        <Button
+        <AiaButton
           variant="contained"
          endIcon={<EastRoundedIcon />}
           onClick={onProceed}
           className="rounded-xl bg-[#0073a0] px-4 py-2 normal-case shadow-none hover:bg-[#1D4ED8]"
         >
           Proceed Mapping
-        </Button>
+        </AiaButton>
 
-        <Box className="flex items-center gap-3 rounded-2xl border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
-          <Avatar
+        <AiaBox className="flex items-center gap-3 rounded-2xl border border-[#E5E7EB] bg-[#F8FAFC] px-3 py-2">
+          <AiaAvatar
             sx={{
               width: 34,
               height: 34,
@@ -117,21 +119,20 @@ export default function BuilderHeader({
             }}
           >
             {initials}
-          </Avatar>
+          </AiaAvatar>
 
-          <Box className="leading-tight">
-            <Typography className="text-[14px] font-semibold text-[#111827]">
+          <AiaBox className="leading-tight">
+            <AiaText className="text-[14px] font-semibold text-[#111827]">
               {userName}
-            </Typography>
-            <Typography className="text-[12px] text-[#6B7280]">
+            </AiaText>
+            <AiaText className="text-[12px] text-[#6B7280]">
               {role}
-            </Typography>
-          </Box>
+            </AiaText>
+          </AiaBox>
 
           {/* <KeyboardArrowDownRoundedIcon sx={{ fontSize: 20, color: "#6B7280" }} /> */}
-        </Box>
-      </Box>
-    </Box>
+        </AiaBox>
+      </AiaBox>
+    </AiaBox>
   );
 }
- 

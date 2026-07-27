@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import re
 from pathlib import Path
 
@@ -9,6 +11,7 @@ import snowflake.connector
 
 
 SOURCE_NAMESPACE = "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA"
+NAMESPACE_PLACEHOLDER = "__STTM_METADATA_NAMESPACE__"
 
 
 def load_env_file(env_path: Path) -> dict[str, str]:
@@ -23,7 +26,10 @@ def load_env_file(env_path: Path) -> dict[str, str]:
 
 
 def render_sql(raw_sql: str, namespace: str) -> str:
-    return raw_sql.replace(SOURCE_NAMESPACE, namespace)
+    return (
+        raw_sql.replace(NAMESPACE_PLACEHOLDER, namespace)
+        .replace(SOURCE_NAMESPACE, namespace)
+    )
 
 
 def render_agent_statement(agent_name: str, spec_text: str, namespace: str) -> str:
@@ -40,7 +46,7 @@ def render_agent_statement(agent_name: str, spec_text: str, namespace: str) -> s
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Deploy the AGT_STTM_BUILDER agent spec to Snowflake.")
+    parser = argparse.ArgumentParser(description="Deploy one Workbench agent spec to Snowflake.")
     parser.add_argument(
         "--env-file",
         default="services/sttm-builder/.env.local",
@@ -49,7 +55,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--spec-file",
         default="infra/snowflake/agents/agent_spec_sttm_builder.yaml",
-        help="Path to the STTM builder agent spec YAML.",
+        help="Path to the agent spec YAML.",
+    )
+    parser.add_argument(
+        "--agent-name",
+        default="AGT_STTM_BUILDER",
+        help="Snowflake agent object name.",
     )
     return parser.parse_args()
 
@@ -58,8 +69,19 @@ def main() -> None:
     args = parse_args()
     env = load_env_file(Path(args.env_file))
     namespace = f"{env['SNOWFLAKE_DATABASE']}.{env['SNOWFLAKE_SCHEMA']}"
-    spec_text = render_sql(Path(args.spec_file).read_text(), namespace)
-    statement = render_agent_statement("AGT_STTM_BUILDER", spec_text, namespace)
+    spec_path = Path(args.spec_file)
+    manifest_path = Path("infra/snowflake/agents/agent_spec_manifest.json")
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text()).get("agents") or {}
+        contract = manifest.get(args.agent_name)
+        if contract:
+            actual_hash = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+            if actual_hash != contract.get("sha256"):
+                raise SystemExit(
+                    f"{args.agent_name} spec hash does not match the deployment manifest."
+                )
+    spec_text = render_sql(spec_path.read_text(), namespace)
+    statement = render_agent_statement(args.agent_name, spec_text, namespace)
 
     connect_kwargs: dict[str, str] = {
         "account": env["SNOWFLAKE_ACCOUNT"],
@@ -82,7 +104,7 @@ def main() -> None:
     try:
         with connection.cursor() as cursor:
             cursor.execute(statement)
-        print(f"Deployed {namespace}.AGT_STTM_BUILDER")
+        print(f"Deployed {namespace}.{args.agent_name} (sha256={hashlib.sha256(spec_path.read_bytes()).hexdigest()})")
     finally:
         connection.close()
 

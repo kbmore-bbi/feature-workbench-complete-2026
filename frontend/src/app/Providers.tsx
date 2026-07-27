@@ -14,6 +14,9 @@ import { Provider as ReduxProvider } from "react-redux";
 import { store } from "@/store/store";
 import { GlobalErrorProvider } from "@/components/error/global-error-provider";
 import { AppSidebarProvider } from "@/features/layout/app-sidebar-context";
+import { AiChatLayoutProvider } from "@/features/ai-agent/ai-chat-layout-context";
+import { SttmBuilderProvider } from "@/features/sttm/context/sttm-builder-context";
+import { TourOverlay, TourProvider } from "@/features/tour/engine";
 
 type ThemeModeContextValue = {
   mode: AppThemeMode;
@@ -65,14 +68,22 @@ export default function Providers({ children }: { children: ReactNode }) {
   return (
     <ThemeModeContext.Provider value={value}>
       <ReduxProvider store={store}>
-        <ThemeProvider theme={theme}>
-          <CssBaseline />
-          <GlobalErrorProvider>
-            <AppSidebarProvider>{children}</AppSidebarProvider>
-          </GlobalErrorProvider>
-        </ThemeProvider>
+        <TourProvider>
+          <SttmBuilderProvider>
+            <AiChatLayoutProvider>
+              <ThemeProvider theme={theme}>
+                <CssBaseline />
+                <GlobalErrorProvider>
+                  <AppSidebarProvider>
+                    {children}
+                    <TourOverlay />
+                  </AppSidebarProvider>
+                </GlobalErrorProvider>
+              </ThemeProvider>
+            </AiChatLayoutProvider>
+          </SttmBuilderProvider>
+        </TourProvider>
       </ReduxProvider>
     </ThemeModeContext.Provider>
   );
 }
-

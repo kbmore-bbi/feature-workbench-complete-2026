@@ -1,0 +1,60 @@
+import type { TourDefinition } from "../types/tour.types";
+import { TOUR_TARGETS, tourSelector } from "../constants/tour-targets";
+
+export const newMappingTour: TourDefinition = {
+  id: "new-mapping",
+  label: "New Mapping",
+  description: "Choose how to create a source-to-target mapping.",
+  routes: ["/dashboard", "/projects", "/mappings"],
+  steps: [
+    {
+      id: "new-mapping-intro",
+      screen: "Screen 3",
+      title: "New Mapping",
+      body: "Choose how you want to create a new source-to-target mapping. Select one of the three options below before proceeding.",
+      placement: "center",
+      isModal: true,
+      requiresState: "modal-open",
+    },
+    {
+      id: "new-mapping-sql-upload",
+      screen: "Screen 3",
+      title: "SQL Upload",
+      body: "Allows the user to upload an existing SQL file. The AI automatically parses the query and generates a source-to-target mapping from it. Best suited for users who already have a SQL transformation script.",
+      target: tourSelector(TOUR_TARGETS.newMappingSqlUpload),
+      placement: "bottom",
+      isModal: true,
+      requiresState: "modal-open",
+    },
+    {
+      id: "new-mapping-excel-upload",
+      screen: "Screen 3",
+      title: "Upload Excel File",
+      body: "Allows the user to import an existing mapping spreadsheet. The STTM grid is automatically populated from the uploaded file. Best suited for users who have an existing mapping document in Excel format.",
+      target: tourSelector(TOUR_TARGETS.newMappingExcelUpload),
+      placement: "bottom",
+      isModal: true,
+      requiresState: "modal-open",
+    },
+    {
+      id: "new-mapping-manual",
+      screen: "Screen 3",
+      title: "Build Mapping Manually",
+      body: "Allows the user to build a mapping from scratch using the guided step-by-step workflow. The user selects source and target tables, defines joins, and maps columns — with AI assistance available throughout.",
+      target: tourSelector(TOUR_TARGETS.newMappingManual),
+      placement: "bottom",
+      isModal: true,
+      requiresState: "modal-open",
+    },
+    {
+      id: "new-mapping-cancel",
+      screen: "Screen 3",
+      title: "Cancel",
+      body: "Closes the New Mapping modal without creating a mapping. The user is returned to the previous screen.",
+      target: tourSelector(TOUR_TARGETS.newMappingCancel),
+      placement: "top",
+      isModal: true,
+      requiresState: "modal-open",
+    },
+  ],
+};

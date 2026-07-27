@@ -1,4 +1,6 @@
 "use client";
+import { AiaBox, AiaTooltip } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import { KeyboardArrowDownRoundedIcon, KeyboardArrowRightRoundedIcon } from '@/utils/icons';
 import {
   useCallback,
@@ -9,27 +11,30 @@ import {
   type ReactNode,
 } from "react";
 
-
-import { Box, Tooltip, Typography } from "@mui/material";
 import {
   AIA_RESIZE_HANDLE_THICKNESS,
   AiaResizeHandle,
 } from "@/components/ui/aia-resize-handle";
+import { SIDEBAR_NAV_TOKENS } from "@/config/sidebar-nav-tokens";
+import { sttmSidebarIconSlotSx } from "@/features/sttm/layout/sttm-sidebar-icon-slot";
 
 export type ResizableSidebarSection = {
   id: string;
   title: string;
   content: ReactNode;
   icon?: ReactNode;
+  tourTarget?: string;
 };
 
 type ResizableSidebarSectionsProps = {
   sections: ResizableSidebarSection[];
   defaultExpanded?: Record<string, boolean>;
   minBodyHeight?: number;
+  /** When the whole sidebar rail is icon-only; section headers still show icon + label when false. */
+  sidebarCollapsed?: boolean;
 };
 
-const SECTION_HEADER_HEIGHT = 32;
+const SECTION_HEADER_HEIGHT = SIDEBAR_NAV_TOKENS.itemHeight;
 const RESIZE_HANDLE_HEIGHT = AIA_RESIZE_HANDLE_THICKNESS;
 const MIN_BODY_HEIGHT_DEFAULT = 72;
 
@@ -37,6 +42,7 @@ export function ResizableSidebarSections({
   sections,
   defaultExpanded,
   minBodyHeight = MIN_BODY_HEIGHT_DEFAULT,
+  sidebarCollapsed = false,
 }: ResizableSidebarSectionsProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => {
@@ -191,7 +197,7 @@ export function ResizableSidebarSections({
   };
 
   return (
-    <Box
+    <AiaBox
       ref={containerRef}
       sx={{
         flex: 1,
@@ -207,7 +213,7 @@ export function ResizableSidebarSections({
         const bodyHeight = bodyHeights[index] ?? minBodyHeight;
 
         return (
-          <Box
+          <AiaBox
             key={section.id}
             sx={{
               display: "flex",
@@ -216,11 +222,13 @@ export function ResizableSidebarSections({
               flexShrink: 0,
             }}
           >
-            <Box
+            <AiaBox
               onClick={() => toggleSection(section.id)}
+              data-tour={section.tourTarget}
               sx={{
-                height: SECTION_HEADER_HEIGHT,
-                px: 1.5,
+                height: "var(--aia-sidebar-nav-item-height)",
+                minHeight: "var(--aia-sidebar-nav-item-height)",
+                px: "var(--aia-sidebar-nav-padding-x)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
@@ -229,76 +237,94 @@ export function ResizableSidebarSections({
                 backgroundColor: "#fafafa",
                 borderBottom: "1px solid #eef2f7",
                 userSelect: "none",
+                overflow: "visible",
               }}
             >
-              <Box
+              <AiaBox
                 sx={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 0.75,
+                  gap: "var(--aia-sidebar-nav-icon-gap)",
                   minWidth: 0,
                   flex: 1,
-                  justifyContent: isExpanded ? "flex-start" : "center",
+                  justifyContent: sidebarCollapsed ? "center" : "flex-start",
+                  overflow: "visible",
                 }}
               >
                 {section.icon ? (
-                  isExpanded ? (
+                  sidebarCollapsed ? (
+                    <AiaTooltip title={section.title} placement="right" arrow>
+                      <AiaBox sx={sttmSidebarIconSlotSx}>
+                        {section.icon}
+                      </AiaBox>
+                    </AiaTooltip>
+                  ) : (
                     <>
-                      {section.icon}
-                      <Typography
+                      <AiaBox
                         sx={{
-                          fontSize: 10,
-                          fontWeight: 700,
-                          color: "var(--color-muted)",
-                          textTransform: "uppercase",
-                          letterSpacing: "0.05em",
+                          ...sttmSidebarIconSlotSx,
+                          color: "var(--aia-sidebar-nav-icon-color)",
+                          "& .MuiSvgIcon-root": {
+                            color: "inherit",
+                          },
+                        }}
+                      >
+                        {section.icon}
+                      </AiaBox>
+                      <AiaText
+                        sx={{
+                          fontSize: "var(--aia-sidebar-nav-font-size)",
+                          fontWeight: "var(--aia-sidebar-nav-font-weight)",
+                          lineHeight: "var(--aia-sidebar-nav-line-height)",
+                          color: "var(--aia-sidebar-nav-text-color)",
+                          textTransform: "capitalize",
                           overflow: "hidden",
                           textOverflow: "ellipsis",
                           whiteSpace: "nowrap",
                         }}
                       >
                         {section.title}
-                      </Typography>
+                      </AiaText>
                     </>
-                  ) : (
-                    <Tooltip title={section.title} placement="right">
-                      <Box
-                        sx={{
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                        }}
-                      >
-                        {section.icon}
-                      </Box>
-                    </Tooltip>
                   )
                 ) : (
-                  <Typography
+                  <AiaText
                     sx={{
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: "var(--color-muted)",
-                      textTransform: "uppercase",
-                      letterSpacing: "0.05em",
+                      fontSize: "var(--aia-sidebar-nav-font-size)",
+                      fontWeight: "var(--aia-sidebar-nav-font-weight)",
+                      lineHeight: "var(--aia-sidebar-nav-line-height)",
+                      color: "var(--aia-sidebar-nav-text-color)",
+                      textTransform: "capitalize",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                     }}
                   >
                     {section.title}
-                  </Typography>
+                  </AiaText>
                 )}
-              </Box>
+              </AiaBox>
               {isExpanded ? (
-                <KeyboardArrowDownRoundedIcon sx={{ fontSize: 16, color: "var(--color-muted)" }} />
+                <KeyboardArrowDownRoundedIcon
+                  sx={{
+                    fontSize: "var(--aia-sidebar-nav-icon-size)",
+                    color: "var(--aia-sidebar-nav-icon-color)",
+                    flexShrink: 0,
+                  }}
+                />
               ) : (
-                <KeyboardArrowRightRoundedIcon sx={{ fontSize: 16, color: "var(--color-muted)" }} />
+                <KeyboardArrowRightRoundedIcon
+                  sx={{
+                    fontSize: "var(--aia-sidebar-nav-icon-size)",
+                    color: "var(--aia-sidebar-nav-icon-color)",
+                    flexShrink: 0,
+                  }}
+                />
               )}
-            </Box>
+            </AiaBox>
 
             {isExpanded ? (
-              <Box
+              <AiaBox
                 className="sttm-scroll-pane"
                 sx={{
                   height: bodyHeight,
@@ -311,7 +337,7 @@ export function ResizableSidebarSections({
                 }}
               >
                 {section.content}
-              </Box>
+              </AiaBox>
             ) : null}
 
             {index < sections.length - 1 ? (
@@ -326,9 +352,9 @@ export function ResizableSidebarSections({
                 }}
               />
             ) : null}
-          </Box>
+          </AiaBox>
         );
       })}
-    </Box>
+    </AiaBox>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
+import { AiaBox } from '@/components/ui';
+import { ReactFlowProvider } from "@xyflow/react";
 
-import { Box } from "@mui/material";
 import LineageTab from "./lineage-tab";
 
 /**
@@ -9,17 +10,20 @@ import LineageTab from "./lineage-tab";
  */
 export function SttmLineageWorkspacePanel() {
   return (
-    <Box
+    <AiaBox
       sx={{
         flex: 1,
         minWidth: 0,
         minHeight: 0,
+        height: "100%",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
       }}
     >
-      <LineageTab />
-    </Box>
+      <ReactFlowProvider>
+        <LineageTab />
+      </ReactFlowProvider>
+    </AiaBox>
   );
 }

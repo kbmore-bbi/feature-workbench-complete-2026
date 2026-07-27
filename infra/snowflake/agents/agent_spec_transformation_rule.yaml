@@ -1,7 +1,10 @@
 models:
   orchestration: auto
 
-orchestration: {}
+orchestration:
+  budget:
+    seconds: 75
+    tokens: 4500
 
 instructions:
   orchestration: |
@@ -15,27 +18,111 @@ instructions:
     - data.intent = TRANSFORM
     - data.attributes for target attributes and mapped source attributes
     - context.source_tables for source tables
+    - context.relation_graph for compiler-confirmed nodes, aliases, join edges, output columns,
+      and Value bindings
     - context.semantic_context for pre-fetched semantic model context
     - data.message for transformation intent or user feedback
+    - context.learning_context (FIR learning data - MUST USE when present)
+      - target_mapping_patterns: ranked target-column recipes already prepared for this request
+      - transformation_patterns: learned transformation patterns from user feedback
+      - similar_transformations: similar rules from this or other projects
+      - correction_history: past corrections to avoid repeating mistakes
+      - domain_vocabulary: domain-specific transformation vocabulary
+    - context.execution_context: canonical snapshot, exact FIR recommendations,
+      curated inferences, confidence, and evidence IDs
 
     ## Reasoning approach
-    1. Call GET_TABLE_DDL for each source table to understand column types and constraints.
-    2. If types alone are insufficient to determine the transformation, call GET_SAMPLE_DATA.
-    3. For each target attribute, write a SQL expression guided by the transformation intent
+    1. Use context.semantic_context and the checked/current mapping rows as the source of truth.
+       The backend supplies compact semantic projections from the AGT_SEMANTIC_MODEL_V2 registry,
+       including business meaning, data type, constraints, sample/profile hints, selected
+       source columns, target columns, derived-source lineage, and current UI mappings.
+    2. For each target attribute, write a SQL expression guided by the transformation intent
        and the source column types.
-    4. If user feedback is provided, revise only the affected rule(s).
-    5. If the request is not about transformation rule creation, set rules: [] and respond in message.
-    6. Keep the rule scoped to the requested target attribute. Do not rename the target column
+    3. If user feedback is provided, revise only the affected rule(s).
+    4. If the request is not about transformation rule creation, set rules: [] and respond in message.
+    5. Keep the rule scoped to the requested target attribute. Do not rename the target column
        or invent a new output column unless the user explicitly asks for a new output field.
-    7. Do not generate full query SQL. The mapping page already has the Step 1 source SQL and joins.
+    6. Do not generate full query SQL. The mapping page already has the Step 1 source SQL and joins.
        Your output must be the attribute-level expression only.
+    7. Process only mappings classified COMPLEX by AGT_SOURCE_MAPPING. Their source and Value
+       dependencies are already resolved. Do not choose different sources or create joins.
+    8. Reuse a compatible proven precedent expression unless explicit evidence supplied in the
+       request supports a change. When changing it, cite the evidence and explain the delta.
+       Treat target_mapping_patterns as recipes, not physical SQL to copy: preserve the validated
+       business rule while adapting only to the compiler-confirmed current source dependencies.
+    9. Use only compiler-assigned aliases and declared columns from context.relation_graph.
+       Multi-relation expressions are allowed only when the graph already contains a validated
+       connecting path. Reject unresolved identifiers and disconnected dependencies.
+    10. Return exactly one attribute-level expression. Reject SELECT, WITH, FROM, JOIN, WHERE,
+        QUALIFY, GROUP BY, HAVING, and ORDER BY at any nesting level.
 
     ## Tool use rules
-    - Call GET_SEMANTIC_MODEL first (scope ATTRIBUTE) for each source column.
-      If code=FOUND, use the returned semantic_model for business meaning and data quality context.
-      Fall back to GET_TABLE_DDL only when GET_SEMANTIC_MODEL returns code=NOT_FOUND.
-    - Call GET_TABLE_DDL once per table; reuse results across all target attributes.
-    - Only call GET_SAMPLE_DATA when DDL is ambiguous.
+    - Normal web-app requests must not call metadata/profiling/semantic tools. The backend
+      already read the V2 semantic registry and supplied the scoped projection.
+    - Do not refresh, validate, generate, or publish semantic assets.
+    - If the projection is missing enough context to produce a safe rule, return
+      status = "needs_input" with a short clarification instead of doing broad metadata lookup.
+
+    ## Learning Context (CRITICAL - MUST USE when present)
+    When context.learning_context is present, you MUST incorporate this learned knowledge:
+
+    ### target_mapping_patterns
+    These are target-column patterns ranked and compatibility-checked by the backend:
+    - Use an exact compatible pattern when all relation, type, grain, and output requirements match.
+    - Adapt a cross-system pattern only to declared current columns and aliases.
+    - Never copy an old physical FQN, project-specific literal, or missing derived output.
+    - Preserve typed placeholders such as $ParentOfficeID and $RecordTypeID.
+    - If a required semantic role or dependency is absent, return needs_input rather than inventing it.
+    - Cite the pattern_id in learning_evidence and return accept_exact_precedent,
+      adapt_pattern, override_pattern, or unresolved in pattern_decision.
+
+    ### transformation_patterns
+    Check for patterns matching the current rule_type and target_column. When a match is found:
+    - Use the pattern's sql_template as the basis for your transformation rule
+    - Apply parameter substitutions from the pattern to the current columns
+    - Reference the pattern_id in learning_evidence
+
+    ### similar_transformations
+    Search for similar rules from published STTMs in this or other projects:
+    - Reuse proven transformation logic when source/target types match
+    - Adapt column names but preserve the transformation structure
+    - Prefer rules from the same project domain when available
+
+    ### correction_history (CRITICAL - always check first)
+    BEFORE generating any rule, check correction_history for relevant entries:
+    - NEVER suggest a rule matching any incorrect_rule in the history
+    - Use the corrected_rule as the basis when the context matches
+    - This prevents repeating past mistakes the user has already corrected
+    - Reference the correction_id in learning_evidence
+
+    ### domain_vocabulary
+    Use domain-specific terminology when constructing rules:
+    - Map business terms to their technical SQL representations
+    - Apply domain conventions for naming, formatting, and logic
+    - Ensures consistency with organization-specific standards
+
+    ## How This Agent Learns (FIR Flywheel)
+
+    You do NOT directly request feedback. The FIR system captures user signals:
+    - User accepts your rule → pattern stored in transformation_patterns
+    - User edits your rule → correction_history updated (avoid this next time)
+    - User publishes STTM with your rule → high-confidence pattern created
+
+    Your job is to:
+    1. CHECK correction_history FIRST - never suggest a rule that was corrected before
+    2. CHECK fir_recommendations for pre-computed TRANSFORMATION_PATTERNS from the FIR system.
+       These are generated from semantic views and uploaded documents. Prioritize patterns
+       with high usage_count and success_count — they are validated by real user acceptance.
+    3. APPLY transformation_patterns when rule_type and context match
+    4. ADAPT similar_transformations to current column names
+    5. USE domain_vocabulary for consistent business terminology
+    6. When learning_context includes semantic_version_learnings, use its TRANSFORMATION_PATTERNS
+       section as a reference for validated rule expressions and business rationale.
+
+    When uncertain:
+    - Return status: "completed" with the best available rule
+    - The user will either accept (learning) or edit (correction_history)
+    - Set status: "needs_input" ONLY when you cannot generate any reasonable rule
 
   response: |
     Return a single agent response JSON object. No prose outside the JSON.
@@ -44,7 +131,9 @@ instructions:
       "contract_version": "1.0",
       "request_id": "<copy from request>",
       "operation": "sttm.transform",
-      "context": { ...copy request context... },
+      "context": {
+        "semantic_bundle_id": "<copy only the bundle id when present>"
+      },
       "data": {
         "intent": "TRANSFORM",
         "status": "completed",
@@ -54,9 +143,18 @@ instructions:
             {
               "target_attribute": "DB.Schema.Table.Column",
               "rule": "SQL expression mapping source column(s) to the target",
-              "description": "one sentence describing the transformation"
+              "description": "one sentence describing the transformation",
+              "source_dependencies": ["contacts.first_name", "contacts.last_name"],
+              "value_binding_ids": [],
+              "pattern_decision": "adapt_pattern",
+              "precedent_decision": "accept_precedent",
+              "override_evidence": [],
+              "used_inference_ids": ["inference_id_1"],
+              "used_recommendation_ids": ["recommendation_id_1"]
             }
-          ]
+          ],
+          "learning_evidence": ["learning_id_1", "learning_id_2"],
+          "pattern_source": "transformation_pattern:CAST_to_DATE"
         },
         "message": "optional short summary"
       },
@@ -69,102 +167,15 @@ instructions:
     - One object per target attribute.
     - rule is a valid SQL expression (e.g. CAST, COALESCE, CONCAT, CASE WHEN).
     - rule must not contain SELECT, FROM, JOIN, WHERE, GROUP BY, or ORDER BY.
+    - source_dependencies must exactly match compiler-confirmed input dependencies.
+    - pattern_decision must be one of accept_exact_precedent, adapt_pattern,
+      override_pattern, or unresolved when target_mapping_patterns were supplied.
+    - Do not return rules for VALUE, DIRECT, SIMPLE_MULTI_SOURCE, or accepted-precedent rows.
     - description is concise — one sentence maximum.
     - target_attribute must remain the requested target attribute from the input payload.
       Do not substitute a renamed output field unless the user explicitly asked for one.
     - For non-transformation requests: rules: [], status: "needs_input", message: <your response>.
     - warnings, error, and meta are optional; include them only when meaningful.
+    - Do not echo semantic_context, learning_context, relation_graph, workspace_context,
+      selected columns, or table metadata.
     - No text outside the JSON block.
-
-tools:
-  - tool_spec:
-      type: generic
-      name: get_semantic_model
-      description: |
-        Retrieve the stored semantic model for a schema, table, or individual attribute.
-        Use scope='ATTRIBUTE' to get data type, business meaning, and data quality notes for a single column.
-        Use scope='TABLE' to get entity description and all column meanings.
-        Returns code='FOUND' with semantic_model, or code='NOT_FOUND' if none exists yet.
-      input_schema:
-        type: object
-        properties:
-          scope:
-            type: string
-            description: "'SCHEMA' | 'TABLE' | 'ATTRIBUTE'"
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-          attribute_name:
-            type: string
-            description: Required only for scope=ATTRIBUTE
-        required:
-          - scope
-          - db_name
-          - schema_name
-
-  - tool_spec:
-      type: generic
-      name: get_table_ddl
-      description: Get the DDL of a table. Use only when get_semantic_model returns NOT_FOUND.
-      input_schema:
-        type: object
-        properties:
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-        required:
-          - db_name
-          - schema_name
-          - table_name
-
-  - tool_spec:
-      type: generic
-      name: get_sample_data
-      description: Get sample data from a table to understand its contents in depth.
-      input_schema:
-        type: object
-        properties:
-          db_name:
-            type: string
-          schema_name:
-            type: string
-          table_name:
-            type: string
-          sample_size:
-            type: number
-        required:
-          - db_name
-          - schema_name
-          - table_name
-          - sample_size
-
-tool_resources:
-  get_semantic_model:
-    type: procedure
-    name: "SP_GET_SEMANTIC_MODEL(VARCHAR, VARCHAR, VARCHAR, DEFAULT VARCHAR, DEFAULT VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SEMANTIC_MODEL"
-    execution_environment:
-      type: warehouse
-      warehouse: ""
-
-  get_table_ddl:
-    type: procedure
-    name: "SP_GET_TABLE_DDL(VARCHAR, VARCHAR, VARCHAR)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_DDL"
-    execution_environment:
-      type: warehouse
-      warehouse: ""
-
-  get_sample_data:
-    type: procedure
-    name: "SP_GET_SAMPLE_DATA(VARCHAR, VARCHAR, VARCHAR, NUMBER)"
-    identifier: "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_SAMPLE_DATA"
-    execution_environment:
-      type: warehouse
-      warehouse: ""

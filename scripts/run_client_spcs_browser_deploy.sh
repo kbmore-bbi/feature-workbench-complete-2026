@@ -76,7 +76,17 @@ if [[ -n "${SNOWFLAKE_CLI_VERSION}" ]]; then
   bootstrap_args+=(--snowflake-cli-version "${SNOWFLAKE_CLI_VERSION}")
 fi
 
-"${ROOT_DIR}/scripts/bootstrap_client_spcs_tools.sh" "${bootstrap_args[@]}"
+if (( ${#bootstrap_args[@]} > 0 )); then
+  "${ROOT_DIR}/scripts/bootstrap_client_spcs_tools.sh" "${bootstrap_args[@]}"
+else
+  "${ROOT_DIR}/scripts/bootstrap_client_spcs_tools.sh"
+fi
+
+if [[ -f "${ENV_FILE}" ]]; then
+  if grep -Eq '^SNOWFLAKE_PASSWORD=.+$' "${ENV_FILE}" || grep -Eq '^SNOWFLAKE_AUTHENTICATOR=snowflake$' "${ENV_FILE}"; then
+    FORCE_RECREATE_CONNECTION="true"
+  fi
+fi
 
 configure_args=(--env-file "${ENV_FILE}")
 if [[ "${FORCE_RECREATE_CONNECTION}" == "true" ]]; then

@@ -20,6 +20,7 @@ Creates the STTM metadata schema objects in the configured Snowflake database/sc
 - dbt tool procedures
 - sub-agent procedures
 - Cortex agents
+- FIR tables, streams, procedures, unified Cortex Search, task graph, and grants
 
 Examples:
   $0
@@ -73,4 +74,9 @@ echo "Bootstrapping STTM metadata infra into ${SNOWFLAKE_DATABASE}.${SNOWFLAKE_S
   --role "${SNOWFLAKE_ROLE:-}" \
   --warehouse "${SNOWFLAKE_WAREHOUSE:-}" \
   --database "${SNOWFLAKE_DATABASE}" \
-  --schema "${SNOWFLAKE_SCHEMA}"
+  --schema "${SNOWFLAKE_SCHEMA}" \
+  --semantic-database "${SNOWFLAKE_SEMANTIC_VIEWS_DATABASE:-${SNOWFLAKE_DATABASE}}" \
+  --semantic-schema "${SNOWFLAKE_SEMANTIC_VIEWS_SCHEMA:-${SNOWFLAKE_SCHEMA}}" \
+  --semantic-table-object "${SNOWFLAKE_SEMANTIC_TABLE_VIEWS_TABLE:-LATEST_TABLE_VIEWS}" \
+  --semantic-column-object "${SNOWFLAKE_SEMANTIC_COLUMN_VIEWS_TABLE:-LATEST_COLUMN_VIEWS}" \
+  --semantic-native-object "${SNOWFLAKE_SEMANTIC_NATIVE_VIEWS_TABLE:-LATEST_NATIVE_VIEWS}"

@@ -13,7 +13,7 @@ usage() {
 Usage: $0 [--env-file path] [--force-recreate]
 
 Creates or reuses a Snowflake CLI connection for client-side SPCS deployment
-using browser/externalbrowser authentication.
+using either username/password or browser/externalbrowser authentication.
 
 Examples:
   $0
@@ -76,7 +76,17 @@ for var_name in "${required_vars[@]}"; do
   fi
 done
 
-SNOWFLAKE_AUTHENTICATOR="${SNOWFLAKE_AUTHENTICATOR:-externalbrowser}"
+SNOWFLAKE_AUTHENTICATOR="${SNOWFLAKE_AUTHENTICATOR:-}"
+SNOWFLAKE_PASSWORD="${SNOWFLAKE_PASSWORD:-}"
+USE_PASSWORD_AUTH="false"
+
+if [[ -n "${SNOWFLAKE_PASSWORD}" ]]; then
+  USE_PASSWORD_AUTH="true"
+fi
+
+if [[ "${USE_PASSWORD_AUTH}" != "true" && -z "${SNOWFLAKE_AUTHENTICATOR}" ]]; then
+  SNOWFLAKE_AUTHENTICATOR="externalbrowser"
+fi
 
 if "${SNOW_BIN}" connection test -c "${SNOWFLAKE_CONNECTION}" >/dev/null 2>&1; then
   if [[ "${FORCE_RECREATE}" != "true" ]]; then
@@ -98,18 +108,30 @@ if "${SNOW_BIN}" connection list --format JSON 2>/dev/null | grep -q "\"${SNOWFL
 fi
 
 echo "Creating Snow CLI connection '${SNOWFLAKE_CONNECTION}'"
-"${SNOW_BIN}" connection add \
-  --connection-name "${SNOWFLAKE_CONNECTION}" \
-  --account "${SNOWFLAKE_ACCOUNT}" \
-  --user "${SNOWFLAKE_USER}" \
-  --role "${SNOWFLAKE_ROLE}" \
-  --warehouse "${SNOWFLAKE_WAREHOUSE}" \
-  --database "${SNOWFLAKE_DATABASE}" \
-  --schema "${SNOWFLAKE_SCHEMA}" \
-  --authenticator "${SNOWFLAKE_AUTHENTICATOR}" \
-  --default \
-  --no-interactive \
+connection_add_args=(
+  connection add
+  --connection-name "${SNOWFLAKE_CONNECTION}"
+  --account "${SNOWFLAKE_ACCOUNT}"
+  --user "${SNOWFLAKE_USER}"
+  --role "${SNOWFLAKE_ROLE}"
+  --warehouse "${SNOWFLAKE_WAREHOUSE}"
+  --database "${SNOWFLAKE_DATABASE}"
+  --schema "${SNOWFLAKE_SCHEMA}"
+  --default
+  --no-interactive
   --format TABLE
+)
+
+if [[ "${USE_PASSWORD_AUTH}" == "true" ]]; then
+  connection_add_args+=(--password "${SNOWFLAKE_PASSWORD}")
+  if [[ -n "${SNOWFLAKE_AUTHENTICATOR}" && "${SNOWFLAKE_AUTHENTICATOR}" != "snowflake" ]]; then
+    connection_add_args+=(--authenticator "${SNOWFLAKE_AUTHENTICATOR}")
+  fi
+else
+  connection_add_args+=(--authenticator "${SNOWFLAKE_AUTHENTICATOR}")
+fi
+
+"${SNOW_BIN}" "${connection_add_args[@]}"
 
 echo
 echo "Testing connection '${SNOWFLAKE_CONNECTION}'"

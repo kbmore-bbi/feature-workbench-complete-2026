@@ -4,10 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import io
 import os
 import sys
 
 import snowflake.connector
+from snowflake.connector.util_text import split_statements
 
 
 def connect():
@@ -24,11 +26,37 @@ def connect():
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--query", required=True)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--query")
+    source.add_argument("--file")
     parser.add_argument("--format", choices=["plain", "tsv"], default="plain")
     args = parser.parse_args()
 
     with connect() as connection:
+        if args.file:
+            with open(args.file, encoding="utf-8") as sql_file:
+                sql_text = sql_file.read()
+            with connection.cursor() as cursor:
+                for index, (statement, is_put_get) in enumerate(
+                    split_statements(io.StringIO(sql_text)),
+                    start=1,
+                ):
+                    if not statement.strip():
+                        continue
+                    try:
+                        cursor.execute(
+                            statement,
+                            _is_put_get=is_put_get,
+                        )
+                    except Exception:
+                        preview = " ".join(statement.strip().split())[:240]
+                        print(
+                            f"Failed SQL statement {index}: {preview}",
+                            file=sys.stderr,
+                        )
+                        raise
+            return 0
+
         with connection.cursor() as cursor:
             cursor.execute(args.query)
             if cursor.description is None:
@@ -51,4 +79,3 @@ if __name__ == "__main__":
     except Exception as exc:  # pragma: no cover
         print(str(exc), file=sys.stderr)
         raise
-

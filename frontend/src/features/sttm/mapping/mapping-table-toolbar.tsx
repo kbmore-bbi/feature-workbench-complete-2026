@@ -1,6 +1,8 @@
 'use client';
+import { AiaBox, AiaChip } from '@/components/ui';
 
-import { Box, Chip, Typography } from '@mui/material';
+import { AiaText } from '@/components/ui/aia-text';
+
 
 type MappingTableToolbarProps = {
   rowCount: number;
@@ -14,7 +16,7 @@ export default function MappingTableToolbar({
   joinCount,
 }: MappingTableToolbarProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         px: 2,
         py: 1.25,
@@ -27,26 +29,19 @@ export default function MappingTableToolbar({
         bgcolor: '#fff',
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+      <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
         {joinCount > 0 && (
-          <Chip
+          <AiaChip
             size="small"
+            color="primary"
             label={`${joinCount} join${joinCount === 1 ? '' : 's'} active`}
-            sx={{
-              height: 26,
-              fontSize: '0.72rem',
-              fontWeight: 600,
-              bgcolor: '#eff6ff',
-              color: '#1d4ed8',
-              border: '1px solid #bfdbfe',
-            }}
           />
         )}
-      </Box>
+      </AiaBox>
 
-      <Typography sx={{ fontSize: '0.75rem', color: '#9ca3af', fontWeight: 500 }}>
+      <AiaText sx={{ fontSize: '0.75rem', color: '#9ca3af', fontWeight: 500 }}>
         Mapping table
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }

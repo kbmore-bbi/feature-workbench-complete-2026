@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from app.api.deps import get_conversation_service
+from app.api.deps import get_conversation_light_service, get_conversation_service
 from app.auth.models import AppPersona, CurrentPrincipal, PermissionSet
 from app.main import app
 from app.schema.contracts import build_response_envelope
@@ -119,10 +119,10 @@ def test_conversation_invoke_redacts_message_and_attaches_trace(monkeypatch) -> 
     assert service.captured_decision.trace_id
 
 
-def test_conversation_search_returns_standard_envelope() -> None:
+def test_conversation_search_returns_standard_envelope(monkeypatch) -> None:
     client = TestClient(app)
     service = _FakeConversationService()
-    app.dependency_overrides[get_conversation_service] = lambda: service
+    app.dependency_overrides[get_conversation_light_service] = lambda: service
 
     try:
         response = client.post(

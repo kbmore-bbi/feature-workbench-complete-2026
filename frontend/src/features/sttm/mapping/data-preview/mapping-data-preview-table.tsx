@@ -1,17 +1,9 @@
 'use client';
+import { AiaBox, AiaPaper, AiaTableBody, AiaTableCellPrimitive, AiaTableContainer, AiaTableHead, AiaTablePrimitive, AiaTableRowPrimitive } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useMemo } from 'react';
-import {
-  Box,
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  Typography,
-} from '@mui/material';
+
 import type { MappingState } from '@/features/sttm/types/sttm.types';
 import {
   buildMappingDataPreview,
@@ -45,7 +37,7 @@ export function MappingDataPreviewTable({
   const mappingCount = mappedCount ?? mappedRows.length;
 
   return (
-    <Box
+    <AiaBox
       sx={{
         flex: 1,
         minHeight: 0,
@@ -61,8 +53,8 @@ export function MappingDataPreviewTable({
         mappedCount={mappingCount}
       />
 
-      <TableContainer
-        component={Paper}
+      <AiaTableContainer
+        component={AiaPaper}
         elevation={0}
         sx={{
           flex: 1,
@@ -72,34 +64,34 @@ export function MappingDataPreviewTable({
           overflow: 'auto',
         }}
       >
-        <Table
+        <AiaTablePrimitive
           stickyHeader
           size="small"
           sx={{
             minWidth: 980,
           }}
         >
-          <TableHead>
-            <TableRow>
-              <TableCell sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, width: 48 }}>#</TableCell>
-              <TableCell sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 150 }}>
+          <AiaTableHead>
+            <AiaTableRowPrimitive>
+              <AiaTableCellPrimitive sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, width: 48 }}>#</AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 150 }}>
                 Target Attr
-              </TableCell>
-              <TableCell sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 170 }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 170 }}>
                 Source Column
-              </TableCell>
-              <TableCell sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 140 }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 140 }}>
                 Source Value
-              </TableCell>
-              <TableCell sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 160 }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 160 }}>
                 Transformed Value
-              </TableCell>
-              <TableCell sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 280 }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...DATA_PREVIEW_HEADER_CELL_SX, minWidth: 280 }}>
                 Description
-              </TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
+              </AiaTableCellPrimitive>
+            </AiaTableRowPrimitive>
+          </AiaTableHead>
+          <AiaTableBody>
             {mappedRows.map((row, index) => {
               const preview = buildMappingDataPreview(row);
               const sourceColumn =
@@ -120,33 +112,33 @@ export function MappingDataPreviewTable({
               const description = row.description ?? autoDescription ?? '—';
 
               return (
-                <TableRow key={row.id} hover>
-                  <TableCell sx={{ ...DATA_PREVIEW_BODY_CELL_SX, color: '#94a3b8', fontSize: '0.78rem' }}>
+                <AiaTableRowPrimitive key={row.id} hover>
+                  <AiaTableCellPrimitive sx={{ ...DATA_PREVIEW_BODY_CELL_SX, color: '#94a3b8', fontSize: '0.78rem' }}>
                     {index + 1}
-                  </TableCell>
-                  <TableCell sx={DATA_PREVIEW_BODY_CELL_SX}>
+                  </AiaTableCellPrimitive>
+                  <AiaTableCellPrimitive sx={DATA_PREVIEW_BODY_CELL_SX}>
                     <MappingDataPreviewAttributeLabel
                       name={row.targetColumn}
                       dataType={row.targetType}
                     />
-                  </TableCell>
-                  <TableCell sx={DATA_PREVIEW_BODY_CELL_SX}>
+                  </AiaTableCellPrimitive>
+                  <AiaTableCellPrimitive sx={DATA_PREVIEW_BODY_CELL_SX}>
                     {sourceColumnName ? (
                       <MappingDataPreviewAttributeLabel
                         name={sourceColumnName}
                         dataType={row.sourceType ?? row.targetType}
                       />
                     ) : (
-                      <Typography sx={{ fontSize: '0.78rem', color: '#94a3b8' }}>—</Typography>
+                      <AiaText sx={{ fontSize: '0.78rem', color: '#94a3b8' }}>—</AiaText>
                     )}
-                  </TableCell>
-                  <TableCell sx={DATA_PREVIEW_BODY_CELL_SX}>
+                  </AiaTableCellPrimitive>
+                  <AiaTableCellPrimitive sx={DATA_PREVIEW_BODY_CELL_SX}>
                     <MappingDataPreviewValuePill
                       value={preview.sourceValue}
                       variant="source"
                     />
-                  </TableCell>
-                  <TableCell sx={DATA_PREVIEW_BODY_CELL_SX}>
+                  </AiaTableCellPrimitive>
+                  <AiaTableCellPrimitive sx={DATA_PREVIEW_BODY_CELL_SX}>
                     {preview.hasTransform ? (
                       <MappingDataPreviewValuePill
                         value={preview.transformedValue}
@@ -154,31 +146,31 @@ export function MappingDataPreviewTable({
                         ruleLabel={preview.ruleLabel}
                       />
                     ) : (
-                      <Typography sx={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600 }}>
+                      <AiaText sx={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600 }}>
                         --
-                      </Typography>
+                      </AiaText>
                     )}
-                  </TableCell>
-                  <TableCell sx={DATA_PREVIEW_BODY_CELL_SX}>
-                    <Typography sx={{ fontSize: '0.76rem', color: '#475569', lineHeight: 1.45 }}>
+                  </AiaTableCellPrimitive>
+                  <AiaTableCellPrimitive sx={DATA_PREVIEW_BODY_CELL_SX}>
+                    <AiaText sx={{ fontSize: '0.76rem', color: '#475569', lineHeight: 1.45 }}>
                       {description}
-                    </Typography>
-                  </TableCell>
-                </TableRow>
+                    </AiaText>
+                  </AiaTableCellPrimitive>
+                </AiaTableRowPrimitive>
               );
             })}
             {!mappedRows.length ? (
-              <TableRow>
-                <TableCell colSpan={6} sx={{ py: 5, textAlign: 'center' }}>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>
+              <AiaTableRowPrimitive>
+                <AiaTableCellPrimitive colSpan={6} sx={{ py: 5, textAlign: 'center' }}>
+                  <AiaText sx={{ fontSize: '0.82rem', color: '#64748b' }}>
                     Map at least one target column to preview transformed sample values.
-                  </Typography>
-                </TableCell>
-              </TableRow>
+                  </AiaText>
+                </AiaTableCellPrimitive>
+              </AiaTableRowPrimitive>
             ) : null}
-          </TableBody>
-        </Table>
-      </TableContainer>
-    </Box>
+          </AiaTableBody>
+        </AiaTablePrimitive>
+      </AiaTableContainer>
+    </AiaBox>
   );
 }

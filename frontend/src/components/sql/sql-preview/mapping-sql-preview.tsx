@@ -1,8 +1,8 @@
 'use client';
 
-import type { ReactNode } from 'react';
-import CircularProgress from '@mui/material/CircularProgress';
-import { Box, Button, Paper } from '@mui/material';
+import { useState, type ReactNode } from 'react';
+import { AiaBox, AiaButton, AiaCircularProgress, AiaPaper } from '@/components/ui';
+
 import { SqlPreviewHeader } from './sql-preview-header';
 import { SqlPreviewMetaBox } from './sql-preview-meta-box';
 import { SqlPreviewSection } from './sql-preview-section';
@@ -10,6 +10,7 @@ import { SqlPreviewSqlBlock } from './sql-preview-sql-block';
 import { SQL_PREVIEW_WORKSPACE_BG } from './sql-preview-styles';
 
 export type MappingSqlPreviewProps = {
+  sqlTitle?: string;
   targetLabel?: string | null;
   mappedCount: number;
   tableCount: number;
@@ -28,9 +29,14 @@ export type MappingSqlPreviewProps = {
   runLabel?: string;
   readOnly?: boolean;
   statusPanel?: ReactNode;
+  editableSql?: string;
+  onEditableSqlChange?: (sql: string) => void;
+  onReviewSqlChanges?: () => void;
+  reviewSqlChangesLoading?: boolean;
 };
 
 export function MappingSqlPreview({
+  sqlTitle = 'Generated SQL',
   targetLabel,
   mappedCount,
   tableCount,
@@ -49,9 +55,14 @@ export function MappingSqlPreview({
   runLabel = 'Run Preview',
   readOnly = false,
   statusPanel,
+  editableSql,
+  onEditableSqlChange,
+  onReviewSqlChanges,
+  reviewSqlChangesLoading = false,
 }: MappingSqlPreviewProps) {
+  const [editing, setEditing] = useState(false);
   return (
-    <Box
+    <AiaBox
       sx={{
         flex: 1,
         width: '100%',
@@ -63,7 +74,7 @@ export function MappingSqlPreview({
         flexDirection: 'column',
       }}
     >
-      <Paper
+      <AiaPaper
         elevation={0}
         sx={{
           height: '100%',
@@ -77,7 +88,7 @@ export function MappingSqlPreview({
         }}
       >
         <SqlPreviewHeader
-          title="Generated SQL"
+          title={sqlTitle}
           subtitle={targetLabel ?? undefined}
           stats={[
             { id: 'mapped', label: `${mappedCount} MAPPED` },
@@ -89,58 +100,65 @@ export function MappingSqlPreview({
           actions={
             !readOnly ? (
               <>
-                <Button
-                  variant="contained"
+                <AiaButton
+                  variant="outlined"
+                  size="small"
+                  onClick={() => {
+                    if (editing) {
+                      onReviewSqlChanges?.();
+                    } else {
+                      // Imported/saved mappings already provide canonical raw
+                      // SQL. Do not replace it with generated preview SQL when
+                      // edit mode starts. A brand-new mapping may explicitly
+                      // use the generated SQL as its initial draft.
+                      if (!(editableSql ?? '').trim()) {
+                        onEditableSqlChange?.(generatedSql);
+                      }
+                      setEditing(true);
+                    }
+                  }}
+                  disabled={editing && (reviewSqlChangesLoading || !(editableSql ?? '').trim())}
+                  customColor="#e2e8f0"
+                  customBorderColor="rgba(148,163,184,0.28)"
+                >
+                  {editing
+                    ? reviewSqlChangesLoading
+                      ? 'Parsing...'
+                      : 'Review Changes'
+                    : 'Edit SQL'}
+                </AiaButton>
+                <AiaButton
+                  variant="outlined"
                   size="small"
                   disabled={validateDisabled ?? mappedCount === 0}
                   onClick={onValidate}
-                  startIcon={validateLoading ? <CircularProgress size={14} color="inherit" /> : undefined}
-                  sx={{
-                    minWidth: 118,
-                    borderRadius: '12px',
-                    textTransform: 'none',
-                    fontWeight: 700,
-                    bgcolor: '#133d5b',
-                    boxShadow: 'none',
-                    '&:hover': {
-                      bgcolor: '#1d4f74',
-                      boxShadow: 'none',
-                    },
-                  }}
+                  startIcon={validateLoading ? <AiaCircularProgress size={14} color="inherit" /> : undefined}
+                  customColor="#e2e8f0"
+                  customBorderColor="rgba(148,163,184,0.28)"
                 >
                   {validateLabel}
-                </Button>
-                <Button
+                </AiaButton>
+                <AiaButton
                   variant="outlined"
                   size="small"
                   disabled={runDisabled}
                   onClick={onRunPreview}
-                  startIcon={runLoading ? <CircularProgress size={14} color="inherit" /> : undefined}
-                  sx={{
-                    minWidth: 118,
-                    borderRadius: '12px',
-                    textTransform: 'none',
-                    fontWeight: 700,
-                    borderColor: 'rgba(148,163,184,0.28)',
-                    color: '#e2e8f0',
-                    '&.Mui-disabled': {
-                      borderColor: 'rgba(148,163,184,0.14)',
-                      color: 'rgba(226,232,240,0.45)',
-                    },
-                  }}
+                  startIcon={runLoading ? <AiaCircularProgress size={14} color="inherit" /> : undefined}
+                  customColor="#e2e8f0"
+                  customBorderColor="rgba(148,163,184,0.28)"
                 >
                   {runLabel}
-                </Button>
+                </AiaButton>
               </>
             ) : null
           }
         />
 
-        <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 2.5, py: 2.25 }}>
+        <AiaBox sx={{ flex: 1, minHeight: 0, overflow: 'auto', px: 2.5, py: 2.25 }}>
           {statusPanel ? (
-            <Box sx={{ mb: 2 }}>
+            <AiaBox sx={{ mb: 2 }}>
               {statusPanel}
-            </Box>
+            </AiaBox>
           ) : null}
 
           <SqlPreviewSection
@@ -159,9 +177,13 @@ export function MappingSqlPreview({
             ]}
           />
 
-          <SqlPreviewSqlBlock sql={generatedSql} />
-        </Box>
-      </Paper>
-    </Box>
+          <SqlPreviewSqlBlock
+            sql={editing ? editableSql ?? generatedSql : generatedSql}
+            readOnly={!editing}
+            onChange={onEditableSqlChange}
+          />
+        </AiaBox>
+      </AiaPaper>
+    </AiaBox>
   );
 }

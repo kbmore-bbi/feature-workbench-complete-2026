@@ -1,3 +1,20 @@
+export interface TextStyleToken {
+  fontSize: number;
+  fontWeight: number;
+  lineHeight: number;
+  color: string;
+}
+
+export interface ButtonSizeToken {
+  fontSize: number;
+  fontWeight: number;
+  paddingTop: number;
+  paddingBottom: number;
+  paddingX: number;
+  minHeight: number;
+  letterSpacing: number;
+}
+
 export interface ClientConfig {
   clientId: string;
 
@@ -49,14 +66,19 @@ export interface ClientConfig {
 
       button: {
         primary: string;
+        primaryText: string;
+        primaryHover: string;
         secondary: string;
+        secondaryText: string;
         secondaryHover: string;
         inverse: string;
+        inverseText: string;
         inverseHover: string;
       }
 
       border: string;
       header: string;
+      headerText: string;
 
       states: {
         success: string;
@@ -81,10 +103,40 @@ export interface ClientConfig {
       lg: number;
       xl: number;
     };
+    typography: {
+      pageTitle: TextStyleToken;
+      sectionTitle: TextStyleToken;
+      subtitle: TextStyleToken;
+      cardTitle: TextStyleToken;
+      body: TextStyleToken;
+      secondaryText: TextStyleToken;
+      caption: TextStyleToken;
+    };
+    button: {
+      large: ButtonSizeToken;
+      medium: ButtonSizeToken;
+      small: ButtonSizeToken;
+    };
     layout: {
       headerHeight: number;
       sidebarWidth: number;
       rightPanelWidth: number;
+      /** Shared nav row styling for app sidebar and STTM section headers. */
+      sidebarNav: {
+        itemHeight: number;
+        fontSize: number;
+        fontWeight: number;
+        lineHeight: number;
+        iconSize: number;
+        /** Min square slot for section header icons (prevents glyph clipping). */
+        iconSlotSize: number;
+        iconGap: number;
+        paddingX: number;
+        textColor: string;
+        iconColor: string;
+        activeTextColor: string;
+        activeIconColor: string;
+      };
     };
   };
 

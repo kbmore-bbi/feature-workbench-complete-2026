@@ -29,6 +29,11 @@ _IDENTIFIER_KEYS = {
     "semantic_view_name",
     "semantic_bundle_id",
     "semantic_bundle_label",
+    # These values have already been parsed by the request schema before
+    # preflight runs. Treating the numeric suffix of an ISO timestamp as a
+    # phone number corrupts the structured request and makes re-validation
+    # fail before any model is invoked.
+    "captured_at",
 }
 
 

@@ -1,20 +1,30 @@
 import { createSlice, createAsyncThunk, createAction, type PayloadAction } from "@reduxjs/toolkit";
 import { getApiErrorMessage } from "@/api/axiosInstance";
 import { conversationService } from "@/services/conversationService";
+import { recommendationService } from "@/services/recommendationService";
 import { dbService } from "@/services/dbService";
 import { workbenchService, type TableRef } from "@/services/workbenchService";
+import {
+  preparedContextService,
+  type PreparedWorkspaceContext,
+} from "@/services/preparedContextService";
 import { authService } from "@/services/authService";
+import { getSttm } from "@/services/projectService";
 import type {
   AssistantInferenceRecord,
   AssistantPreferenceState,
   AssistantSignal,
+  AssistantSignalStatus,
+  AutoMappingReview,
   ConversationEnvelopeResponse,
   MappingIntent,
+  RelationGraphContext,
   SemanticLevel,
   SemanticContextItem,
   SourceMappingResult,
   STTMBuilderEnvelopeResponse,
   TransformationResult,
+  FIRRecommendation,
 } from "@/types/api-contract";
 import type { UserSession } from "@/types/user";
 import type {
@@ -26,6 +36,8 @@ import type {
   DatabaseNode,
   DerivedSource,
   JoinConfig,
+  MappingRuleType,
+  MappingStatus,
   MappingSuggestion,
   PendingDerivedSourceDraft,
   RuleCondition,
@@ -35,11 +47,16 @@ import type {
   MappingState,
   MappingWorkspaceSnapshot,
   PendingAiMappingReview,
+  ParsedSqlWorkspaceApplyPayload,
 } from "@/features/sttm/types/sttm.types";
 import {
-  getSelectedSourceTables,
-  getSelectedTargetTable,
+  resolveSelectedSourceTables,
+  resolveSelectedTargetTable,
 } from "@/features/sttm/shared/sttm-selection-utils";
+import {
+  buildWorkbenchContextSnapshot,
+  type WorkbenchCheckpoint,
+} from "@/features/sttm/context/workbench-context";
 
 export {
   collectSelectedSourceQualifiedNames,
@@ -52,9 +69,77 @@ function getErrorMessage(error: unknown, fallback: string): string {
   return getApiErrorMessage(error, fallback);
 }
 
+function isSemanticRelationshipCompatibilityError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const payload = (error as { payload?: { code?: string; message?: string } }).payload;
+  return (
+    payload?.code === "SEMANTIC_RELATIONSHIP_INVALID" ||
+    String(payload?.message ?? "").includes("cannot be represented safely in Cortex Analyst")
+  );
+}
+
 function makeTableRef(qualifiedName: string): TableRef {
   const [database, schema, table] = qualifiedName.split(".", 3);
   return { database, schema, table };
+}
+
+function snapshotTableFqn(value: unknown): string | null {
+  if (typeof value === "string") return value || null;
+  if (!value || typeof value !== "object") return null;
+  const ref = value as Record<string, unknown>;
+  const direct = ref.qualified_name ?? ref.qualifiedName ?? ref.fqn;
+  if (typeof direct === "string" && direct) return direct;
+  const parts = [ref.database, ref.schema, ref.table].map((part) => String(part ?? ""));
+  return parts.every(Boolean) ? parts.join(".") : null;
+}
+
+function normalizeSnapshotRelationships(
+  value: unknown,
+  relationLabels: Map<string, string> = new Map(),
+): JoinConfig[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((raw, index) => {
+    if (!raw || typeof raw !== "object") return [];
+    const item = raw as Record<string, unknown>;
+    const rawLeft = item.left_table ?? item.leftTableId ?? item.left_relation_id;
+    const rawRight = item.right_table ?? item.rightTableId ?? item.right_relation_id;
+    const leftKey = typeof rawLeft === "string" ? rawLeft : "";
+    const rightKey = typeof rawRight === "string" ? rawRight : "";
+    const leftTableId = relationLabels.get(leftKey) ?? snapshotTableFqn(rawLeft);
+    const rightTableId = relationLabels.get(rightKey) ?? snapshotTableFqn(rawRight);
+    if (!leftTableId || !rightTableId) return [];
+    const conditions = Array.isArray(item.conditions)
+      ? item.conditions.flatMap((rawCondition) => {
+          if (!rawCondition || typeof rawCondition !== "object") return [];
+          const condition = rawCondition as Record<string, unknown>;
+          const leftColumn = String(condition.left_column ?? condition.leftColumn ?? "");
+          const rightColumn = String(condition.right_column ?? condition.rightColumn ?? "");
+          if (!leftColumn || !rightColumn) return [];
+          return [{
+            leftColumn,
+            rightColumn,
+            operator: String(condition.operator ?? "="),
+          }];
+        })
+      : [];
+    if (!conditions.length) return [];
+    const rawJoinType = String(item.join_type ?? item.joinType ?? "INNER").toUpperCase();
+    const joinType = (["INNER", "LEFT", "RIGHT", "FULL"].includes(rawJoinType)
+      ? rawJoinType
+      : "INNER") as JoinConfig["joinType"];
+    return [{
+      id: String(item.id ?? item.constraint_name ?? item.constraintName ?? `snapshot_join_${index}`),
+      leftTableId,
+      rightTableId,
+      joinType,
+      constraintName: String(item.constraint_name ?? item.constraintName ?? "") || undefined,
+      source: String(item.source ?? "USER_DEFINED").toUpperCase() === "FOREIGN_KEY"
+        ? "FOREIGN_KEY"
+        : "USER_DEFINED",
+      locked: Boolean(item.locked ?? false),
+      conditions,
+    }];
+  });
 }
 
 function cloneBranch(branch: DatabaseNode[]): DatabaseNode[] {
@@ -119,21 +204,36 @@ function buildRelationshipPayload(joins: JoinConfig[]) {
         !!join.rightTableId &&
         !!join.conditions?.length
     )
-    .map((join) => ({
-      left_table: makeTableRef(join.leftTableId as string),
-      right_table: makeTableRef(join.rightTableId as string),
-      constraint_name: join.constraintName ?? null,
-      join_type: join.joinType ?? "INNER",
-      source: join.source ?? "USER_DEFINED",
-      locked: join.locked ?? false,
-      conditions: (join.conditions ?? [])
-        .filter((condition) => !!condition.leftColumn && !!condition.rightColumn)
-        .map((condition) => ({
-          left_column: condition.leftColumn as string,
-          right_column: condition.rightColumn as string,
-          operator: condition.operator ?? "=",
-        })),
-    }))
+    .flatMap((join) => {
+      const leftParts = String(join.leftTableId).split(".", 3);
+      const rightParts = String(join.rightTableId).split(".", 3);
+      // Derived-source IDs are valid relation-graph nodes but are not physical
+      // TableRef values. Their joins stay in relation_graph and must not be
+      // copied into this legacy physical-table compatibility field.
+      if (
+        leftParts.length !== 3 ||
+        rightParts.length !== 3 ||
+        leftParts.some((part) => !part) ||
+        rightParts.some((part) => !part)
+      ) {
+        return [];
+      }
+      return [{
+        left_table: makeTableRef(join.leftTableId as string),
+        right_table: makeTableRef(join.rightTableId as string),
+        constraint_name: join.constraintName ?? null,
+        join_type: join.joinType ?? "INNER",
+        source: join.source ?? "USER_DEFINED",
+        locked: join.locked ?? false,
+        conditions: (join.conditions ?? [])
+          .filter((condition) => !!condition.leftColumn && !!condition.rightColumn)
+          .map((condition) => ({
+            left_column: condition.leftColumn as string,
+            right_column: condition.rightColumn as string,
+            operator: condition.operator ?? "=",
+          })),
+      }];
+    })
     .filter((join) => join.conditions.length > 0);
 }
 
@@ -141,35 +241,143 @@ function getSelectedDerivedSourceIds(derivedSources: DerivedSource[]): string[] 
   return derivedSources.filter((source) => source.isSelected).map((source) => source.id);
 }
 
+function stableRelationAlias(seed: string, index: number): string {
+  const normalized = seed
+    .split(".")
+    .pop()
+    ?.replace(/[^A-Za-z0-9_]/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toLowerCase();
+  return `${normalized || "source"}_${index + 1}`;
+}
+
+function buildRelationGraph(
+  sourceTables: ReturnType<typeof resolveSelectedSourceTables>,
+  derivedSources: DerivedSource[],
+  joins: JoinConfig[],
+  mappings: MappingState[],
+): RelationGraphContext {
+  const selectedDerived = derivedSources.filter((source) => source.isSelected);
+  const nodes: RelationGraphContext["nodes"] = [
+    ...sourceTables.map((table, index) => ({
+      relation_id: table.qualifiedName,
+      kind: "PHYSICAL_TABLE" as const,
+      alias: stableRelationAlias(table.qualifiedName, index),
+      table: makeTableRef(table.qualifiedName),
+      output_columns: table.columnItems?.map((column) => ({
+        name: column.name,
+        data_type: column.type,
+        is_primary_key: column.isPrimaryKey,
+      })) ?? [],
+    })),
+    ...selectedDerived.map((source, index) => ({
+      relation_id: source.id,
+      kind: "DERIVED_SOURCE" as const,
+      alias: source.alias || stableRelationAlias(source.sourceName || source.id, sourceTables.length + index),
+      derived_source_id: source.id,
+      physical_view_name: source.physicalViewName ?? null,
+      sql_text: source.sqlText ?? null,
+      output_columns: source.outputColumns ?? source.previewColumns?.map((column) => ({
+        name: column.name,
+        data_type: column.dataType,
+        is_primary_key: column.isPrimaryKey,
+      })) ?? [],
+      column_semantics: source.columnSemantics ?? [],
+      grain: source.grain ?? null,
+      keys: source.keys ?? [],
+      dependency_hash: source.sourceDependencyHash ?? source.upstreamHash ?? null,
+      parent_relation_ids: source.parentDerivedSourceIds ?? source.derivedSourceIds ?? [],
+    })),
+  ];
+  const nodeIds = new Set(nodes.map((node) => node.relation_id));
+  const edges = joins
+    .filter(
+      (join) =>
+        !!join.leftTableId &&
+        !!join.rightTableId &&
+        nodeIds.has(join.leftTableId) &&
+        nodeIds.has(join.rightTableId) &&
+        !!join.conditions?.length,
+    )
+    .map((join, index) => ({
+      edge_id: join.id ?? `relation-edge-${index + 1}`,
+      left_relation_id: join.leftTableId as string,
+      right_relation_id: join.rightTableId as string,
+      join_type: join.joinType ?? "INNER",
+      provenance: join.source ?? "USER_DEFINED",
+      validation_status: join.locked ? "validated" : "selected",
+      conditions: (join.conditions ?? [])
+        .filter((condition) => condition.leftColumn && condition.rightColumn)
+        .map((condition) => ({
+          left_column: condition.leftColumn as string,
+          right_column: condition.rightColumn as string,
+          operator: condition.operator ?? "=",
+        })),
+    }))
+    .filter((edge) => edge.conditions.length > 0);
+  const value_bindings = mappings
+    .filter((mapping) => mapping.mappingMode === "constant" && mapping.constantValue != null)
+    .map((mapping) => ({
+      binding_id: mapping.valueBindingIds?.[0] ?? mapping.id,
+      value: String(mapping.constantValue),
+      data_type: mapping.targetType || null,
+      is_placeholder: String(mapping.constantValue).trim().startsWith("$"),
+      allow_project_specific_value: false,
+      resolution_status: String(mapping.constantValue).trim().startsWith("$")
+        ? "placeholder_contract"
+        : "resolved",
+    }));
+  return { nodes, edges, value_bindings };
+}
+
+function findTargetDescription(
+  semanticItems: SemanticContextItem[] | null | undefined,
+  targetFqn: string | null,
+  targetColumn: string,
+): string | null {
+  if (!targetFqn) return null;
+  const item = semanticItems?.find((candidate) => {
+    const table = candidate.table;
+    return `${table.database}.${table.schema}.${table.table}`.toUpperCase() === targetFqn.toUpperCase();
+  });
+  const model = item?.semantic_model;
+  if (!model || typeof model !== "object") return null;
+  const attributes = (model as { attributes?: unknown }).attributes;
+  if (!Array.isArray(attributes)) return null;
+  const attribute = attributes.find(
+    (candidate) =>
+      candidate &&
+      typeof candidate === "object" &&
+      String((candidate as Record<string, unknown>).name ?? "").toUpperCase() === targetColumn.toUpperCase(),
+  ) as Record<string, unknown> | undefined;
+  const description = attribute?.business_meaning ?? attribute?.summary ?? attribute?.description;
+  return typeof description === "string" && description.trim() ? description.trim() : null;
+}
+
 type SemanticRefreshResult = Awaited<ReturnType<typeof dbService.refreshSemanticContext>>;
 
-function isAnalystReadyLevel(level?: string | null): boolean {
-  return level === "L2_ANALYST_READY" || level === "L3_MAPPING_ENRICHED";
-}
-
-function isAnalystSqlText(text: string): boolean {
-  return [
-    "sql",
-    "query",
-    "count",
-    "sum",
-    "average",
-    "avg",
-    "group by",
-    "how many",
-    "total ",
-    "top ",
-    "trend",
-    "revenue",
-    "show rows",
-    "show records",
-  ].some((token) => text.includes(token));
-}
-
 function isDerivedSourceGenerationText(text: string): boolean {
+  const subjects = ["derived source", "derived sources", "derived table", "cte", "ctes"];
+  const migrationSourceSubjects = [
+    "reusable household-level source",
+    "reusable household level source",
+    "reusable source for",
+    "migration source",
+  ];
+  const generationVerbs = ["create", "build", "generate", "write", "save", "make", "implement"];
+  const recommendationTokens = ["advice", "advise", "recommend", "best", "which", "what should"];
+  const explicitGenerationTokens = [
+    "generate sql", "generate query", "generate those", "generate all",
+    "build query", "build those", "write sql", "write query",
+    "create it", "create this", "create those", "create now",
+  ];
+  if (
+    recommendationTokens.some((token) => text.includes(token)) &&
+    !explicitGenerationTokens.some((token) => text.includes(token))
+  ) {
+    return false;
+  }
   const directTokens = [
-    "derived source",
-    "derived table",
     "generate sql",
     "generate query",
     "write sql",
@@ -180,8 +388,16 @@ function isDerivedSourceGenerationText(text: string): boolean {
   if (directTokens.some((token) => text.includes(token))) {
     return true;
   }
-  return (text.includes("create") || text.includes("build") || text.includes("generate")) &&
-    text.includes("join");
+  if (
+    migrationSourceSubjects.some((subject) => text.includes(subject)) &&
+    ["prepare", "create", "build", "generate", "make"].some((verb) => text.includes(verb))
+  ) {
+    return true;
+  }
+  if (subjects.some((subject) => text.includes(subject)) && generationVerbs.some((verb) => text.includes(verb))) {
+    return true;
+  }
+  return ["generate those", "build those", "create those"].some((token) => text.includes(token));
 }
 
 function getCurrentAssistantPage() {
@@ -401,6 +617,104 @@ function isTransformationPrompt(text: string) {
   ].some((token) => text.includes(token));
 }
 
+function isMappingMutationPrompt(text: string) {
+  return /\b(apply|change|correct|fix|map|remap|set|update|use)\b/i.test(text);
+}
+
+function normalizeMentionToken(value: string) {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function resolveChatTargetMappings(
+  state: SttmBuilderState,
+  currentMessage: string,
+): MappingState[] {
+  const selected = state.mappings.filter((mapping) => state.selectedMappingIds.includes(mapping.id));
+  if (selected.length) return selected;
+  const active = state.mappings.find((mapping) => mapping.id === state.activeMappingId);
+  if (active) return [active];
+
+  const utterances = [
+    ...state.chatMessages
+      .filter((message) => message.role === "user" && message.content.trim())
+      .map((message) => message.content),
+    currentMessage,
+  ].reverse();
+  for (const utterance of utterances) {
+    const normalizedUtterance = normalizeMentionToken(utterance);
+    const matches = state.mappings.filter((mapping) => {
+      const target = normalizeMentionToken(mapping.targetColumn);
+      return target.length >= 3 && normalizedUtterance.includes(target);
+    });
+    if (matches.length === 1) return matches;
+  }
+  return [];
+}
+
+function parseRequestedConstantValue(text: string): string | null {
+  if (!/\b(constant|literal|value)\b/i.test(text)) return null;
+  const patterns = [
+    /\b(?:constant|literal)\s+(?:value\s+)?(?:of\s+|to\s+|=\s*|:\s*|-\s*)?[`'"]?([^\s,;`'"]+)/i,
+    /\bvalue\s*(?:of\s+|to\s+|=\s*|:\s*|-\s*)[`'"]?([^\s,;`'"]+)/i,
+  ];
+  for (const pattern of patterns) {
+    const value = text.match(pattern)?.[1]?.trim();
+    if (value && !["for", "all", "the", "this"].includes(value.toLowerCase())) return value;
+  }
+  return null;
+}
+
+function buildConstantMappingProposal(
+  state: SttmBuilderState,
+  mapping: MappingState,
+  value: string,
+): STTMBuilderEnvelopeResponse {
+  const target = mapping.targetColumn;
+  const result: SourceMappingResult = {
+    mappings: {
+      [target]: {
+        source_attributes: [],
+        source_dependencies: [],
+        value_binding_ids: [],
+        mapping_mode: "constant",
+        constant_value: value,
+        transformation_classification: "value",
+        precedent_decision: "unresolved",
+        precedent_mapping_id: null,
+        confidence_score: 1,
+        confidence_reason: `The user explicitly requested constant value ${value} for ${target}.`,
+        preprocessing_rule: null,
+        preprocessing_rule_type: "Value",
+        preprocessing_nl_rule: `Set ${target} to constant value ${value} for every output row.`,
+      },
+    },
+  };
+  return {
+    contract_version: "1.0",
+    request_id: `local-constant-${Date.now()}`,
+    operation: "sttm.transform",
+    actor: null,
+    context: { trace_id: `local-constant-${Date.now()}` },
+    data: {
+      intent: "TRANSFORM",
+      status: "completed",
+      agent: "TRANSFORMATION_AGENT",
+      result,
+      message: `Prepared a constant Value mapping for ${target}. Review it and choose Apply Changes to update the mapping row.`,
+      artifact_type: "source_mapping",
+      artifact: null,
+    },
+    warnings: [],
+    error: null,
+    meta: { deterministic_user_instruction: true },
+    thread_id: state.agentThreadId ?? `local-workspace-${state.activeSttmId ?? "new"}`,
+    parent_message_id: null,
+    agent: "TRANSFORMATION_AGENT",
+    result,
+    message: `Prepared a constant Value mapping for ${target}. Review it and choose Apply Changes to update the mapping row.`,
+  } as unknown as STTMBuilderEnvelopeResponse;
+}
+
 function getStructuredAgentResult(response: STTMBuilderEnvelopeResponse) {
   return resolveAgentResponseParts(response).result;
 }
@@ -612,6 +926,14 @@ function buildPendingAiMappingReviews(
         preprocessingNlRule: responseEntry.preprocessing_nl_rule ?? null,
         processingOrder: responseEntry.processing_order ?? null,
         description: responseEntry.description ?? null,
+        mappingMode: responseEntry.mapping_mode ?? "source",
+        constantValue: responseEntry.constant_value ?? null,
+        sourceDependencies: responseEntry.source_dependencies ?? responseEntry.source_attributes ?? [],
+        valueBindingIds: responseEntry.value_binding_ids ?? [],
+        transformationClassification: responseEntry.transformation_classification ?? null,
+        precedentDecision: responseEntry.precedent_decision ?? null,
+        precedentMappingId: responseEntry.precedent_mapping_id ?? null,
+        overrideEvidence: responseEntry.override_evidence ?? [],
       });
     }
 
@@ -631,6 +953,14 @@ function buildPendingAiMappingReviews(
         preprocessingNlRule: responseEntry.preprocessing_nl_rule ?? null,
         processingOrder: responseEntry.processing_order ?? null,
         description: responseEntry.description ?? mapping.description ?? null,
+        mappingMode: responseEntry.mapping_mode ?? "source",
+        constantValue: responseEntry.constant_value ?? null,
+        sourceDependencies: responseEntry.source_dependencies ?? responseEntry.source_attributes ?? [],
+        valueBindingIds: responseEntry.value_binding_ids ?? [],
+        transformationClassification: responseEntry.transformation_classification ?? null,
+        precedentDecision: responseEntry.precedent_decision ?? null,
+        precedentMappingId: responseEntry.precedent_mapping_id ?? null,
+        overrideEvidence: responseEntry.override_evidence ?? [],
       });
     }
 
@@ -651,6 +981,14 @@ function buildPendingAiMappingReviews(
           preprocessingNlRule: responseEntry.preprocessing_nl_rule ?? null,
           processingOrder: responseEntry.processing_order ?? null,
           description: responseEntry.description ?? mapping.description ?? null,
+          mappingMode: responseEntry.mapping_mode ?? "source",
+          constantValue: responseEntry.constant_value ?? null,
+          sourceDependencies: responseEntry.source_dependencies ?? responseEntry.source_attributes ?? [],
+          valueBindingIds: responseEntry.value_binding_ids ?? [],
+          transformationClassification: responseEntry.transformation_classification ?? null,
+          precedentDecision: responseEntry.precedent_decision ?? null,
+          precedentMappingId: responseEntry.precedent_mapping_id ?? null,
+          overrideEvidence: responseEntry.override_evidence ?? [],
         });
       }
     }
@@ -873,8 +1211,20 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
   preprocessingNlRule?: string | null;
   processingOrder?: number | null;
   description?: string | null;
+  usedInferenceIds?: string[];
+  usedRecommendationIds?: string[];
+  usedLearningIds?: string[];
+  mappingMode?: "source" | "constant";
+  constantValue?: string | null;
+  sourceDependencies?: string[];
+  valueBindingIds?: string[];
+  transformationClassification?: string | null;
+  precedentDecision?: string | null;
+  precedentMappingId?: string | null;
+  overrideEvidence?: string[];
 }) {
-  const sourceAttributes = suggestion.sourceAttributes ?? [];
+  const mappingMode = suggestion.mappingMode === "constant" ? "constant" : "source";
+  const sourceAttributes = mappingMode === "constant" ? [] : suggestion.sourceAttributes ?? [];
   const sourceColumn = sourceAttributes.length ? sourceAttributes.join(", ") : null;
   const inferredRuleType = suggestion.preprocessingRuleType?.trim() || null;
   const inferredRule = suggestion.preprocessingRule?.trim() || null;
@@ -890,16 +1240,21 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
         ? "Custom"
         : inferredRuleType || inferredRule || (sourceAttributes.length ? "Direct" : "Select...");
 
+  mapping.mappingMode = mappingMode;
+  mapping.constantValue = mappingMode === "constant" ? suggestion.constantValue ?? null : null;
   mapping.sourceColumns = sourceAttributes;
   mapping.sourceColumn = sourceColumn;
   mapping.confidenceScore = suggestion.confidenceScore ?? 0;
   mapping.confidenceReason = suggestion.confidenceReason ?? null;
   mapping.candidateSourceColumns = suggestion.candidateSourceAttributes ?? [];
   mapping.unmatchedReason = suggestion.unmatchedReason ?? null;
+  mapping.usedInferenceIds = suggestion.usedInferenceIds ?? [];
+  mapping.usedRecommendationIds = suggestion.usedRecommendationIds ?? [];
+  mapping.usedLearningIds = suggestion.usedLearningIds ?? [];
   mapping.aiSuggestedRule = inferredRule;
   mapping.aiSuggestedRuleType = inferredRuleType;
-  mapping.rule = nextRule;
-  mapping.expression = shouldPersistExpression ? inferredRule : null;
+  mapping.rule = mappingMode === "constant" ? "Value" : nextRule;
+  mapping.expression = mappingMode === "constant" ? null : (shouldPersistExpression ? inferredRule : null);
   mapping.nlRule = suggestion.preprocessingNlRule ?? mapping.nlRule ?? null;
   mapping.loadOrder =
     suggestion.processingOrder !== null && suggestion.processingOrder !== undefined
@@ -908,7 +1263,23 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
   if (!mapping.descriptionEdited) {
     mapping.description = suggestion.description ?? mapping.description ?? null;
   }
-  mapping.status = sourceAttributes.length > 0 ? "MAPPED" : "UNMAPPED";
+  mapping.sourceDependencies = suggestion.sourceDependencies ?? sourceAttributes;
+  mapping.valueBindingIds = suggestion.valueBindingIds ?? [];
+  mapping.transformationClassification = suggestion.transformationClassification ?? null;
+  mapping.precedentDecision = suggestion.precedentDecision ?? null;
+  mapping.precedentMappingId = suggestion.precedentMappingId ?? null;
+  mapping.overrideEvidence = suggestion.overrideEvidence ?? [];
+  const requiresReview =
+    suggestion.precedentDecision === "unresolved" ||
+    suggestion.transformationClassification === "unresolved";
+  mapping.status =
+    requiresReview
+      ? "UNMAPPED"
+      : mappingMode === "constant" && mapping.constantValue !== null
+      ? "MAPPED"
+      : sourceAttributes.length > 0
+        ? "MAPPED"
+        : "UNMAPPED";
 }
 
 function normalizeSemanticContextItems(
@@ -982,10 +1353,112 @@ function estimateAutoMapComplexity(
   return 3;
 }
 
+function extractAutoMappingReview(
+  response: STTMBuilderEnvelopeResponse,
+): AutoMappingReview | null {
+  const value = (response.meta as Record<string, unknown> | undefined)?.auto_mapping_review;
+  if (!value || typeof value !== "object") return null;
+  const review = value as Partial<AutoMappingReview>;
+  if (typeof review.headline !== "string" || !Array.isArray(review.recommendations)) {
+    return null;
+  }
+  return review as AutoMappingReview;
+}
+
+function formatAutoMappingReview(review: AutoMappingReview): string {
+  const actionRequired = review.recommendations.filter((item) => item.severity === "action_required");
+  const needsReview = review.recommendations.filter((item) => item.severity === "review");
+  const mappedReviewTargets = new Set(needsReview.map((item) => item.target_attribute));
+  const completedWithoutReview =
+    review.completed_without_review_count ?? Math.max(0, review.mapped_count - mappedReviewTargets.size);
+  const lines = [
+    "## Auto-map result",
+    "",
+    `- **Mapped:** ${review.mapped_count} of ${review.total_count}`,
+    `- **Completed with no issue detected:** ${completedWithoutReview}`,
+    `- **Mapped but needs review:** ${review.mapped_with_review_count ?? mappedReviewTargets.size}`,
+    `- **Still needs input:** ${review.action_required_count ?? review.unresolved_count}`,
+  ];
+  if (review.missing_derived_output_count > 0) {
+    lines.push(
+      "",
+      "Historical learning was used as evidence only. It was not applied where the current source or derived-source contract does not expose the required output.",
+    );
+  }
+
+  const appendRecommendationSection = (
+    title: string,
+    items: AutoMappingReview["recommendations"],
+  ) => {
+    if (!items.length) return;
+    lines.push("", `## ${title}`);
+    const byTarget = new Map<string, typeof items>();
+    for (const item of items) {
+      byTarget.set(item.target_attribute, [...(byTarget.get(item.target_attribute) ?? []), item]);
+    }
+    for (const [target, targetItems] of byTarget.entries()) {
+      const candidates = Array.from(new Set(targetItems.flatMap((item) => item.candidate_sources))).slice(0, 4);
+      const evidence = Array.from(new Set(targetItems.flatMap((item) => item.evidence_ids)));
+      lines.push(
+        "",
+        `### ${target}`,
+        `- **Issue:** ${targetItems.map((item) => item.title).join("; ")}`,
+        `- **Why:** ${targetItems.map((item) => item.detail).filter(Boolean).join(" ")}`,
+        `- **Next step:** ${targetItems.map((item) => item.recommended_action).join(" ")}`,
+      );
+      if (candidates.length) {
+        lines.push(`- **Candidate sources:** ${candidates.join(", ")}`);
+      }
+      if (evidence.length) {
+        const visibleEvidence = evidence.slice(0, 3);
+        const remaining = evidence.length - visibleEvidence.length;
+        lines.push(
+          `- **Evidence:** ${visibleEvidence.join(", ")}${remaining > 0 ? ` (+${remaining} more)` : ""}`,
+        );
+      }
+    }
+  };
+
+  appendRecommendationSection("Action required", actionRequired);
+  appendRecommendationSection("Review before publishing", needsReview);
+
+  if (!review.recommendations.length) {
+    lines.push(
+      "",
+      "## Next check",
+      "",
+      "Preview representative data and review complex preprocessing rules before publishing.",
+    );
+  } else {
+    lines.push(
+      "",
+      "## What is not listed",
+      "",
+      "Mappings counted as completed with no issue are not repeated above. Recommendations contain only unresolved items, missing source outputs, low-confidence mappings, or changes from linked precedent.",
+    );
+  }
+  return lines.join("\n");
+}
+
+// ─── cache metadata ───────────────────────────────────────────────
+export interface CacheMetadata {
+  databasesFetchedAt: string | null;
+  derivedSourcesFetchedAt: string | null;
+}
+
+const CACHE_FRESHNESS_MS = 5 * 60 * 1000; // 5 minutes
+
+function isCacheFresh(fetchedAt: string | null): boolean {
+  if (!fetchedAt) return false;
+  const fetchTime = new Date(fetchedAt).getTime();
+  return Date.now() - fetchTime < CACHE_FRESHNESS_MS;
+}
+
 // ─── state shape ───────────────────────────────────────────────────
 type SttmBuilderState = {
   sourceDatabases: DatabaseNode[];
   targetDatabases: DatabaseNode[];
+  cacheMetadata: CacheMetadata;
 
   sources: TableNode[];
   targets: TableNode[];
@@ -1004,10 +1477,27 @@ type SttmBuilderState = {
   assistantInferences: AssistantInferenceRecord[];
   assistantPreferences: AssistantPreferenceState;
   assistantUnreadCount: number;
+  firRecommendations: FIRRecommendation[];
+  firPrimaryQuestion: FIRRecommendation | null;
+  firRecommendationLoading: boolean;
+  firRecommendationCheckpoint: string | null;
+  firRecommendationContextKey: string | null;
   mappingIntent: MappingIntent | null;
   agentThreadId: string | null;
+  agentLogicalConversationId: string | null;
+  agentPhysicalThreadSegment: number | null;
   agentParentMessageId: number | null;
   semanticBundleId: string | null;
+  semanticBundleHash: string | null;
+  learningContextId: string | null;
+  learningContextHash: string | null;
+  workspaceContextId: string | null;
+  workspaceContextHash: string | null;
+  workspaceContextSnapshotHash: string | null;
+  workspaceContextPendingSnapshotHash: string | null;
+  workspaceContextStatus: "idle" | "updating" | "ready" | "partial" | "failed";
+  workspaceContextCacheStatus: string | null;
+  workspaceContextError: string | null;
   semanticBundleLabel: string | null;
   semanticLevel: string | null;
   semanticStatus: string | null;
@@ -1040,16 +1530,177 @@ type SttmBuilderState = {
   mappingSql: string;
   mappingPreviewSql: string;
   mappingSqlVariant: "original" | "optimized" | null;
+  compiledMappingSql: string;
+  compiledMappingPreviewSql: string;
+  compiledMappingContextHash: string | null;
   isPreProcessModalOpen: boolean;
   activeMappingId: string | null;
   pendingAiMappingReviews: PendingAiMappingReview[];
   autoMapStatusMessage: string | null;
   autoMapProcessingIds: string[];
+
+  // Active STTM context — which saved STTM is currently loaded in the builder.
+  activeSttmId: string | null;
+  activeProjectId: string | null;
+  activeSttmName: string | null;
+  activeProjectName: string | null;
+  activeSnapshotId: string | null;
+  sessionSavedAt: string | null;
+
+  // Tracks the async "open STTM from backend" lifecycle so the UI can show loading/error states.
+  openSttmStatus: 'idle' | 'loading' | 'success' | 'error';
+  openSttmTargetPage: string | null;
+  openSttmErrorMessage: string | null;
+  openSttmRequestId: string | null;
+  attributeRequestIds: { source: string | null; target: string | null };
+  relationshipRequestId: string | null;
 };
+
+export function snapshotFromState(
+  state: SttmBuilderState,
+  action: WorkbenchCheckpoint,
+  options: {
+    page?: string;
+    surface?: string;
+    milestone?: string;
+    semanticBundleId?: string | null;
+    semanticViewName?: string | null;
+    scopeType?: "project" | "schema" | "table" | "table_set" | "target" | "mapping" | "column" | "derived_source" | null;
+    candidateAction?: string | null;
+    browsingContext?: {
+      side?: "source" | "target" | null;
+      database?: string | null;
+      schema?: string | null;
+      visible_candidate_tables?: string[];
+      search_text?: string | null;
+    } | null;
+  } = {},
+) {
+  const selectedSources = resolveSelectedSourceTables(state);
+  const target = resolveSelectedTargetTable(state) ?? null;
+  return buildWorkbenchContextSnapshot({
+    action,
+    milestone: options.milestone,
+    page: options.page ?? (state.targetAttributeGroup ? "mapping" : "builder"),
+    surface: options.surface ?? (state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION"),
+    sessionId: state.session ? String(state.session.user_id) : null,
+    threadId: state.agentThreadId,
+    projectId: state.activeProjectId,
+    projectName: state.activeProjectName,
+    sttmId: state.activeSttmId,
+    sttmName: state.activeSttmName,
+    mappingLifecycle: state.mappingIntent?.lifecycle ?? (state.activeSttmId ? "update" : "new"),
+    businessGoal: state.mappingIntent?.business_goal ?? state.mappingIntent?.target_outcome ?? null,
+    sourceTables: selectedSources,
+    targetTable: target,
+    drivingTableId: state.drivingTableId,
+    sourceAttributeGroups: state.sourceAttributeGroups,
+    derivedSources: state.derivedSources,
+    relationships: state.relationships,
+    sourceFilterSql: state.sourceFilterSql,
+    sourceQuerySql: state.sourceQuerySql,
+    sourceGroupBySql: state.sourceGroupBySql,
+    sourceOrderBySql: state.sourceOrderBySql,
+    sourceFilterGroups: state.sourceFilterGroups,
+    mappings: state.mappings,
+    selectedMappingIds: state.selectedMappingIds,
+    activeMappingId: state.activeMappingId,
+    mappingSql: state.mappingSql,
+    mappingPreviewSql: state.mappingPreviewSql,
+    compiledMappingSql: state.compiledMappingSql,
+    compiledMappingPreviewSql: state.compiledMappingPreviewSql,
+    compiledMappingContextHash: state.compiledMappingContextHash,
+    mappingIntent: state.mappingIntent,
+    semanticBundleId: options.semanticBundleId ?? state.semanticBundleId,
+    semanticBundleLabel: state.semanticBundleLabel,
+    semanticLevel: state.semanticLevel,
+    semanticStatus: state.semanticStatus,
+    semanticViewName: options.semanticViewName ?? state.semanticViewName,
+    semanticLineage: state.semanticLineage,
+    conversationHistory: state.chatMessages,
+    scopeType: options.scopeType,
+    candidateAction: options.candidateAction,
+    browsingContext: options.browsingContext,
+  });
+}
+
+function stablePreparedContextValue(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map(stablePreparedContextValue).join(",")}]`;
+  }
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stablePreparedContextValue(record[key])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function compactPreparedContextHash(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `wdep_${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+export function preparedWorkspaceSnapshot(
+  workspace: Record<string, unknown>,
+): {
+  workspace: Record<string, unknown>;
+  dependencyHash: string;
+} {
+  const preparedWorkspace: Record<string, unknown> = {
+    ...workspace,
+    // Conversation narrative is checkpointed separately and must never
+    // invalidate semantic/FIR context.
+    conversation_history: [],
+  };
+  const filters = (preparedWorkspace.filters ?? {}) as Record<string, unknown>;
+  const mappingSql = String(
+    preparedWorkspace.compiled_mapping_sql
+      ?? preparedWorkspace.raw_mapping_sql
+      ?? preparedWorkspace.mapping_sql
+      ?? "",
+  );
+  const dependency = {
+    project_id: preparedWorkspace.project_id ?? null,
+    sttm_id: preparedWorkspace.sttm_id ?? null,
+    source_set_hash: preparedWorkspace.source_set_hash ?? null,
+    derived_set_hash: preparedWorkspace.derived_set_hash ?? null,
+    source_tables: preparedWorkspace.source_tables ?? [],
+    target_table: preparedWorkspace.target_table ?? null,
+    driving_table: preparedWorkspace.driving_table ?? null,
+    selected_columns_by_table: preparedWorkspace.selected_columns_by_table ?? {},
+    derived_sources: preparedWorkspace.derived_sources ?? [],
+    relationships: preparedWorkspace.relationships ?? [],
+    relation_graph: preparedWorkspace.relation_graph ?? null,
+    mapping_intent: preparedWorkspace.mapping_intent ?? null,
+    mapping_rows: preparedWorkspace.mapping_rows ?? [],
+    filters: {
+      filter_sql: filters.filter_sql ?? null,
+      base_query_sql: filters.base_query_sql ?? null,
+      group_by_sql: filters.group_by_sql ?? null,
+      order_by_sql: filters.order_by_sql ?? null,
+      groups: filters.groups ?? [],
+    },
+    mapping_sql: mappingSql,
+  };
+  return {
+    workspace: preparedWorkspace,
+    dependencyHash: compactPreparedContextHash(
+      stablePreparedContextValue(dependency),
+    ),
+  };
+}
 
 export type PersistedSttmBuilderSession = {
   sourceDatabases: DatabaseNode[];
   targetDatabases: DatabaseNode[];
+  cacheMetadata?: CacheMetadata;
   sources: TableNode[];
   targets: TableNode[];
   sourceInfo: SourceTargetInfo;
@@ -1061,10 +1712,27 @@ export type PersistedSttmBuilderSession = {
   assistantSignals: AssistantSignal[];
   assistantInferences: AssistantInferenceRecord[];
   assistantUnreadCount: number;
+  firRecommendations?: FIRRecommendation[];
+  firPrimaryQuestion?: FIRRecommendation | null;
+  firRecommendationLoading?: boolean;
+  firRecommendationCheckpoint?: string | null;
+  firRecommendationContextKey?: string | null;
   mappingIntent: MappingIntent | null;
   agentThreadId: string | null;
+  agentLogicalConversationId?: string | null;
+  agentPhysicalThreadSegment?: number | null;
   agentParentMessageId: number | null;
   semanticBundleId: string | null;
+  semanticBundleHash?: string | null;
+  learningContextId?: string | null;
+  learningContextHash?: string | null;
+  workspaceContextId?: string | null;
+  workspaceContextHash?: string | null;
+  workspaceContextSnapshotHash?: string | null;
+  workspaceContextPendingSnapshotHash?: string | null;
+  workspaceContextStatus?: "idle" | "updating" | "ready" | "partial" | "failed";
+  workspaceContextCacheStatus?: string | null;
+  workspaceContextError?: string | null;
   semanticBundleLabel: string | null;
   semanticLevel: string | null;
   semanticStatus: string | null;
@@ -1089,9 +1757,19 @@ export type PersistedSttmBuilderSession = {
   mappingSql: string;
   mappingPreviewSql: string;
   mappingSqlVariant: "original" | "optimized" | null;
+  compiledMappingSql: string;
+  compiledMappingPreviewSql: string;
+  compiledMappingContextHash: string | null;
   isPreProcessModalOpen: boolean;
   activeMappingId: string | null;
   pendingAiMappingReviews: PendingAiMappingReview[];
+  // Active STTM identity — persisted so the builder knows which STTM it's editing after refresh.
+  activeSttmId: string | null;
+  activeProjectId: string | null;
+  activeSttmName: string | null;
+  activeProjectName: string | null;
+  activeSnapshotId?: string | null;
+  sessionSavedAt: string | null;
 };
 
 const autoMapBatchesInitialized = createAction<{
@@ -1127,7 +1805,10 @@ function mergeDerivedSourceLists(
     const current = existingById.get(source.id);
     return {
       ...source,
-      isSelected: source.isSelected ?? current?.isSelected ?? false,
+      // Catalog refreshes describe availability, not workspace selection.
+      // Preserve the snapshot/UI choice when the same derived source already
+      // exists in the active workspace.
+      isSelected: current?.isSelected ?? source.isSelected ?? false,
     };
   });
   const incomingIds = new Set(mergedIncoming.map((source) => source.id));
@@ -1147,15 +1828,6 @@ function cloneRuleNode(node: RuleGroup | RuleCondition): RuleGroup | RuleConditi
 
 function cloneRuleGroups(groups: RuleGroup[]) {
   return groups.map((group) => cloneRuleNode(group) as RuleGroup);
-}
-
-function chunkItems<T>(items: T[], chunkSize: number): T[][] {
-  if (chunkSize <= 0) return [items];
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += chunkSize) {
-    chunks.push(items.slice(index, index + chunkSize));
-  }
-  return chunks;
 }
 
 function extractAssistantDisplayText(
@@ -1212,6 +1884,40 @@ function extractAssistantDisplayText(
     return lines.join("\n");
   }
 
+  if (resolved.artifactType === "analyst_answer" && artifact && typeof artifact === "object") {
+    const sqlText = typeof artifact.sql_text === "string" ? artifact.sql_text.trim() : "";
+    const previewRows = Array.isArray(artifact.preview_rows)
+      ? artifact.preview_rows.filter(
+          (row): row is Record<string, unknown> =>
+            typeof row === "object" && row !== null && !Array.isArray(row),
+        )
+      : [];
+    const lines = [
+      artifactAnswerText || rootMessage || "## Query result",
+    ];
+    if (previewRows.length > 0) {
+      const columns = Object.keys(previewRows[0]).slice(0, 8);
+      const safeCell = (value: unknown) =>
+        String(value ?? "")
+          .replaceAll("|", "\\|")
+          .replace(/\r?\n/g, " ")
+          .slice(0, 160);
+      lines.push(
+        "",
+        "### Sample results",
+        `| ${columns.map(safeCell).join(" | ")} |`,
+        `| ${columns.map(() => "---").join(" | ")} |`,
+        ...previewRows
+          .slice(0, 5)
+          .map((row) => `| ${columns.map((column) => safeCell(row[column])).join(" | ")} |`),
+      );
+    }
+    if (sqlText) {
+      lines.push("", "### SQL used", "```sql", sqlText, "```");
+    }
+    return lines.join("\n");
+  }
+
   const candidates = [artifactAnswerText, rootMessage].filter(Boolean);
   if (!candidates.length) return "Done.";
 
@@ -1248,9 +1954,54 @@ const initialErrorState: BuilderErrorState = {
   tablesBySchema: {},
 };
 
+const STTM_ASSISTANT_WELCOME: ChatMessage = {
+  id: "sttm-assistant-welcome",
+  role: "assistant",
+  content: "",
+  options: [
+    "Recommend the best derived sources for this selection",
+    "Explain the selected table relationships",
+    "Assess whether this selection is ready for mapping",
+  ],
+};
+
+const LEGACY_ASSISTANT_WELCOME =
+  "Hi! I'm your STTM AI Assistant. Ask me about mapping, tables, or next steps.";
+
+function currentAssistantWelcome(): ChatMessage {
+  return {
+    ...STTM_ASSISTANT_WELCOME,
+    options: [...(STTM_ASSISTANT_WELCOME.options ?? [])],
+  };
+}
+
+function upgradeAssistantWelcome(messages: ChatMessage[]): ChatMessage[] {
+  if (!messages.length) return [currentAssistantWelcome()];
+  const next: ChatMessage[] = messages.map((message) => ({
+    ...message,
+    options: message.options ? [...message.options] : undefined,
+  }));
+  if (
+    next[0]?.role === "assistant" &&
+    (
+      next[0].content.trim() === LEGACY_ASSISTANT_WELCOME
+      || next[0].content.includes(
+        "I can use the selected source and target semantics",
+      )
+    )
+  ) {
+    next[0] = currentAssistantWelcome();
+  }
+  return next;
+}
+
 const initialState: SttmBuilderState = {
   sourceDatabases: [],
   targetDatabases: [],
+  cacheMetadata: {
+    databasesFetchedAt: null,
+    derivedSourcesFetchedAt: null,
+  },
 
   sources: [],
   targets: [],
@@ -1263,12 +2014,7 @@ const initialState: SttmBuilderState = {
   mappingSuggestions: [],
   mappingLoading: false,
 
-  chatMessages: [
-    {
-      role: "assistant",
-      content: "Hi! I'm your STTM AI Assistant. Ask me about mapping, tables, or next steps.",
-    },
-  ],
+  chatMessages: [currentAssistantWelcome()],
   chatLoading: false,
   assistantSignals: [],
   assistantInferences: [],
@@ -1277,10 +2023,27 @@ const initialState: SttmBuilderState = {
     recommendations_enabled: true,
   },
   assistantUnreadCount: 0,
+  firRecommendations: [],
+  firPrimaryQuestion: null,
+  firRecommendationLoading: false,
+  firRecommendationCheckpoint: null,
+  firRecommendationContextKey: null,
   mappingIntent: null,
   agentThreadId: null,
+  agentLogicalConversationId: null,
+  agentPhysicalThreadSegment: null,
   agentParentMessageId: null,
   semanticBundleId: null,
+  semanticBundleHash: null,
+  learningContextId: null,
+  learningContextHash: null,
+  workspaceContextId: null,
+  workspaceContextHash: null,
+  workspaceContextSnapshotHash: null,
+  workspaceContextPendingSnapshotHash: null,
+  workspaceContextStatus: "idle",
+  workspaceContextCacheStatus: null,
+  workspaceContextError: null,
   semanticBundleLabel: null,
   semanticLevel: null,
   semanticStatus: null,
@@ -1313,11 +2076,28 @@ const initialState: SttmBuilderState = {
   mappingSql: "",
   mappingPreviewSql: "",
   mappingSqlVariant: null,
+  compiledMappingSql: "",
+  compiledMappingPreviewSql: "",
+  compiledMappingContextHash: null,
   isPreProcessModalOpen: false,
   activeMappingId: null,
   pendingAiMappingReviews: [],
   autoMapStatusMessage: null,
   autoMapProcessingIds: [],
+
+  activeSttmId: null,
+  activeProjectId: null,
+  activeSttmName: null,
+  activeProjectName: null,
+  activeSnapshotId: null,
+  sessionSavedAt: null,
+
+  openSttmStatus: 'idle',
+  openSttmTargetPage: null,
+  openSttmErrorMessage: null,
+  openSttmRequestId: null,
+  attributeRequestIds: { source: null, target: null },
+  relationshipRequestId: null,
 };
 
 function applyAutoMapResponseToState(
@@ -1371,8 +2151,25 @@ function applyAutoMapResponseToState(
       preprocessing_nl_rule?: string | null;
       processing_order?: number | null;
       description?: string | null;
+      used_inference_ids?: string[];
+      used_recommendation_ids?: string[];
+      used_learning_ids?: string[];
+      mapping_mode?: "source" | "constant";
+      constant_value?: string | null;
+      source_dependencies?: string[];
+      value_binding_ids?: string[];
+      transformation_classification?: string | null;
+      precedent_decision?: string | null;
+      precedent_mapping_id?: string | null;
+      override_evidence?: string[];
     }
   >);
+  const overrideReviews = buildPendingAiMappingReviews(
+    state.mappings,
+    [],
+    null,
+    response,
+  ).filter((review) => review.precedentDecision === "override_precedent");
 
   for (const [target, val] of entries) {
     const existing = state.mappingSuggestions.find(
@@ -1390,6 +2187,17 @@ function applyAutoMapResponseToState(
       preprocessingNlRule: val?.preprocessing_nl_rule ?? null,
       processingOrder: val?.processing_order ?? null,
       description: val?.description ?? null,
+      usedInferenceIds: val?.used_inference_ids ?? [],
+      usedRecommendationIds: val?.used_recommendation_ids ?? [],
+      usedLearningIds: val?.used_learning_ids ?? [],
+      mappingMode: val?.mapping_mode ?? "source",
+      constantValue: val?.constant_value ?? null,
+      sourceDependencies: val?.source_dependencies ?? val?.source_attributes ?? [],
+      valueBindingIds: val?.value_binding_ids ?? [],
+      transformationClassification: val?.transformation_classification ?? null,
+      precedentDecision: val?.precedent_decision ?? null,
+      precedentMappingId: val?.precedent_mapping_id ?? null,
+      overrideEvidence: val?.override_evidence ?? [],
     };
     if (existing) {
       Object.assign(existing, nextSuggestion);
@@ -1404,6 +2212,20 @@ function applyAutoMapResponseToState(
     );
     if (!match) continue;
     const [, val] = match;
+    if (val?.precedent_decision === "override_precedent") {
+      const review = overrideReviews.find((item) => item.mappingId === mapping.id);
+      if (review) {
+        const existingIndex = state.pendingAiMappingReviews.findIndex(
+          (item) => item.mappingId === review.mappingId,
+        );
+        if (existingIndex >= 0) {
+          state.pendingAiMappingReviews[existingIndex] = review;
+        } else {
+          state.pendingAiMappingReviews.push(review);
+        }
+      }
+      continue;
+    }
     applyMappingSuggestion(mapping, {
       sourceAttributes: val?.source_attributes ?? [],
       confidenceScore: val?.confidence_score ?? 0,
@@ -1415,6 +2237,17 @@ function applyAutoMapResponseToState(
       preprocessingNlRule: val?.preprocessing_nl_rule ?? null,
       processingOrder: val?.processing_order ?? null,
       description: val?.description ?? null,
+      usedInferenceIds: val?.used_inference_ids ?? [],
+      usedRecommendationIds: val?.used_recommendation_ids ?? [],
+      usedLearningIds: val?.used_learning_ids ?? [],
+      mappingMode: val?.mapping_mode ?? "source",
+      constantValue: val?.constant_value ?? null,
+      sourceDependencies: val?.source_dependencies ?? val?.source_attributes ?? [],
+      valueBindingIds: val?.value_binding_ids ?? [],
+      transformationClassification: val?.transformation_classification ?? null,
+      precedentDecision: val?.precedent_decision ?? null,
+      precedentMappingId: val?.precedent_mapping_id ?? null,
+      overrideEvidence: val?.override_evidence ?? [],
     });
   }
 
@@ -1442,7 +2275,7 @@ function applyAssistantSignalsData(
 
 // ─── async thunks ──────────────────────────────────────────────────
 
-/** Fetch database list (+ session). Cached: won't refetch if already loaded. */
+/** Fetch database list (+ session). Cached: won't refetch if data is fresh (< 5 minutes old). */
 export const fetchDatabases = createAsyncThunk(
   "sttmBuilder/fetchDatabases",
   async (_, { rejectWithValue }) => {
@@ -1451,7 +2284,7 @@ export const fetchDatabases = createAsyncThunk(
         dbService.getExplorerData(),
         authService.getSession().catch(() => null),
       ]);
-      return { databases, session: userSession };
+      return { databases, session: userSession, fetchedAt: new Date().toISOString() };
     } catch (err) {
       return rejectWithValue(getErrorMessage(err, "Unable to load databases."));
     }
@@ -1459,8 +2292,13 @@ export const fetchDatabases = createAsyncThunk(
   {
     condition: (_, { getState }) => {
       const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
-      // Skip if already loaded or currently loading
-      return state.loadState.initial !== "success" && state.loadState.initial !== "loading";
+      // Skip if currently loading
+      if (state.loadState.initial === "loading") return false;
+      // Skip if data is fresh (less than 5 minutes old)
+      if (state.loadState.initial === "success" && isCacheFresh(state.cacheMetadata.databasesFetchedAt)) {
+        return false;
+      }
+      return true;
     },
   }
 );
@@ -1572,7 +2410,7 @@ export const fetchRelationships = createAsyncThunk(
   "sttmBuilder/fetchRelationships",
   async (_, { getState, rejectWithValue }) => {
     const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
-    const selectedSourceTables = getSelectedSourceTables(state.sourceDatabases);
+    const selectedSourceTables = resolveSelectedSourceTables(state);
 
     if (selectedSourceTables.length < 2) {
       return [];
@@ -1640,7 +2478,8 @@ export const fetchDerivedSources = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const rows = await dbService.listDerivedSources();
-      return rows.map(
+      return {
+        derivedSources: rows.map(
         (row): DerivedSource => {
           const sourceTables = row.source_tables ?? [];
           const selectedColumns = row.selected_columns_by_table ?? {};
@@ -1657,6 +2496,17 @@ export const fetchDerivedSources = createAsyncThunk(
             semanticViewName: row.semantic_view_name ?? null,
             semanticLevel: row.semantic_level ?? null,
             upstreamHash: row.upstream_hash ?? null,
+            sourceDependencyHash: row.source_dependency_hash ?? null,
+            physicalViewName: row.physical_view_name ?? null,
+            generatedByRequestId: row.generated_by_request_id ?? null,
+            purpose: row.purpose ?? null,
+            businessDescription: row.business_description ?? null,
+            grain: row.grain ?? null,
+            keys: row.keys ?? [],
+            outputColumns: row.output_columns ?? [],
+            columnSemantics: row.column_semantics ?? [],
+            semanticProjection: row.semantic_projection ?? {},
+            semanticQuality: row.semantic_quality ?? "incomplete",
             lineageDepth: row.lineage_depth ?? 0,
             drivingTableId: row.driving_table
               ? `${row.driving_table.database}.${row.driving_table.schema}.${row.driving_table.table}`
@@ -1706,10 +2556,22 @@ export const fetchDerivedSources = createAsyncThunk(
             })),
           };
         }
-      );
+      ),
+        fetchedAt: new Date().toISOString(),
+      };
     } catch (err) {
       return rejectWithValue(getErrorMessage(err, "Unable to load derived sources."));
     }
+  },
+  {
+    condition: (_, { getState }) => {
+      const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
+      // Skip if data is fresh (less than 5 minutes old) and we have derived sources
+      if (state.derivedSources.length > 0 && isCacheFresh(state.cacheMetadata.derivedSourcesFetchedAt)) {
+        return false;
+      }
+      return true;
+    },
   }
 );
 
@@ -1718,8 +2580,8 @@ export const runAutoMap = createAsyncThunk(
   "sttmBuilder/runAutoMap",
   async (_, { dispatch, getState, rejectWithValue }) => {
     const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
-    const selectedSourceTables = getSelectedSourceTables(state.sourceDatabases);
-    const selectedTargetTable = getSelectedTargetTable(state.targetDatabases);
+    const selectedSourceTables = resolveSelectedSourceTables(state);
+    const selectedTargetTable = resolveSelectedTargetTable(state);
     if (!selectedSourceTables.length || !state.targetAttributeGroup) return null;
 
     try {
@@ -1752,7 +2614,10 @@ export const runAutoMap = createAsyncThunk(
           }
           return left._original_index - right._original_index;
         })
-        .map(({ _original_index: _ignored, ...attribute }) => attribute);
+        .map(({ _original_index, ...attribute }) => {
+          void _original_index;
+          return attribute;
+        });
       if (!targetAttributes.length) {
         throw new Error("No target attributes are available for auto-map.");
       }
@@ -1771,150 +2636,269 @@ export const runAutoMap = createAsyncThunk(
       let semanticDatahubContext = state.semanticDatahubContext;
       let processedCount = 0;
       const failures: string[] = [];
+      const autoMappingReviewHolder: { current: AutoMappingReview | null } = {
+        current: null,
+      };
       const selectedDerivedSourceIds = getSelectedDerivedSourceIds(state.derivedSources);
-      if (!semanticBundleId || !semanticViewName || !isAnalystReadyLevel(state.semanticLevel)) {
+      if (!semanticBundleId || !semanticContextItems?.length) {
         dispatch(
           autoMapStreamStatus({
-            text: 'Preparing mapping-ready semantic context for auto-map...',
+            text: "Resolving semantic context for the current selection...",
           }),
         );
-        const semanticRefresh = await dbService.refreshSemanticContext({
-          selected_source_tables: selectedSourceTables.map((table) => makeTableRef(table.qualifiedName)),
+        const sourceTables = selectedSourceTables.map((t) => makeTableRef(t.qualifiedName));
+        const relationships = buildRelationshipPayload(state.relationships);
+        const semanticRequest = {
+          selected_source_tables: sourceTables,
           selected_derived_sources: selectedDerivedSourceIds,
           target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
-          relationships: buildRelationshipPayload(state.relationships),
-          requested_level: 'L3_MAPPING_ENRICHED',
+          relationships: relationships as Array<Record<string, unknown>>,
+          requested_level: "FULL_REGISTRY" as const,
           force: false,
-        });
+        };
+        let semanticRefresh;
+        try {
+          semanticRefresh = await dbService.refreshSemanticContext(semanticRequest);
+        } catch (error) {
+          if (!isSemanticRelationshipCompatibilityError(error)) throw error;
+          dispatch(
+            autoMapStreamStatus({
+              text: "Loading table semantics; selected joins will be passed directly to Auto-map...",
+            }),
+          );
+          semanticRefresh = await dbService.refreshSemanticContext({
+            ...semanticRequest,
+            relationships: [],
+          });
+        }
         semanticBundleId = semanticRefresh.bundle_id;
         semanticViewName = semanticRefresh.semantic_view_name ?? null;
         semanticContextItems =
-          normalizeSemanticContextItems(semanticRefresh.semantic_context) ?? semanticContextItems;
+          (semanticRefresh.semantic_context as SemanticContextItem[] | null | undefined) ??
+          semanticContextItems;
         semanticLineage = semanticRefresh.lineage ?? semanticLineage;
         semanticDatahubContext = semanticRefresh.datahub_context ?? semanticDatahubContext;
-        dispatch(applySemanticRefresh(semanticRefresh));
-      }
-      if (!semanticBundleId || !semanticViewName) {
-        throw new Error(
-          'Auto-map requires a promoted semantic view for the current source and target selection.',
-        );
+        if (!semanticBundleId && !semanticViewName && !semanticContextItems?.length) {
+          throw new Error(
+            'Auto-map could not resolve semantic context for the current selection. Please ensure tables are properly selected.',
+          );
+        }
       }
       dispatch(
         autoMapStreamStatus({
-          text:
-            semanticBundleId && semanticViewName
-              ? "Reusing the current mapping-ready semantic context."
-              : "Starting auto-map with the current mapping context.",
+          text: "Semantic context ready. Starting auto-map...",
         }),
       );
 
-      const attributeBatches = chunkItems(targetAttributes, 5);
-      for (let batchIndex = 0; batchIndex < attributeBatches.length; batchIndex += 1) {
-        const batch = attributeBatches[batchIndex];
-        const batchMappingIds = batch
-          .map((attribute) => mappingIdsByTarget.get(normalizeTargetKey(attribute.target_attribute)))
-          .filter((value): value is string => Boolean(value));
+      const workspaceSnapshot = snapshotFromState(state, "auto_map.requested", {
+        page: "mapping",
+        surface: "MAPPING",
+        semanticBundleId,
+        semanticViewName,
+      });
+
+      const enrichedTargetAttributes = targetAttributes.map((attribute) => ({
+        ...attribute,
+        target_description:
+          findTargetDescription(
+            semanticContextItems,
+            selectedTargetTable?.qualifiedName ?? null,
+            attribute.target_attribute,
+          ) ?? attribute.target_description,
+      }));
+      const allMappingIds = enrichedTargetAttributes
+        .map((attribute) => mappingIdsByTarget.get(normalizeTargetKey(attribute.target_attribute)))
+        .filter((value): value is string => Boolean(value));
+      const autoMapRequest = {
+        interface: "AUTO_MAP" as const,
+        thread_id: null,
+        source_tables: selectedSourceTables.map((table) => makeTableRef(table.qualifiedName)),
+        target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
+        driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
+        relationships: buildRelationshipPayload(state.relationships),
+        relation_graph: buildRelationGraph(
+          selectedSourceTables,
+          state.derivedSources,
+          state.relationships,
+          state.mappings,
+        ),
+        semantic_context: semanticContextItems,
+        selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
+        selected_derived_sources: selectedDerivedSourceIds,
+        semantic_bundle_id: semanticBundleId,
+        semantic_view_name: semanticViewName,
+        derived_source_lineage: semanticLineage,
+        datahub_context: semanticDatahubContext,
+        surface: "MAPPING" as const,
+        semantic_level_requested: "FULL_REGISTRY" as const,
+        attributes: enrichedTargetAttributes,
+        project_id: state.activeProjectId,
+        sttm_id: state.activeSttmId,
+        workspace_context: workspaceSnapshot,
+      };
+      dispatch(
+        autoMapBatchStarted({
+          processingIds: allMappingIds,
+          processedCount: 0,
+          totalCount: enrichedTargetAttributes.length,
+        }),
+      );
+
+      const applyResponse = (
+        response: STTMBuilderEnvelopeResponse,
+        targetNames: string[],
+        completedCount: number,
+      ) => {
+        autoMappingReviewHolder.current =
+          extractAutoMappingReview(response) ?? autoMappingReviewHolder.current;
+        semanticBundleId = response.data?.semantic_refresh_status?.bundle_id ?? semanticBundleId;
+        semanticViewName = extractSemanticViewNameFromStatus(
+          response.data?.semantic_refresh_status as Record<string, unknown> | undefined,
+          semanticViewName,
+        );
+        semanticContextItems =
+          normalizeSemanticContextItems(
+            response.context?.semantic_context as Array<Record<string, unknown>> | undefined,
+          ) ?? semanticContextItems;
+        semanticLineage = Array.isArray(response.context?.derived_source_lineage)
+          ? response.context.derived_source_lineage
+          : semanticLineage;
+        semanticDatahubContext =
+          (response.context?.datahub_context as Record<string, unknown> | null | undefined) ??
+          semanticDatahubContext;
+        processedCount = Math.max(processedCount, completedCount);
         dispatch(
-          autoMapBatchStarted({
-            processingIds: batchMappingIds,
+          autoMapBatchApplied({
+            response,
+            completedMappingIds: targetNames
+              .map((target) => mappingIdsByTarget.get(normalizeTargetKey(target)))
+              .filter((value): value is string => Boolean(value)),
             processedCount,
-            totalCount: targetAttributes.length,
+            totalCount: enrichedTargetAttributes.length,
           }),
         );
-        dispatch(
-          autoMapStreamStatus({
-            text: `Auto-mapping batch ${batchIndex + 1}/${attributeBatches.length} (${processedCount + 1}-${Math.min(processedCount + batch.length, targetAttributes.length)} of ${targetAttributes.length})...`,
-          }),
-        );
-        let response = null as Awaited<ReturnType<typeof workbenchService.invoke>> | null;
-        try {
-          for await (const event of workbenchService.invokeStream({
-            interface: "AUTO_MAP",
-            thread_id: null,
-            source_tables: selectedSourceTables.map((t) => makeTableRef(t.qualifiedName)),
-            target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
-            driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
-            relationships: buildRelationshipPayload(state.relationships),
-            semantic_context: semanticContextItems,
-            selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
-            selected_derived_sources: selectedDerivedSourceIds,
-            semantic_bundle_id: semanticBundleId,
-            semantic_view_name: semanticViewName,
-            derived_source_lineage: semanticLineage,
-            datahub_context: semanticDatahubContext,
-            surface: "MAPPING",
-            semantic_level_requested: "L3_MAPPING_ENRICHED",
-            attributes: batch,
-          })) {
-            if (event.event === "status") {
-              const statusText =
-                typeof event.data.message === "string" ? event.data.message : "";
-              if (statusText) {
-                dispatch(
-                  autoMapStreamStatus({
-                    text: `Batch ${batchIndex + 1}/${attributeBatches.length}: ${statusText}`,
-                  }),
-                );
-              }
-              continue;
-            }
-            if (event.event === "error") {
-              throw new Error(event.data.message || "Auto-map streaming request failed.");
-            }
-            if (event.event === "final") {
-              response = event.data;
-            }
+      };
+
+      let usedJobApi = false;
+      try {
+        const startedJob = await workbenchService.startAutoMapJob(autoMapRequest);
+        usedJobApi = true;
+        const appliedBatches = new Set<number>();
+        let job = startedJob;
+        let consecutivePollFailures = 0;
+        const deadline = Date.now() + 20 * 60 * 1000;
+        while (job.status === "queued" || job.status === "running") {
+          dispatch(
+            autoMapStreamStatus({
+              text: `Auto-map ${job.stage ?? job.status}: ${job.completed_attribute_count}/${job.attribute_count} targets completed across ${job.batch_count} adaptive batches.`,
+            }),
+          );
+          for (const partial of job.partial_responses ?? []) {
+            if (appliedBatches.has(partial.batch_index)) continue;
+            appliedBatches.add(partial.batch_index);
+            applyResponse(partial.response, partial.target_attributes, job.completed_attribute_count);
           }
-          if (!response) {
-            throw new Error(
-              `The auto-map stream ended without a final response for batch ${batchIndex + 1}.`,
+          if (Date.now() >= deadline) {
+            throw new Error("Auto-map job exceeded the 20-minute safety timeout.");
+          }
+          // One durable job is polled until completion. Polling does not launch
+          // agent batches; it only reads the latest durable state. A moderate
+          // cadence avoids flooding DevTools/Snowflake while preserving timely
+          // partial-result delivery.
+          const pollDelayMs = job.completed_batch_count > 0 ? 1500 : 2500;
+          await new Promise((resolve) => window.setTimeout(resolve, pollDelayMs));
+          try {
+            job = await workbenchService.getAutoMapJob(job.job_id);
+            consecutivePollFailures = 0;
+          } catch (pollError) {
+            const pollMessage = getErrorMessage(pollError, "Auto-map status request failed.");
+            const transient = /network error|timeout|timed out|fetch|connection|502|503|504/i.test(pollMessage);
+            consecutivePollFailures += 1;
+            if (!transient || consecutivePollFailures > 8) {
+              throw pollError;
+            }
+            const retryDelayMs = Math.min(15_000, 1_500 * (2 ** (consecutivePollFailures - 1)));
+            dispatch(
+              autoMapStreamStatus({
+                text: `Connection interrupted while checking Auto-map. The durable job is still running; retrying status (${consecutivePollFailures}/8).`,
+              }),
             );
+            await new Promise((resolve) => window.setTimeout(resolve, retryDelayMs));
           }
-          semanticBundleId =
-            response.data?.semantic_refresh_status?.bundle_id ?? semanticBundleId;
-          semanticViewName = extractSemanticViewNameFromStatus(
-            response.data?.semantic_refresh_status as Record<string, unknown> | undefined,
-            semanticViewName,
-          );
-          semanticContextItems =
-            normalizeSemanticContextItems(
-              response.context?.semantic_context as Array<Record<string, unknown>> | undefined,
-            ) ?? semanticContextItems;
-          semanticLineage = Array.isArray(response.context?.derived_source_lineage)
-            ? response.context.derived_source_lineage
-            : semanticLineage;
-          semanticDatahubContext =
-            (response.context?.datahub_context as Record<string, unknown> | null | undefined) ??
-            semanticDatahubContext;
-          processedCount += batch.length;
-          dispatch(
-            autoMapBatchApplied({
-              response,
-              completedMappingIds: batchMappingIds,
-              processedCount,
-              totalCount: targetAttributes.length,
-            }),
-          );
-        } catch (err) {
-          processedCount += batch.length;
-          failures.push(...batch.map((attribute) => attribute.target_attribute));
-          dispatch(
-            autoMapBatchFailed({
-              completedMappingIds: batchMappingIds,
-              processedCount,
-              totalCount: targetAttributes.length,
-              errorMessage: getErrorMessage(
-                err,
-                `Auto-map failed for batch ${batchIndex + 1}.`,
-              ),
-            }),
+        }
+        for (const partial of job.partial_responses ?? []) {
+          if (appliedBatches.has(partial.batch_index)) continue;
+          appliedBatches.add(partial.batch_index);
+          applyResponse(partial.response, partial.target_attributes, job.completed_attribute_count);
+        }
+        if (job.status === "failed") {
+          throw new Error(job.error?.message || "The Auto-map job failed.");
+        }
+        // The merged terminal response is authoritative. Reapply it even when
+        // partial batches were streamed so a missing/empty terminal partial
+        // cannot silently drop mappings. Application is idempotent, and rows
+        // with an unresolved decision remain UNMAPPED for review.
+        if (job.response) {
+          applyResponse(
+            job.response,
+            enrichedTargetAttributes.map((attribute) => attribute.target_attribute),
+            enrichedTargetAttributes.length,
           );
         }
+        processedCount = enrichedTargetAttributes.length;
+      } catch (jobError) {
+        const jobMessage = getErrorMessage(jobError, "");
+        const canUseCompatibilityStream =
+          !usedJobApi &&
+          /not an auto-map operation|worker service is not configured|404|not found/i.test(jobMessage);
+        if (!canUseCompatibilityStream) throw jobError;
+        dispatch(
+          autoMapStreamStatus({
+            text: "Durable Auto-map jobs are unavailable locally; using one compatibility request.",
+          }),
+        );
+        let response: STTMBuilderEnvelopeResponse | null = null;
+        for await (const event of workbenchService.invokeStream(autoMapRequest)) {
+          if (
+            (
+              event.event === "status" ||
+              event.event === "context.resolved" ||
+              event.event === "activity.started" ||
+              event.event === "activity.progress" ||
+              event.event === "activity.completed"
+            ) &&
+            typeof event.data.message === "string"
+          ) {
+            dispatch(autoMapStreamStatus({ text: event.data.message }));
+          } else if (event.event === "error" || event.event === "response.failed") {
+            throw new Error(event.data.message || "Auto-map streaming request failed.");
+          } else if (event.event === "final" || event.event === "response.completed") {
+            response = event.data;
+          }
+        }
+        if (!response) throw new Error("Auto-map returned no final response.");
+        applyResponse(
+          response,
+          enrichedTargetAttributes.map((attribute) => attribute.target_attribute),
+          enrichedTargetAttributes.length,
+        );
       }
       return {
         processedCount,
         totalCount: targetAttributes.length,
-        failedTargets: failures,
+        failedTargets:
+          autoMappingReviewHolder.current?.recommendations
+            .filter((item) => item.severity === "action_required")
+            .map((item) => item.target_attribute) ?? failures,
+        autoMappingReview: autoMappingReviewHolder.current,
+        reviewSummary: autoMappingReviewHolder.current
+          ? formatAutoMappingReview(autoMappingReviewHolder.current)
+          : null,
+        semanticBundleId,
+        semanticViewName,
+        semanticContextItems,
+        semanticLineage,
+        semanticDatahubContext,
       };
     } catch (err) {
       return rejectWithValue(getErrorMessage(err, "Auto-map failed."));
@@ -1938,8 +2922,8 @@ export const sendChatMessage = createAsyncThunk(
     const messageId = createChatMessageId();
     dispatch(assistantStreamStarted({ messageId }));
     const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
-    const selectedTargetTable = getSelectedTargetTable(state.targetDatabases);
-    const selectedSourceTables = getSelectedSourceTables(state.sourceDatabases).map((table) =>
+    const selectedTargetTable = resolveSelectedTargetTable(state);
+    const selectedSourceTables = resolveSelectedSourceTables(state).map((table) =>
       makeTableRef(table.qualifiedName),
     );
     const selectedMappingIds = state.selectedMappingIds;
@@ -1949,107 +2933,178 @@ export const sendChatMessage = createAsyncThunk(
     const isDerivedSourcePrompt = isDerivedSourceGenerationText(loweredMessage);
     const currentAssistantPage = getCurrentAssistantPage();
     const surface = getCurrentAssistantSurface(currentAssistantPage, isDerivedSourcePrompt);
-    const needsAnalystReadyContext =
-      currentAssistantPage !== "mapping" &&
-      (isDerivedSourcePrompt || isAnalystSqlText(loweredMessage));
-    const requestedSemanticLevel = currentAssistantPage === "mapping"
-      ? "L3_MAPPING_ENRICHED"
-      : needsAnalystReadyContext
-        ? "L2_ANALYST_READY"
-        : "L1_CONTEXT";
+    const chatTargetMappings = resolveChatTargetMappings(state, trimmed);
+    const requestedConstantValue =
+      chatTargetMappings.length === 1 ? parseRequestedConstantValue(trimmed) : null;
+    // Always use FULL_REGISTRY for the best agent experience - it provides full semantic views with reading instructions
+    const requestedSemanticLevel: SemanticLevel = "FULL_REGISTRY";
     const shouldUseStructuredTransformationIntent =
-      currentAssistantPage === "mapping" && isTransformationPrompt(loweredMessage);
-    const useDirectWorkbenchStream = isDerivedSourcePrompt || shouldUseStructuredTransformationIntent;
+      currentAssistantPage === "mapping" &&
+      chatTargetMappings.length > 0 &&
+      (isTransformationPrompt(loweredMessage) || isMappingMutationPrompt(loweredMessage));
+    // The STTM Builder is the single product-facing orchestrator. Do not make
+    // routing decisions from frontend keywords: the orchestrator decides
+    // whether to answer from prepared context or invoke Analyst/search/a
+    // specialist. This also avoids the extra general-conversation hop.
+    const useDirectWorkbenchStream = true;
     const selectedTableIds = [
-      ...getSelectedSourceTables(state.sourceDatabases).map((table) => table.qualifiedName),
+      ...resolveSelectedSourceTables(state).map((table) => table.qualifiedName),
       ...selectedDerivedSourceIds,
     ];
-    let semanticRefresh: SemanticRefreshResult | null = null;
+    const semanticRefresh: SemanticRefreshResult | null = null;
     let semanticBundleId = state.semanticBundleId;
-    let semanticViewName = state.semanticViewName;
-    let semanticContextItems = state.semanticContextItems;
-    let semanticLineage = state.semanticLineage;
-    let semanticDatahubContext = state.semanticDatahubContext;
-    let semanticLevelForRequest: SemanticLevel = requestedSemanticLevel;
-    let threadId =
-      isDerivedSourcePrompt || shouldUseStructuredTransformationIntent
-        ? null
-        : state.agentThreadId;
-    let parentMessageId =
-      isDerivedSourcePrompt || shouldUseStructuredTransformationIntent
-        ? null
-        : state.agentParentMessageId;
+    const semanticViewName = state.semanticViewName;
+    const semanticContextItems = state.semanticContextItems;
+    const semanticLineage = state.semanticLineage;
+    const semanticDatahubContext = state.semanticDatahubContext;
+    const semanticLevelForRequest: SemanticLevel = requestedSemanticLevel;
+    let semanticBundleHash = state.semanticBundleHash;
+    let learningContextId = state.learningContextId;
+    let learningContextHash = state.learningContextHash;
+    let workspaceContextId = state.workspaceContextId;
+    let workspaceContextHash = state.workspaceContextHash;
+    let threadId = state.agentThreadId;
+    let parentMessageId = state.agentParentMessageId;
     try {
-      const pushStatus = (text: string) =>
-        dispatch(assistantStreamStatus({ messageId, text }));
+      const pushStatus = (
+        text: string,
+        phase?: string | null,
+        elapsedSeconds?: number | null,
+      ) =>
+        dispatch(assistantStreamStatus({ messageId, text, phase, elapsedSeconds }));
 
-      if (
-        (selectedSourceTables.length > 0 || selectedDerivedSourceIds.length > 0) &&
-        (
-          (currentAssistantPage === "mapping" && useDirectWorkbenchStream) ||
-          (
-            needsAnalystReadyContext &&
-            (!semanticBundleId || !semanticViewName || !isAnalystReadyLevel(state.semanticLevel))
-          )
-        )
-      ) {
-        pushStatus(
-          currentAssistantPage === "mapping"
-            ? "Preparing mapping semantic context for the current selection."
-            : "Preparing analyst-ready semantic context for the current selection.",
-        );
-        semanticRefresh = await dbService.refreshSemanticContext({
-          selected_source_tables: selectedSourceTables,
-          selected_derived_sources: selectedDerivedSourceIds,
-          target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
-          relationships: relationships as Array<Record<string, unknown>>,
-          requested_level: currentAssistantPage === "mapping" ? "L3_MAPPING_ENRICHED" : "L2_ANALYST_READY",
-          force: false,
-        });
-        const promotedBundleChanged =
-          semanticRefresh.bundle_id !== state.semanticBundleId ||
-          (semanticRefresh.semantic_view_name ?? null) !== (state.semanticViewName ?? null) ||
-          !isAnalystReadyLevel(state.semanticLevel);
-        semanticBundleId = semanticRefresh.bundle_id;
-        semanticViewName = semanticRefresh.semantic_view_name ?? null;
-        semanticContextItems =
-          (semanticRefresh.semantic_context as SemanticContextItem[] | null | undefined) ??
-          semanticContextItems;
-        semanticLineage = semanticRefresh.lineage ?? semanticLineage;
-        semanticDatahubContext = semanticRefresh.datahub_context ?? semanticDatahubContext;
-        semanticLevelForRequest =
-          (semanticRefresh.achieved_level as SemanticLevel | undefined) ?? requestedSemanticLevel;
-        if (promotedBundleChanged) {
-          threadId = null;
-          parentMessageId = null;
-        }
+      if (requestedConstantValue && chatTargetMappings.length === 1) {
+        return {
+          userMessage: trimmed,
+          response: buildConstantMappingProposal(
+            state,
+            chatTargetMappings[0],
+            requestedConstantValue,
+          ),
+          selectedTableIds,
+          drivingTableId: state.drivingTableId,
+          selectedMappingIds: [chatTargetMappings[0].id],
+          semanticRefresh,
+          messageId,
+        };
       }
 
+      const rawWorkspaceContextForAgent = snapshotFromState(
+        state,
+        shouldUseStructuredTransformationIntent
+          ? "transformation.requested"
+          : "assistant.requested",
+        {
+          page: currentAssistantPage,
+          surface,
+          semanticBundleId,
+          semanticViewName,
+        },
+      );
+      const {
+        workspace: workspaceContextForAgent,
+        dependencyHash: workspaceSnapshotHash,
+      } = preparedWorkspaceSnapshot(
+        rawWorkspaceContextForAgent as unknown as Record<string, unknown>,
+      );
+      const hasSelectedWorkspace =
+        selectedSourceTables.length > 0 ||
+        selectedDerivedSourceIds.length > 0 ||
+        Boolean(selectedTargetTable);
+      const hasPreparedWorkspaceContext = Boolean(
+        workspaceContextId && workspaceContextHash,
+      );
+      const preparedContextMatchesCurrentWorkspace = Boolean(
+        hasPreparedWorkspaceContext
+        && state.workspaceContextSnapshotHash === workspaceSnapshotHash,
+      );
+      // Context preparation is deliberately background-only.  When the selection
+      // changes, keep using the last valid immutable context as a baseline and send
+      // the current workspace as an authoritative overlay.  This avoids blocking
+      // every question for a full semantic/FIR rebuild while still giving the
+      // orchestrator the newly selected tables, columns, joins, and target.
+      const sendLiveWorkspaceOverlay =
+        hasSelectedWorkspace && !preparedContextMatchesCurrentWorkspace;
+      const sendLiveSemanticOverlay =
+        sendLiveWorkspaceOverlay || !hasPreparedWorkspaceContext;
+      const transformationAttributes = shouldUseStructuredTransformationIntent && selectedTargetTable
+        ? chatTargetMappings.map((mapping) => ({
+            target_table: makeTableRef(selectedTargetTable.qualifiedName),
+            target_attribute: mapping.targetColumn,
+            target_data_type: mapping.targetType ?? null,
+            target_description:
+              mapping.description ??
+              mapping.nlRule ??
+              findTargetDescription(
+                semanticContextItems,
+                selectedTargetTable.qualifiedName,
+                mapping.targetColumn,
+              ),
+            // Derived relations are represented in relation_graph. Physical
+            // source mappings are included here when their four-part FQN is known.
+            source_mappings: (
+              mapping.sourceColumns ??
+              (mapping.sourceColumn
+                ? mapping.sourceColumn.split(",").map((item) => item.trim()).filter(Boolean)
+                : [])
+            )
+              .flatMap((source) => {
+                const parts = source.split(".");
+                if (parts.length !== 4) return [];
+                return [{
+                  table: { database: parts[0], schema: parts[1], table: parts[2] },
+                  attribute: parts[3],
+                }];
+              }) || null,
+          }))
+        : null;
       const stream = useDirectWorkbenchStream
         ? workbenchService.invokeStream({
             interface: shouldUseStructuredTransformationIntent ? "TRANSFORM" : "CHAT",
-            thread_id: null,
-            parent_message_id: null,
+          thread_id: threadId,
+          logical_conversation_id: state.agentLogicalConversationId,
+          physical_thread_segment: state.agentPhysicalThreadSegment,
+          parent_message_id: threadId ? parentMessageId : null,
             message: trimmed,
+            attributes: transformationAttributes,
             source_tables: selectedSourceTables,
             target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
             driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
             relationships,
+            relation_graph: buildRelationGraph(
+              resolveSelectedSourceTables(state),
+              state.derivedSources,
+              state.relationships,
+              state.mappings,
+            ),
             selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
             selected_derived_sources: selectedDerivedSourceIds,
-            semantic_context: semanticContextItems,
+            semantic_context: sendLiveSemanticOverlay ? semanticContextItems : null,
             surface,
             semantic_level_requested: semanticLevelForRequest,
             session_id: state.session ? String(state.session.user_id) : null,
             semantic_bundle_id: semanticBundleId,
+            semantic_bundle_hash: semanticBundleHash,
+            learning_context_id: learningContextId,
+            learning_context_hash: learningContextHash,
+            workspace_context_id: workspaceContextId,
+            workspace_context_hash: workspaceContextHash,
             semantic_view_name: semanticViewName,
-            derived_source_lineage: semanticLineage,
-            datahub_context: semanticDatahubContext,
+            derived_source_lineage: sendLiveSemanticOverlay ? semanticLineage : null,
+            datahub_context: sendLiveSemanticOverlay ? semanticDatahubContext : null,
             mapping_intent: state.mappingIntent,
+            project_id: state.activeProjectId,
+            sttm_id: state.activeSttmId,
+            workspace_context:
+              sendLiveWorkspaceOverlay || !hasPreparedWorkspaceContext
+                ? workspaceContextForAgent
+                : null,
           })
         : conversationService.invokeStream({
             operation: "conversation.ask",
             thread_id: threadId,
+            logical_conversation_id: state.agentLogicalConversationId,
+            physical_thread_segment: state.agentPhysicalThreadSegment,
             parent_message_id: threadId ? parentMessageId : null,
             session_id: state.session ? String(state.session.user_id) : null,
             message: trimmed,
@@ -2060,19 +3115,75 @@ export const sendChatMessage = createAsyncThunk(
             selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
             selected_derived_sources: selectedDerivedSourceIds,
             requested_sources: ["relationships", "semantic", "recommendations", "feedback", "conversations"],
-            semantic_context: semanticContextItems,
+            semantic_context: sendLiveSemanticOverlay ? semanticContextItems : null,
             semantic_bundle_label: state.semanticBundleLabel,
             semantic_bundle_id: semanticBundleId,
+            semantic_bundle_hash: semanticBundleHash,
+            learning_context_id: learningContextId,
+            learning_context_hash: learningContextHash,
+            workspace_context_id: workspaceContextId,
+            workspace_context_hash: workspaceContextHash,
             semantic_view_name: semanticViewName,
-            derived_source_lineage: semanticLineage,
-            datahub_context: semanticDatahubContext,
+            derived_source_lineage: sendLiveSemanticOverlay ? semanticLineage : null,
+            datahub_context: sendLiveSemanticOverlay ? semanticDatahubContext : null,
             surface,
             semantic_level_requested: semanticLevelForRequest,
             mapping_intent: state.mappingIntent,
+            project_id: state.activeProjectId,
+            sttm_id: state.activeSttmId,
+            workspace_context:
+              sendLiveWorkspaceOverlay || !hasPreparedWorkspaceContext
+                ? workspaceContextForAgent
+                : null,
+            checked_mapping_row_ids: selectedMappingIds.length > 0 ? selectedMappingIds : null,
+            mapping_rows: selectedMappingIds.length > 0
+              ? state.mappings
+                  .filter((m) => selectedMappingIds.includes(m.id))
+                  .map((m) => ({
+                    id: m.id,
+                    target_column: m.targetColumn,
+                    source_column: m.sourceColumn,
+                    source_columns: m.sourceColumns ?? [],
+                    mapping_mode: m.mappingMode ?? "source",
+                    constant_value: m.constantValue ?? null,
+                    expression: m.expression,
+                    rule: m.rule,
+                    status: m.status,
+                    confidence_score: m.confidenceScore,
+                  }))
+              : null,
           });
       let response = null as AssistantEnvelopeResponse | null;
+      let answerDeltaMode: "undecided" | "plain" | "structured" = "undecided";
+      let pendingAnswerDelta = "";
+      const visibleAnswerDelta = (delta: string): string => {
+        if (answerDeltaMode === "structured") return "";
+        if (answerDeltaMode === "plain") return delta;
+        pendingAnswerDelta += delta;
+        const candidate = pendingAnswerDelta.trimStart();
+        if (!candidate) return "";
+        const structuredPrefixes = ["{", "```json", "```JSON"];
+        if (structuredPrefixes.some((prefix) => candidate.startsWith(prefix))) {
+          answerDeltaMode = "structured";
+          pendingAnswerDelta = "";
+          return "";
+        }
+        if (structuredPrefixes.some((prefix) => prefix.startsWith(candidate))) {
+          return "";
+        }
+        answerDeltaMode = "plain";
+        const visible = pendingAnswerDelta;
+        pendingAnswerDelta = "";
+        return visible;
+      };
       for await (const event of stream) {
-        if (event.event === "status") {
+        if (
+          event.event === "status" ||
+          event.event === "context.resolved" ||
+          event.event === "activity.started" ||
+          event.event === "activity.progress" ||
+          event.event === "activity.completed"
+        ) {
           let statusText =
             typeof event.data.message === "string" ? event.data.message : "";
           if (
@@ -2081,14 +3192,32 @@ export const sendChatMessage = createAsyncThunk(
           ) {
             statusText = "Looking for an existing semantic context for this selection.";
           }
-          if (statusText) pushStatus(statusText);
+          const phase = typeof event.data.phase === "string" ? event.data.phase : null;
+          const elapsedSeconds = typeof event.data.elapsed_seconds === "number" ? event.data.elapsed_seconds : null;
+          if (statusText) pushStatus(statusText, phase, elapsedSeconds);
           continue;
         }
-        if (event.event === "delta" && typeof event.data.text === "string") {
-          dispatch(assistantStreamDelta({ messageId, text: event.data.text }));
+        if (
+          (event.event === "delta" || event.event === "response.text.delta") &&
+          typeof event.data.text === "string"
+        ) {
+          const visible = visibleAnswerDelta(event.data.text);
+          if (visible) {
+            dispatch(assistantStreamDelta({ messageId, text: visible }));
+          }
           continue;
         }
-        if (event.event === "suggestions" && Array.isArray(event.data.items)) {
+        if (
+          event.event === "response.sql.delta" &&
+          typeof event.data.text === "string"
+        ) {
+          dispatch(assistantStreamSqlDelta({ messageId, text: event.data.text }));
+          continue;
+        }
+        if (
+          (event.event === "suggestions" || event.event === "suggestions.delta") &&
+          Array.isArray(event.data.items)
+        ) {
           dispatch(
             assistantStreamOptions({
               messageId,
@@ -2097,10 +3226,16 @@ export const sendChatMessage = createAsyncThunk(
           );
           continue;
         }
-        if (event.event === "error") {
-          throw new Error(event.data.message || "Streaming assistant request failed.");
+        if (event.event === "error" || event.event === "response.failed") {
+          const nested = "error" in event.data ? event.data.error : null;
+          throw new Error(
+            event.data.message ||
+              nested?.detail ||
+              nested?.title ||
+              "Streaming assistant request failed."
+          );
         }
-        if (event.event === "final") {
+        if (event.event === "final" || event.event === "response.completed") {
           response = event.data as AssistantEnvelopeResponse;
         }
       }
@@ -2112,8 +3247,11 @@ export const sendChatMessage = createAsyncThunk(
         response,
         selectedTableIds,
         drivingTableId: state.drivingTableId,
-        selectedMappingIds,
+        selectedMappingIds: shouldUseStructuredTransformationIntent
+          ? chatTargetMappings.map((mapping) => mapping.id)
+          : selectedMappingIds,
         semanticRefresh,
+        workspaceSnapshotHash,
         messageId,
       };
     } catch (err) {
@@ -2149,8 +3287,7 @@ export const submitChatFeedback = createAsyncThunk(
         operation: "conversation.feedback",
         message: "",
         thread_id: payload.conversationId ?? state.agentThreadId,
-        source_tables: state.sources
-          .filter((table) => table.isSelected)
+        source_tables: resolveSelectedSourceTables(state)
           .map((table) => makeTableRef(table.qualifiedName)),
         relationships: buildRelationshipPayload(state.relationships),
         selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
@@ -2162,7 +3299,7 @@ export const submitChatFeedback = createAsyncThunk(
         derived_source_lineage: state.semanticLineage,
         datahub_context: state.semanticDatahubContext,
         surface: state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION",
-        semantic_level_requested: (state.semanticLevel as any) ?? "L1_CONTEXT",
+        semantic_level_requested: (state.semanticLevel as SemanticLevel | null) ?? "FULL_REGISTRY",
         session_id: state.session ? String(state.session.user_id) : null,
         mapping_intent: state.mappingIntent,
         feedback: {
@@ -2208,64 +3345,69 @@ export const updateAssistantPreferences = createAsyncThunk(
   },
 );
 
-export const evaluateAssistantSignals = createAsyncThunk(
-  "sttmBuilder/evaluateAssistantSignals",
+let _firRecommendationCorrelationCounter = 0;
+
+export function abortPendingEvaluateSignals() {
+  // Invalidate a result that belongs to an older workspace snapshot without
+  // cancelling its HTTP request. Browser-level cancellation made healthy,
+  // superseded evaluations appear as failed requests in DevTools.
+  _firRecommendationCorrelationCounter += 1;
+}
+
+export const evaluateFirRecommendations = createAsyncThunk(
+  "sttmBuilder/evaluateFirRecommendations",
   async (
     payload: {
-      activityType?: string;
-      page?: "builder" | "mapping" | "summary";
-      surface?: "SOURCE_SELECTION" | "MAPPING";
-    } | undefined,
-    { getState, rejectWithValue },
+      checkpoint: string;
+      page?: string;
+      surface?: string;
+      scopeType?: "project" | "schema" | "table" | "table_set" | "target" | "mapping" | "column" | "derived_source";
+      candidateAction?: string | null;
+      browsingContext?: {
+        side?: "source" | "target" | null;
+        database?: string | null;
+        schema?: string | null;
+        visible_candidate_tables?: string[];
+        search_text?: string | null;
+      } | null;
+    },
+    { getState, rejectWithValue, signal },
   ) => {
+    const correlationId = `fir_eval_${++_firRecommendationCorrelationCounter}`;
     const state = (getState() as { sttmBuilder: SttmBuilderState }).sttmBuilder;
     try {
-      const selectedSourceTables = state.sources
-        .filter((table) => table.isSelected)
-        .map((table) => makeTableRef(table.qualifiedName));
-      const selectedDerivedSourceIds = getSelectedDerivedSourceIds(state.derivedSources);
-      const selectedTargetTable = state.targets.find((table) => table.isSelected);
-      return await conversationService.evaluateSignals({
-        activity_type: payload?.activityType ?? (state.targetAttributeGroup ? "mapping_context_changed" : "selection_changed"),
-        page: payload?.page ?? (state.targetAttributeGroup ? "mapping" : "builder"),
-        session_id: state.session ? String(state.session.user_id) : null,
-        source_tables: selectedSourceTables,
-        target_table: selectedTargetTable ? makeTableRef(selectedTargetTable.qualifiedName) : null,
-        driving_table: state.drivingTableId ? makeTableRef(state.drivingTableId) : null,
-        relationships: buildRelationshipPayload(state.relationships),
-        selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
-        selected_derived_sources: selectedDerivedSourceIds,
-        semantic_bundle_id: state.semanticBundleId,
-        semantic_bundle_label: state.semanticBundleLabel,
-        semantic_view_name: state.semanticViewName,
-        surface: payload?.surface ?? (state.targetAttributeGroup ? "MAPPING" : "SOURCE_SELECTION"),
-        mapping_summary: {
-          mapped_count: state.mappings.filter((item) => item.status === "MAPPED").length,
-          unmapped_count: state.mappings.filter((item) => item.status !== "MAPPED").length,
-          selected_mapping_count: state.selectedMappingIds.length,
-        },
-        mapping_intent: state.mappingIntent,
+      const snapshot = snapshotFromState(state, payload.checkpoint, {
+        page: payload.page,
+        surface: payload.surface,
+        milestone: payload.checkpoint,
+        scopeType: payload.scopeType,
+        candidateAction: payload.candidateAction,
+        browsingContext: payload.browsingContext,
       });
+      const result = await recommendationService.evaluate(snapshot, {
+        checkpoint: payload.checkpoint,
+        projectId: state.activeProjectId,
+        signal,
+      });
+      return { ...result, _correlationId: correlationId };
     } catch (err) {
-      const errorCode =
-        typeof err === "object" && err !== null && "code" in err ? String((err as { code?: unknown }).code ?? "") : "";
-      const errorName =
-        typeof err === "object" && err !== null && "name" in err ? String((err as { name?: unknown }).name ?? "") : "";
-      const isTimeout =
-        typeof err === "object" &&
-        err !== null &&
-        "message" in err &&
-        String((err as { message?: unknown }).message ?? "").toLowerCase().includes("timeout");
-      if (errorCode === "ERR_CANCELED" || errorName === "CanceledError" || errorName === "AbortError" || isTimeout) {
+      const name =
+        typeof err === "object" && err !== null && "name" in err
+          ? String((err as { name?: unknown }).name ?? "")
+          : "";
+      if (name === "CanceledError" || name === "AbortError") {
         return {
-          settings: state.assistantPreferences,
-          signals: state.assistantSignals,
-          inferences: state.assistantInferences,
-          unread_count: state.assistantUnreadCount,
-          mapping_intent: state.mappingIntent,
+          checkpoint: payload.checkpoint,
+          context_key: "",
+          scope_key: "",
+          primary_question: null,
+          items: [],
+          total: 0,
+          _correlationId: correlationId,
+          _cancelled: true,
         };
       }
-      return rejectWithValue(getErrorMessage(err, "Could not evaluate assistant signals."));
+      return rejectWithValue(getErrorMessage(err, "Could not retrieve FIR recommendations."));
     }
   },
 );
@@ -2301,11 +3443,47 @@ export const respondToAssistantSignal = createAsyncThunk(
   },
 );
 
+// ─── openSttmFromBackend thunk ──────────────────────────────────────
+/**
+ * Load a saved STTM from Snowflake into the builder.
+ *
+ * Fetches the full STTMDetail from the backend, reconstructs the builder state
+ * (sources, targets, mapping rows, relationships) from the saved workspace snapshot
+ * and metadata rows, and signals the target builder page for navigation.
+ *
+ * Attribute/column groups are intentionally left empty — the mapping page auto-fetches
+ * them on mount via its selectedSourceKey/selectedTargetKey effect.
+ */
+export const openSttmFromBackend = createAsyncThunk(
+  'sttmBuilder/openSttmFromBackend',
+  async (
+    { sttmId, projectId }: { sttmId: string; projectId: string },
+    { rejectWithValue },
+  ) => {
+    try {
+      const detail = await getSttm(sttmId);
+      return { sttmId, projectId, detail };
+    } catch (err) {
+      return rejectWithValue(getErrorMessage(err, 'Failed to load STTM from Snowflake.'));
+    }
+  },
+);
+
 // ─── slice ─────────────────────────────────────────────────────────
 export const sttmBuilderSlice = createSlice({
   name: "sttmBuilder",
   initialState,
   reducers: {
+    clearAssistantSignalsForContext: (state) => {
+      state.assistantSignals = [];
+      state.assistantInferences = [];
+      state.assistantUnreadCount = 0;
+      state.firRecommendations = [];
+      state.firPrimaryQuestion = null;
+      state.firRecommendationCheckpoint = null;
+      state.firRecommendationContextKey = null;
+      state.firRecommendationLoading = false;
+    },
     assistantStreamStarted: (state, action: PayloadAction<{ messageId: string }>) => {
       state.chatMessages.push({
         id: action.payload.messageId,
@@ -2314,6 +3492,9 @@ export const sttmBuilderSlice = createSlice({
         isStreaming: true,
         status: "completed",
         traceSteps: [],
+        statusPhase: "preparing",
+        statusMessage: "Preparing context for your request...",
+        elapsedSeconds: null,
       });
     },
     assistantStreamDelta: (
@@ -2325,13 +3506,35 @@ export const sttmBuilderSlice = createSlice({
       message.content = `${message.content}${action.payload.text}`;
       message.isStreaming = true;
     },
-    assistantStreamStatus: (
+    assistantStreamSqlDelta: (
       state,
       action: PayloadAction<{ messageId: string; text: string }>
     ) => {
       const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
       if (!message) return;
+      message.streamingSql = `${message.streamingSql ?? ""}${action.payload.text}`;
+      message.isStreaming = true;
+    },
+    assistantStreamStatus: (
+      state,
+      action: PayloadAction<{
+        messageId: string;
+        text: string;
+        phase?: string | null;
+        elapsedSeconds?: number | null;
+      }>
+    ) => {
+      const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
+      if (!message) return;
       const text = action.payload.text.trim();
+      // Update status phase and message for progress indicator
+      if (action.payload.phase) {
+        message.statusPhase = action.payload.phase as ChatMessage["statusPhase"];
+        message.statusMessage = text || null;
+      }
+      if (action.payload.elapsedSeconds !== undefined) {
+        message.elapsedSeconds = action.payload.elapsedSeconds;
+      }
       if (!text) return;
       const existingSteps = message.traceSteps ?? [];
       if (existingSteps.includes(text)) return;
@@ -2367,6 +3570,10 @@ export const sttmBuilderSlice = createSlice({
       message.status = action.payload.status ?? "completed";
       message.options = action.payload.options ?? message.options;
       message.isStreaming = false;
+      // Clear status phase when streaming is finished
+      message.statusPhase = null;
+      message.statusMessage = null;
+      message.elapsedSeconds = null;
     },
     assistantStreamFailed: (
       state,
@@ -2374,9 +3581,14 @@ export const sttmBuilderSlice = createSlice({
     ) => {
       const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
       if (message) {
-        message.content = action.payload.errorMessage;
+        message.content = message.content.trim()
+          ? `${message.content}\n\n> Response interrupted: ${action.payload.errorMessage}`
+          : action.payload.errorMessage;
         message.status = "failed";
         message.isStreaming = false;
+        message.statusPhase = null;
+        message.statusMessage = null;
+        message.elapsedSeconds = null;
         return;
       }
       state.chatMessages.push({
@@ -2408,9 +3620,59 @@ export const sttmBuilderSlice = createSlice({
     ) => {
       applySemanticRefreshToState(state, action.payload);
     },
+    markPreparedWorkspaceContextUpdating: (
+      state,
+      action: PayloadAction<{ snapshotHash: string }>,
+    ) => {
+      // Preserve the last good immutable context while the replacement builds.
+      // workspaceContextSnapshotHash always describes the installed handle;
+      // the pending hash describes the live workspace currently being prepared.
+      state.workspaceContextPendingSnapshotHash = action.payload.snapshotHash;
+      state.workspaceContextStatus = "updating";
+      state.workspaceContextError = null;
+    },
+    applyPreparedWorkspaceContext: (
+      state,
+      action: PayloadAction<{
+        context: PreparedWorkspaceContext;
+        snapshotHash: string;
+      }>,
+    ) => {
+      const prepared = action.payload.context;
+      state.workspaceContextId = prepared.workspace_context_id;
+      state.workspaceContextHash = prepared.workspace_context_hash;
+      state.workspaceContextSnapshotHash = action.payload.snapshotHash;
+      state.workspaceContextPendingSnapshotHash = null;
+      state.workspaceContextStatus =
+        prepared.status === "ready" ? "ready" : prepared.status;
+      state.workspaceContextCacheStatus = prepared.cache_status;
+      state.workspaceContextError =
+        prepared.status === "failed"
+          ? (prepared.warnings ?? []).join("; ") || "AI context preparation failed."
+          : null;
+      state.semanticBundleId = prepared.semantic_bundle_id ?? state.semanticBundleId;
+      state.semanticBundleHash =
+        prepared.semantic_bundle_hash ?? state.semanticBundleHash;
+      state.learningContextId =
+        prepared.learning_context_id ?? state.learningContextId;
+      state.learningContextHash =
+        prepared.learning_context_hash ?? state.learningContextHash;
+    },
+    failPreparedWorkspaceContext: (
+      state,
+      action: PayloadAction<{ snapshotHash: string; error: string }>,
+    ) => {
+      if (state.workspaceContextPendingSnapshotHash !== action.payload.snapshotHash) return;
+      state.workspaceContextPendingSnapshotHash = null;
+      // A failed refresh must not invalidate the last usable context.
+      state.workspaceContextStatus =
+        state.workspaceContextId && state.workspaceContextHash ? "ready" : "failed";
+      state.workspaceContextError = action.payload.error;
+    },
     toggleSource: (state, action: PayloadAction<{ tableId: string }>) => {
       const { tableId } = action.payload;
       let toggledSelected: boolean | undefined;
+      let toggledTable: TableNode | undefined;
 
       for (const db of state.sourceDatabases) {
         for (const sch of db.schemas) {
@@ -2418,8 +3680,18 @@ export const sttmBuilderSlice = createSlice({
             if (t.tableId === tableId) {
               t.isSelected = !t.isSelected;
               toggledSelected = t.isSelected;
+              toggledTable = { ...t };
             }
           }
+        }
+      }
+
+      // Imported/saved mappings hydrate the flat list before the user expands
+      // the corresponding schema. Those tables must remain fully interactive.
+      if (toggledSelected === undefined) {
+        const flatTable = state.sources.find((table) => table.tableId === tableId);
+        if (flatTable) {
+          toggledSelected = !flatTable.isSelected;
         }
       }
 
@@ -2428,14 +3700,35 @@ export const sttmBuilderSlice = createSlice({
           ? { ...t, isSelected: toggledSelected }
           : t,
       );
+      // The relationship canvas resolves selection from the complete database
+      // hierarchy, while the Source Tables list renders the flat collection.
+      // A table dragged from a schema that is not the currently active schema
+      // must be represented in both collections.
+      if (
+        toggledSelected &&
+        toggledTable &&
+        !state.sources.some((table) => table.tableId === tableId)
+      ) {
+        state.sources.push(toggledTable);
+      }
 
-      const selectedSources = getSelectedSourceTables(state.sourceDatabases);
+      const selectedSources = resolveSelectedSourceTables(state);
       if (toggledSelected && !state.drivingTableId) {
         state.drivingTableId = tableId;
       } else if (!toggledSelected && state.drivingTableId === tableId) {
         state.drivingTableId = selectedSources.find((t) => t.isSelected)?.tableId ?? null;
       }
+      if (!toggledSelected) {
+        state.relationships = state.relationships.filter(
+          (join) => join.leftTableId !== tableId && join.rightTableId !== tableId,
+        );
+        state.sourceAttributeGroups = state.sourceAttributeGroups.filter(
+          (group) => group.qualifiedName !== tableId,
+        );
+      }
       state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
       state.agentParentMessageId = null;
       state.semanticBundleId = null;
       state.semanticBundleLabel = null;
@@ -2471,6 +3764,8 @@ export const sttmBuilderSlice = createSlice({
         }
       }
       state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
       state.agentParentMessageId = null;
       state.semanticBundleId = null;
       state.semanticBundleLabel = null;
@@ -2486,6 +3781,27 @@ export const sttmBuilderSlice = createSlice({
       state.pendingAiMappingReviews = [];
     },
 
+    selectAllSources: (state) => {
+      let firstSelectedId: string | null = null;
+
+      for (const db of state.sourceDatabases) {
+        for (const sch of db.schemas) {
+          for (const t of sch.tables) {
+            t.isSelected = true;
+            if (!firstSelectedId) {
+              firstSelectedId = t.tableId;
+            }
+          }
+        }
+      }
+
+      state.sources = state.sources.map((t) => ({ ...t, isSelected: true }));
+
+      if (!state.drivingTableId && firstSelectedId) {
+        state.drivingTableId = firstSelectedId;
+      }
+    },
+
     clearSources: (state) => {
       state.sources = state.sources.map((t) => ({ ...t, isSelected: false }));
       for (const db of state.sourceDatabases) {
@@ -2496,6 +3812,8 @@ export const sttmBuilderSlice = createSlice({
         }
       }
       state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
       state.agentParentMessageId = null;
       state.drivingTableId = null;
       state.relationships = [];
@@ -2551,6 +3869,8 @@ export const sttmBuilderSlice = createSlice({
         }
       }
       state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
       state.agentParentMessageId = null;
       state.targetAttributeGroup = null;
       state.mappingSuggestions = [];
@@ -2560,6 +3880,8 @@ export const sttmBuilderSlice = createSlice({
 
     setDrivingTable: (state, action: PayloadAction<{ tableId: string | null }>) => {
       state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
       state.agentParentMessageId = null;
       state.drivingTableId = action.payload.tableId;
       state.sourceQuerySql = "";
@@ -2568,6 +3890,8 @@ export const sttmBuilderSlice = createSlice({
 
     setRelationships: (state, action: PayloadAction<{ joins: JoinConfig[] }>) => {
       state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
       state.agentParentMessageId = null;
       state.relationships = action.payload.joins;
       state.sourceQuerySql = "";
@@ -2600,6 +3924,8 @@ export const sttmBuilderSlice = createSlice({
           : source
       );
       state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
       state.agentParentMessageId = null;
       state.semanticBundleId = null;
       state.semanticBundleLabel = null;
@@ -2631,9 +3957,30 @@ export const sttmBuilderSlice = createSlice({
       state.pendingDerivedSourceDraft = null;
       state.derivedSourceDraftRequested = false;
     },
+    resetChatSession: (state) => {
+      state.chatMessages = [currentAssistantWelcome()];
+      state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
+      state.agentParentMessageId = null;
+    },
+    restoreChatSession: (
+      state,
+      action: PayloadAction<{ messages: ChatMessage[] }>,
+    ) => {
+      state.chatMessages = upgradeAssistantWelcome(action.payload.messages);
+      state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
+      state.agentParentMessageId = null;
+    },
     hydrateBuilderSession: (state, action: PayloadAction<PersistedSttmBuilderSession>) => {
       state.sourceDatabases = action.payload.sourceDatabases;
       state.targetDatabases = action.payload.targetDatabases;
+      // Restore cache metadata if available, otherwise keep defaults
+      if (action.payload.cacheMetadata) {
+        state.cacheMetadata = action.payload.cacheMetadata;
+      }
       state.sources = action.payload.sources;
       state.targets = action.payload.targets;
       state.sourceInfo = action.payload.sourceInfo;
@@ -2641,16 +3988,37 @@ export const sttmBuilderSlice = createSlice({
       state.sourceAttributeGroups = action.payload.sourceAttributeGroups;
       state.targetAttributeGroup = action.payload.targetAttributeGroup;
       state.mappingSuggestions = action.payload.mappingSuggestions;
-      state.chatMessages = action.payload.chatMessages.length
-        ? action.payload.chatMessages
-        : initialState.chatMessages;
+      state.chatMessages = upgradeAssistantWelcome(action.payload.chatMessages);
       state.assistantSignals = action.payload.assistantSignals;
       state.assistantInferences = action.payload.assistantInferences;
       state.assistantUnreadCount = action.payload.assistantUnreadCount;
+      // Recommendations are server-scoped runtime data. Never restore them from
+      // a browser draft because doing so can leak cards across mappings/users.
+      state.firRecommendations = [];
+      state.firPrimaryQuestion = null;
+      state.firRecommendationLoading = false;
+      state.firRecommendationCheckpoint = null;
+      state.firRecommendationContextKey = null;
       state.mappingIntent = action.payload.mappingIntent;
       state.agentThreadId = action.payload.agentThreadId;
+      state.agentLogicalConversationId = action.payload.agentLogicalConversationId ?? null;
+      state.agentPhysicalThreadSegment = action.payload.agentPhysicalThreadSegment ?? null;
       state.agentParentMessageId = action.payload.agentParentMessageId;
       state.semanticBundleId = action.payload.semanticBundleId;
+      state.semanticBundleHash = action.payload.semanticBundleHash ?? null;
+      state.learningContextId = action.payload.learningContextId ?? null;
+      state.learningContextHash = action.payload.learningContextHash ?? null;
+      state.workspaceContextId = action.payload.workspaceContextId ?? null;
+      state.workspaceContextHash = action.payload.workspaceContextHash ?? null;
+      state.workspaceContextSnapshotHash =
+        action.payload.workspaceContextSnapshotHash ?? null;
+      state.workspaceContextPendingSnapshotHash =
+        action.payload.workspaceContextPendingSnapshotHash ?? null;
+      state.workspaceContextStatus =
+        action.payload.workspaceContextStatus ?? "idle";
+      state.workspaceContextCacheStatus =
+        action.payload.workspaceContextCacheStatus ?? null;
+      state.workspaceContextError = action.payload.workspaceContextError ?? null;
       state.semanticBundleLabel = action.payload.semanticBundleLabel;
       state.semanticLevel = action.payload.semanticLevel;
       state.semanticStatus = action.payload.semanticStatus;
@@ -2675,13 +4043,59 @@ export const sttmBuilderSlice = createSlice({
       state.mappingSql = action.payload.mappingSql;
       state.mappingPreviewSql = action.payload.mappingPreviewSql;
       state.mappingSqlVariant = action.payload.mappingSqlVariant;
+      state.compiledMappingSql = action.payload.compiledMappingSql ?? "";
+      state.compiledMappingPreviewSql = action.payload.compiledMappingPreviewSql ?? "";
+      state.compiledMappingContextHash = action.payload.compiledMappingContextHash ?? null;
       state.isPreProcessModalOpen = action.payload.isPreProcessModalOpen;
       state.activeMappingId = action.payload.activeMappingId;
       state.pendingAiMappingReviews = action.payload.pendingAiMappingReviews;
+      state.activeSttmId = action.payload.activeSttmId ?? null;
+      state.activeProjectId = action.payload.activeProjectId ?? null;
+      state.activeSttmName = action.payload.activeSttmName ?? null;
+      state.activeProjectName = action.payload.activeProjectName ?? null;
+      state.activeSnapshotId = action.payload.activeSnapshotId ?? null;
+      state.sessionSavedAt = action.payload.sessionSavedAt ?? null;
       state.mappingLoading = false;
       state.chatLoading = false;
       state.autoMapStatusMessage = null;
       state.autoMapProcessingIds = [];
+    },
+
+    resetBuilderForNewMapping: (state) => {
+      const sourceDatabases = cloneBranch(state.sourceDatabases).map((database) => ({
+        ...database,
+        isSelected: false,
+        schemas: database.schemas.map((schema) => ({
+          ...schema,
+          isSelected: false,
+          tables: schema.tables.map((table) => ({ ...table, isSelected: false })),
+        })),
+      }));
+      const targetDatabases = cloneBranch(state.targetDatabases).map((database) => ({
+        ...database,
+        isSelected: false,
+        schemas: database.schemas.map((schema) => ({
+          ...schema,
+          isSelected: false,
+          tables: schema.tables.map((table) => ({ ...table, isSelected: false })),
+        })),
+      }));
+      const session = state.session;
+      const cacheMetadata = state.cacheMetadata;
+      const initialStatus = state.loadState.initial;
+      const derivedSources = state.derivedSources.map((source) => ({
+        ...source,
+        isSelected: false,
+      }));
+      Object.assign(state, {
+        ...initialState,
+        sourceDatabases,
+        targetDatabases,
+        session,
+        cacheMetadata,
+        derivedSources,
+        loadState: { ...initialLoadState, initial: initialStatus },
+      });
     },
 
     // UI Mapping Reducers
@@ -2704,6 +4118,25 @@ export const sttmBuilderSlice = createSlice({
       state.pendingAiMappingReviews = [];
       state.mappingSuggestions = [];
       state.loadState.attributes = "success";
+      state.activeSttmId = null;
+      state.activeProjectId = null;
+      state.activeSttmName = null;
+      state.activeProjectName = null;
+      state.activeSnapshotId = null;
+      state.openSttmStatus = 'idle';
+      state.openSttmTargetPage = null;
+      state.openSttmErrorMessage = null;
+      state.openSttmRequestId = null;
+      state.firRecommendations = [];
+      state.firPrimaryQuestion = null;
+      state.firRecommendationCheckpoint = null;
+      state.firRecommendationContextKey = null;
+    },
+    clearOpenSttmNavigation: (state) => {
+      state.openSttmStatus = 'idle';
+      state.openSttmTargetPage = null;
+      state.openSttmErrorMessage = null;
+      state.openSttmRequestId = null;
     },
     initializeMappings: (state, action: PayloadAction<MappingState[]>) => {
       state.mappings = action.payload;
@@ -2787,6 +4220,84 @@ export const sttmBuilderSlice = createSlice({
     ) => {
       state.mappingSqlVariant = action.payload.variant;
     },
+    setCompiledMappingResult: (
+      state,
+      action: PayloadAction<{
+        generatedSql: string;
+        previewSql: string;
+        contextHash: string;
+      }>,
+    ) => {
+      state.compiledMappingSql = action.payload.generatedSql;
+      state.compiledMappingPreviewSql = action.payload.previewSql;
+      state.compiledMappingContextHash = action.payload.contextHash;
+    },
+    applyParsedSqlWorkspace: (
+      state,
+      action: PayloadAction<ParsedSqlWorkspaceApplyPayload>,
+    ) => {
+      const sourceFqns = new Set(action.payload.sourceTableFqns.map((value) => value.toUpperCase()));
+      const targetFqn = action.payload.targetTableFqn?.toUpperCase() ?? null;
+      state.sources = state.sources.map((table) => ({
+        ...table,
+        isSelected: sourceFqns.has(table.qualifiedName.toUpperCase()),
+      }));
+      state.targets = state.targets.map((table) => ({
+        ...table,
+        isSelected: targetFqn === table.qualifiedName.toUpperCase(),
+      }));
+      for (const database of state.sourceDatabases) {
+        for (const schema of database.schemas) {
+          for (const table of schema.tables) {
+            table.isSelected = sourceFqns.has(table.qualifiedName.toUpperCase());
+          }
+        }
+      }
+      for (const database of state.targetDatabases) {
+        for (const schema of database.schemas) {
+          for (const table of schema.tables) {
+            table.isSelected = targetFqn === table.qualifiedName.toUpperCase();
+          }
+        }
+      }
+      state.drivingTableId =
+        state.sources.find((table) => table.isSelected)?.tableId ??
+        Array.from(sourceFqns)[0] ??
+        null;
+      state.relationships = action.payload.relationships;
+      state.mappings = action.payload.mappings;
+      state.selectedMappingIds = [];
+      state.sourceFilterSql = action.payload.filterSql;
+      state.sourceFilterGroups = [];
+      state.derivedSources = [
+        ...state.derivedSources.filter(
+          (source) => !action.payload.derivedSources.some((item) => item.name === source.sourceName),
+        ),
+        ...action.payload.derivedSources.map((item) => ({
+          id: `sql-cte:${item.name}`,
+          sourceName: item.name,
+          isSelected: true,
+          sqlText: item.sqlText ?? undefined,
+          baseSourceTables: (item.inputTables ?? []).map(makeTableRef),
+          tableIds: item.inputTables ?? [],
+          selectedColumnsByTable: {},
+          joins: [],
+          filters: [],
+          columns: [],
+        })),
+      ];
+      state.mappingSql = action.payload.sql;
+      state.mappingPreviewSql = "";
+      state.mappingSqlVariant = null;
+      state.compiledMappingSql = "";
+      state.compiledMappingPreviewSql = "";
+      state.compiledMappingContextHash = null;
+      state.pendingAiMappingReviews = [];
+      state.agentThreadId = null;
+      state.agentLogicalConversationId = null;
+      state.agentPhysicalThreadSegment = null;
+      state.agentParentMessageId = null;
+    },
   },
 
   extraReducers: (builder) => {
@@ -2811,6 +4322,7 @@ export const sttmBuilderSlice = createSlice({
         state.sourceDatabases = branch;
         state.targetDatabases = cloneBranch(branch);
         state.session = action.payload.session;
+        state.cacheMetadata.databasesFetchedAt = action.payload.fetchedAt;
         state.loadState.initial = "success";
       })
       .addCase(fetchDatabases.rejected, (state, action) => {
@@ -2823,11 +4335,12 @@ export const sttmBuilderSlice = createSlice({
     builder.addCase(fetchDerivedSources.fulfilled, (state, action) => {
       state.derivedSources = mergeDerivedSourceLists(
         state.derivedSources,
-        action.payload.map((source: DerivedSource) => ({
+        action.payload.derivedSources.map((source: DerivedSource) => ({
           ...source,
           isSelected: source.isSelected ?? false,
         })),
       );
+      state.cacheMetadata.derivedSourcesFetchedAt = action.payload.fetchedAt;
     });
 
     // ── fetchSchemas ──
@@ -2875,6 +4388,12 @@ export const sttmBuilderSlice = createSlice({
         const [databaseName, schemaName] = schemaId.split(":", 2);
 
         const branch = type === "source" ? state.sourceDatabases : state.targetDatabases;
+        const selectedBeforeLoad = new Map(
+          (type === "source"
+            ? resolveSelectedSourceTables(state)
+            : state.targets.filter((table) => table.isSelected)
+          ).map((table) => [table.qualifiedName.toUpperCase(), table]),
+        );
         const db = branch.find((d) => d.dbId === dbId);
 
         if (!cached && rawTables && db) {
@@ -2885,18 +4404,19 @@ export const sttmBuilderSlice = createSlice({
               (t: { table_name: string; row_count?: number | null; column_count?: number }) => {
                 const qualifiedName = `${databaseName}.${schemaName}.${t.table_name}`;
                 const existing = previousTables.find((item) => item.qualifiedName === qualifiedName);
+                const hydrated = selectedBeforeLoad.get(qualifiedName.toUpperCase());
                 return {
                   tableId: qualifiedName,
                   tableName: t.table_name,
                   qualifiedName,
-                  isSelected: existing?.isSelected ?? false,
+                  isSelected: existing?.isSelected ?? Boolean(hydrated?.isSelected),
                   tag: type === "source" ? "Source" : "Target",
                   rows:
                     t.row_count !== null && t.row_count !== undefined
                       ? String(t.row_count)
                       : "--",
-                  columns: t.column_count ?? 0,
-                  columnItems: existing?.columnItems ?? [],
+                  columns: t.column_count ?? hydrated?.columns ?? 0,
+                  columnItems: existing?.columnItems ?? hydrated?.columnItems ?? [],
                 };
               },
             );
@@ -2917,14 +4437,32 @@ export const sttmBuilderSlice = createSlice({
         const flatTables = activeSchema?.tables.map((t) => ({ ...t })) ?? [];
 
         if (type === "source") {
-          state.sources = flatTables;
+          const selectedOutsideActiveSchema = [...selectedBeforeLoad.values()].filter(
+            (table) =>
+              table.isSelected &&
+              !flatTables.some(
+                (candidate) =>
+                  candidate.qualifiedName.toUpperCase() === table.qualifiedName.toUpperCase(),
+              ),
+          );
+          state.sources = [...flatTables, ...selectedOutsideActiveSchema];
           state.sourceInfo = { dbName: databaseName, schemaName };
         } else {
-          state.targets = flatTables;
+          const selectedTarget = [...selectedBeforeLoad.values()].find((table) => table.isSelected);
+          state.targets =
+            selectedTarget &&
+            !flatTables.some(
+              (candidate) =>
+                candidate.qualifiedName.toUpperCase() === selectedTarget.qualifiedName.toUpperCase(),
+            )
+              ? [...flatTables, selectedTarget]
+              : flatTables;
           state.targetInfo = { dbName: databaseName, schemaName };
           state.targetAttributeGroup = null;
           state.mappingSuggestions = [];
           state.agentThreadId = null;
+          state.agentLogicalConversationId = null;
+          state.agentPhysicalThreadSegment = null;
           state.agentParentMessageId = null;
         }
 
@@ -2939,12 +4477,21 @@ export const sttmBuilderSlice = createSlice({
 
     // ── fetchAttributes ──
     builder
-      .addCase(fetchAttributes.pending, (state) => {
+      .addCase(fetchAttributes.pending, (state, action) => {
         state.loadState.attributes = "loading";
+        state.attributeRequestIds[action.meta.arg.side] = action.meta.requestId;
       })
       .addCase(fetchAttributes.fulfilled, (state, action) => {
         if (!action.payload) return;
         const { side, groups } = action.payload;
+        // Source metadata is hydrated incrementally. A later request can cover
+        // newly selected tables while an earlier request is still running, so
+        // both valid result sets must be merged. Target selection remains
+        // single-valued and keeps stale-response protection.
+        if (
+          side === "target"
+          && state.attributeRequestIds[side] !== action.meta.requestId
+        ) return;
         if (side === "source") {
           const mergedGroups = new Map(
             state.sourceAttributeGroups.map((group) => [group.qualifiedName, group]),
@@ -2960,24 +4507,66 @@ export const sttmBuilderSlice = createSlice({
           state.targets = mergeColumnsIntoTables(state.targets, groups);
           mergeColumnsIntoBranch(state.targetDatabases, groups);
         }
+        state.attributeRequestIds[side] = null;
         state.loadState.attributes = "success";
       })
       .addCase(fetchAttributes.rejected, (state, action) => {
+        const side = action.meta.arg.side;
+        if (
+          side === "target"
+          && state.attributeRequestIds[side] !== action.meta.requestId
+        ) return;
+        state.attributeRequestIds[side] = null;
         state.loadState.attributes = "error";
         state.errorState.attributes = action.payload as string;
       });
 
     // ── fetchRelationships ──
     builder
-      .addCase(fetchRelationships.pending, (state) => {
+      .addCase(fetchRelationships.pending, (state, action) => {
         state.loadState.relationships = "loading";
+        state.relationshipRequestId = action.meta.requestId;
         state.errorState.relationships = undefined;
       })
       .addCase(fetchRelationships.fulfilled, (state, action) => {
+        if (state.relationshipRequestId !== action.meta.requestId) return;
+        state.relationshipRequestId = null;
         state.loadState.relationships = "success";
-        state.relationships = action.payload;
+        const selectedTableIds = new Set(
+          [
+            ...resolveSelectedSourceTables(state).map((table) => table.qualifiedName),
+            ...state.derivedSources
+              .filter((source) => source.isSelected)
+              .flatMap((source) => [source.id, `DERIVED.${source.sourceName}`]),
+          ].map((relationId) => relationId.toUpperCase()),
+        );
+        const merged = new Map<string, JoinConfig>();
+        for (const relationship of [...state.relationships, ...action.payload].filter(
+          (item) =>
+            Boolean(item.leftTableId) &&
+            Boolean(item.rightTableId) &&
+            selectedTableIds.has(String(item.leftTableId).toUpperCase()) &&
+            selectedTableIds.has(String(item.rightTableId).toUpperCase()),
+        )) {
+          const conditionKey = (relationship.conditions ?? [])
+            .map((condition) =>
+              `${condition.leftColumn ?? ""}${condition.operator ?? "="}${condition.rightColumn ?? ""}`,
+            )
+            .join("&");
+          const key = relationship.id ??
+            `${relationship.leftTableId}|${relationship.rightTableId}|${conditionKey}`;
+          const current = merged.get(key);
+          // Explicit/imported joins carry business SQL that a metadata lookup
+          // cannot safely replace with an empty or less specific relationship.
+          if (!current || current.source !== "USER_DEFINED") {
+            merged.set(key, relationship);
+          }
+        }
+        state.relationships = [...merged.values()];
       })
       .addCase(fetchRelationships.rejected, (state, action) => {
+        if (state.relationshipRequestId !== action.meta.requestId) return;
+        state.relationshipRequestId = null;
         state.loadState.relationships = "error";
         state.errorState.relationships = action.payload as string;
       });
@@ -3037,9 +4626,28 @@ export const sttmBuilderSlice = createSlice({
         state.autoMapProcessingIds = [];
         if (!action.payload) return;
         state.autoMapStatusMessage =
-          action.payload.failedTargets.length > 0
+          action.payload.autoMappingReview?.headline ??
+          (action.payload.failedTargets.length > 0
             ? `Auto-map finished with ${action.payload.failedTargets.length} issue(s).`
-            : null;
+            : null);
+        if (action.payload.reviewSummary) {
+          state.chatMessages.push({
+            id: createChatMessageId(),
+            role: "assistant",
+            content: action.payload.reviewSummary,
+            status: "completed",
+          });
+          state.assistantUnreadCount += 1;
+        }
+        if (action.payload.semanticBundleId) {
+          state.semanticBundleId = action.payload.semanticBundleId;
+        }
+        if (action.payload.semanticViewName) {
+          state.semanticViewName = action.payload.semanticViewName;
+        }
+        if (action.payload.semanticContextItems) {
+          state.semanticContextItems = action.payload.semanticContextItems;
+        }
       })
       .addCase(runAutoMap.rejected, (state, action) => {
         state.mappingLoading = false;
@@ -3068,10 +4676,22 @@ export const sttmBuilderSlice = createSlice({
         if (isConversationEnvelopeResponse(action.payload.response)) {
           const conversationResponse = action.payload.response;
           state.agentThreadId =
-            conversationResponse.data?.artifact?.conversation_id ??
             (typeof conversationResponse.context?.thread_id === "string"
               ? conversationResponse.context.thread_id
               : state.agentThreadId);
+          state.agentLogicalConversationId =
+            (typeof conversationResponse.context?.logical_conversation_id === "string"
+              ? conversationResponse.context.logical_conversation_id
+              : typeof conversationResponse.meta?.logical_conversation_id === "string"
+                ? conversationResponse.meta.logical_conversation_id
+                : conversationResponse.data?.artifact?.conversation_id ??
+                  state.agentLogicalConversationId);
+          state.agentPhysicalThreadSegment =
+            (typeof conversationResponse.context?.physical_thread_segment === "number"
+              ? conversationResponse.context.physical_thread_segment
+              : typeof conversationResponse.meta?.thread_segment === "number"
+                ? conversationResponse.meta.thread_segment
+                : state.agentPhysicalThreadSegment);
           state.agentParentMessageId = null;
           if (action.payload.messageId) {
             const message = state.chatMessages.find((item) => item.id === action.payload.messageId);
@@ -3093,6 +4713,23 @@ export const sttmBuilderSlice = createSlice({
           return;
         }
 
+        state.agentThreadId =
+          action.payload.response.thread_id ??
+          (typeof action.payload.response.context?.thread_id === "string"
+            ? action.payload.response.context.thread_id
+            : state.agentThreadId);
+        state.agentLogicalConversationId =
+          (typeof action.payload.response.context?.logical_conversation_id === "string"
+            ? action.payload.response.context.logical_conversation_id
+            : typeof action.payload.response.meta?.logical_conversation_id === "string"
+              ? action.payload.response.meta.logical_conversation_id
+              : state.agentLogicalConversationId);
+        state.agentPhysicalThreadSegment =
+          (typeof action.payload.response.context?.physical_thread_segment === "number"
+            ? action.payload.response.context.physical_thread_segment
+            : typeof action.payload.response.meta?.thread_segment === "number"
+              ? action.payload.response.meta.thread_segment
+              : state.agentPhysicalThreadSegment);
         state.agentParentMessageId =
           action.payload.response.parent_message_id ??
           action.payload.response.context?.parent_message_id ??
@@ -3155,6 +4792,21 @@ export const sttmBuilderSlice = createSlice({
             requestSummary:
               (artifact.request_summary as string | null) ??
               action.payload.userMessage,
+            purpose: (artifact.purpose as string | null) ?? action.payload.userMessage,
+            businessDescription:
+              (artifact.business_description as string | null) ??
+              (artifact.request_summary as string | null) ??
+              action.payload.userMessage,
+            grain: (artifact.grain as string | null) ?? null,
+            keys: Array.isArray(artifact.keys) ? (artifact.keys as string[]) : [],
+            outputColumns: Array.isArray(artifact.output_columns)
+              ? (artifact.output_columns as Array<Record<string, unknown>>)
+              : [],
+            columnSemantics: Array.isArray(artifact.column_semantics)
+              ? (artifact.column_semantics as Array<Record<string, unknown>>)
+              : [],
+            generatedByRequestId:
+              (action.payload.response.request_id as string | null | undefined) ?? null,
           };
           state.derivedSourceDraftRequested = false;
           }
@@ -3225,31 +4877,346 @@ export const sttmBuilderSlice = createSlice({
       .addCase(updateAssistantPreferences.fulfilled, (state, action) => {
         state.assistantPreferences = action.payload.settings;
       })
-      .addCase(evaluateAssistantSignals.fulfilled, (state, action) => {
-        applyAssistantSignalsData(state, action.payload);
+      .addCase(evaluateFirRecommendations.pending, (state) => {
+        state.firRecommendationLoading = true;
+        // FIR 2.0 is the only proactive guidance source. Clear any saved
+        // conversation-signal cards so legacy generic prompts cannot reappear.
+        state.assistantSignals = [];
+        state.assistantUnreadCount = 0;
+      })
+      .addCase(evaluateFirRecommendations.fulfilled, (state, action) => {
+        const payload = action.payload as Record<string, unknown>;
+        if (payload._cancelled) return;
+        const correlationId = payload._correlationId as string | undefined;
+        if (
+          correlationId &&
+          correlationId !== `fir_eval_${_firRecommendationCorrelationCounter}`
+        ) {
+          return;
+        }
+        const incoming = (payload.items as FIRRecommendation[] | undefined) ?? [];
+        const currentCheckpoint = String(payload.checkpoint ?? "") || null;
+        const currentContextKey = String(payload.context_key ?? "") || null;
+        const seen = new Set<string>();
+        // Each evaluation response replaces the previous scope immediately.
+        // The backend returns all applicable cards for the active checkpoint.
+        state.firRecommendations = incoming
+          .filter((item) => {
+            const key = `${item.recommendation_id}:${item.content_version ?? 1}:${item.checkpoint ?? ""}:${item.scope_key ?? ""}`;
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          })
+          .slice(0, 50);
+        state.firPrimaryQuestion =
+          (payload.primary_question as FIRRecommendation | null | undefined) ?? null;
+        state.firRecommendationCheckpoint = currentCheckpoint;
+        state.firRecommendationContextKey = currentContextKey;
+        state.firRecommendationLoading = false;
+      })
+      .addCase(evaluateFirRecommendations.rejected, (state) => {
+        state.firRecommendationLoading = false;
       })
       .addCase(respondToAssistantSignal.pending, (state, action) => {
         const signalId = action.meta.arg.signalId;
         const nextStatus = action.meta.arg.status ?? "responded";
         const signal = state.assistantSignals.find((item) => item.signal_id === signalId);
         if (signal) {
-          signal.status = nextStatus as any;
+          signal.status = nextStatus as AssistantSignalStatus;
         }
         state.assistantUnreadCount = state.assistantSignals.filter((item) => item.status === "new").length;
       })
       .addCase(respondToAssistantSignal.fulfilled, (state, action) => {
         const signal = state.assistantSignals.find((item) => item.signal_id === action.payload.signalId);
         if (signal) {
-          signal.status = action.payload.status as any;
+          signal.status = action.payload.status as AssistantSignalStatus;
         }
         state.assistantUnreadCount = state.assistantSignals.filter((item) => item.status === "new").length;
+      })
+
+      // ─── openSttmFromBackend ──────────────────────────────────────
+      .addCase(openSttmFromBackend.pending, (state, action) => {
+        state.openSttmStatus = 'loading';
+        state.openSttmTargetPage = null;
+        state.openSttmErrorMessage = null;
+        state.openSttmRequestId = action.meta.requestId;
+        state.firRecommendations = [];
+        state.firPrimaryQuestion = null;
+      })
+      .addCase(openSttmFromBackend.fulfilled, (state, action) => {
+        if (state.openSttmRequestId !== action.meta.requestId) return;
+        const { sttmId, projectId, detail } = action.payload;
+        const snapshot = detail.latest_snapshot as Record<string, unknown> | null | undefined;
+
+        // Reconstruct source TableNodes from snapshot source_tables
+        const snapshotSources = Array.isArray(snapshot?.source_tables)
+          ? (snapshot.source_tables as Array<Record<string, string>>)
+          : [];
+        const persistedSources = (detail.sources as Array<Record<string, unknown>>)
+          .filter((row) => String(row.DESCRIPTION ?? row.description ?? '').startsWith('DERIVED_SOURCE:') === false)
+          .map((row) => ({
+            database: String(row.DATABASE_NAME ?? row.database_name ?? ''),
+            schema: String(row.SCHEMA_NAME ?? row.schema_name ?? ''),
+            table: String(row.TABLE_NAME ?? row.table_name ?? ''),
+          }))
+          .filter((ref) => ref.database && ref.schema && ref.table);
+        const rawSources = snapshotSources.length ? snapshotSources : persistedSources;
+        state.sources = rawSources.map((ref) => {
+          const qn = `${ref.database}.${ref.schema}.${ref.table}`;
+          return {
+            tableId: qn,
+            tableName: ref.table,
+            qualifiedName: qn,
+            isSelected: true,
+            tag: '',
+            rows: '',
+            columns: 0,
+          } as TableNode;
+        });
+
+        // Reconstruct target TableNode from sttm record
+        const snapshotTarget = snapshotTableFqn(
+          snapshot?.target_table
+          ?? (Array.isArray(snapshot?.target_tables) ? snapshot.target_tables[0] : null),
+        );
+        const targetQn = detail.sttm.target_table ?? snapshotTarget ?? '';
+        const targetParts = targetQn.split('.');
+        if (targetQn) {
+          state.targets = [
+            {
+              tableId: targetQn,
+              tableName: targetParts[targetParts.length - 1] ?? targetQn,
+              qualifiedName: targetQn,
+              isSelected: true,
+              tag: '',
+              rows: '',
+              columns: 0,
+            } as TableNode,
+          ];
+        }
+
+        // Reconstruct MappingState[] from persisted STTM attributes.
+        // The backend normalizes existing TBL_STTM_ATTRIBUTES rows to lower-case
+        // keys, while these fallbacks keep older saved payloads readable.
+        const snapshotMappingRows = Array.isArray(snapshot?.mapping_rows)
+          ? snapshot.mapping_rows as Array<Record<string, unknown>>
+          : [];
+        const rawMappingRows = snapshotMappingRows.length
+          ? snapshotMappingRows
+          : detail.mapping_rows as Array<Record<string, unknown>>;
+        state.mappings = rawMappingRows.map((row) => {
+          const rawSourceColumns = row.source_columns ?? row.SOURCE_COLUMNS;
+          const sourceColumns = Array.isArray(rawSourceColumns)
+            ? rawSourceColumns.map((value) => String(value)).filter(Boolean)
+            : typeof rawSourceColumns === 'string' && rawSourceColumns.trim()
+              ? rawSourceColumns.split(',').map((value) => value.trim()).filter(Boolean)
+              : [];
+          const ruleRaw = String(row.rule ?? row.preprocessing_rule ?? row.PREPROCESSING_RULE ?? 'Direct') || 'Direct';
+          const statusRaw = String(row.status ?? row.STATUS ?? '').toUpperCase();
+          const confidenceRaw = row.confidence ?? row.CONFIDENCE;
+          return {
+            id: String(row.id ?? row.mapping_row_id ?? row.MAPPING_ROW_ID ?? row.attribute_id ?? ''),
+            targetColumn: String(row.target_column ?? row.TARGET_COLUMN ?? row.ATTRIBUTE_NAME ?? ''),
+            targetType: String(row.target_type ?? row.TARGET_DATA_TYPE ?? row.DATA_TYPE ?? ''),
+            sourceColumn: sourceColumns[0] ?? null,
+            sourceType: null,
+            sourceColumns,
+            mappingMode:
+              String(row.mapping_mode ?? row.MAPPING_MODE ?? "source").toLowerCase() === "constant"
+                ? "constant"
+                : "source",
+            constantValue:
+              (row.constant_value ?? row.CONSTANT_VALUE ?? null) as string | null,
+            expression:
+              String(row.mapping_mode ?? row.MAPPING_MODE ?? "source").toLowerCase() === "constant"
+                ? null
+                : (row.expression ?? row.TRANSFORMATION_EXPR ?? row.TRANSFORMATION_LOGIC ?? null) as string | null,
+            rule: ruleRaw as MappingRuleType,
+            status: (statusRaw === 'MAPPED' || statusRaw === 'ACCEPTED' ? 'MAPPED' : 'UNMAPPED') as MappingStatus,
+            nlRule: (row.natural_language_rule ?? row.NATURAL_LANGUAGE_RULE ?? null) as string | null,
+            loadOrder: row.load_order != null ? String(row.load_order) : row.LOAD_ORDER != null ? String(row.LOAD_ORDER) : null,
+            description: (row.description ?? row.DESCRIPTION ?? null) as string | null,
+            confidenceScore: typeof confidenceRaw === 'number' ? confidenceRaw : null,
+            confidenceReason: (row.confidence_reason ?? row.CONFIDENCE_REASON ?? null) as string | null,
+          } satisfies MappingState;
+        });
+
+        // Relationships and driving table from snapshot
+        state.relationships = normalizeSnapshotRelationships(snapshot?.relationships);
+        const drivingRef = snapshot?.driving_table as Record<string, string> | null | undefined;
+        state.drivingTableId = drivingRef
+          ? `${drivingRef.database}.${drivingRef.schema}.${drivingRef.table}`
+          : (state.sources.find((s) => s.isSelected)?.tableId ?? null);
+
+        // Clear attribute groups — mapping page will auto-fetch them on mount
+        state.sourceAttributeGroups = [];
+        state.targetAttributeGroup = null;
+        state.loadState.attributes = 'idle';
+
+        const filters = (snapshot?.filters ?? {}) as Record<string, unknown>;
+        state.sourceFilterSql = String(filters.filter_sql ?? "");
+        state.sourceQuerySql = String(filters.base_query_sql ?? "");
+        state.sourceGroupBySql = String(filters.group_by_sql ?? "");
+        state.sourceOrderBySql = String(filters.order_by_sql ?? "");
+        state.sourceFilterGroups = Array.isArray(filters.groups)
+          ? (filters.groups as RuleGroup[])
+          : [];
+        state.mappingSql = String(snapshot?.raw_mapping_sql ?? snapshot?.mapping_sql ?? "");
+        state.mappingPreviewSql = String(snapshot?.mapping_preview_sql ?? "");
+        state.mappingSqlVariant = state.mappingPreviewSql ? "original" : null;
+        state.compiledMappingSql = String(snapshot?.compiled_mapping_sql ?? "");
+        state.compiledMappingPreviewSql = String(snapshot?.compiled_mapping_preview_sql ?? "");
+        state.compiledMappingContextHash = String(snapshot?.compiled_mapping_context_hash ?? "") || null;
+
+        const mappingIntent = snapshot?.mapping_intent;
+        state.mappingIntent = mappingIntent && typeof mappingIntent === "object"
+          ? (mappingIntent as MappingIntent)
+          : null;
+
+        const snapshotDerivedSources = (
+          Array.isArray(snapshot?.derived_sources) ? snapshot.derived_sources : []
+        ).filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object'));
+        const existingDerivedById = new Map(state.derivedSources.map((source) => [source.id, source]));
+        state.derivedSources = snapshotDerivedSources.map((item, index) => {
+          const id = String(item.id ?? item.derived_source_id ?? `derived-${index}`);
+          const existing = existingDerivedById.get(id);
+          return {
+            id,
+            sourceName: String(item.name ?? item.source_name ?? existing?.sourceName ?? id),
+            isSelected: true,
+            sqlText: String(item.sql_text ?? item.sqlText ?? existing?.sqlText ?? ''),
+            semanticBundleId: String(item.semantic_bundle_id ?? item.semanticBundleId ?? '') || null,
+            semanticBundleLabel: String(item.semantic_bundle_label ?? item.semanticBundleLabel ?? '') || null,
+            semanticViewName: String(item.semantic_view_name ?? item.semanticViewName ?? '') || null,
+            semanticLevel: String(item.semantic_level ?? item.semanticLevel ?? '') || null,
+            upstreamHash: String(item.upstream_hash ?? item.upstreamHash ?? '') || null,
+            sourceDependencyHash: String(item.source_dependency_hash ?? item.sourceDependencyHash ?? existing?.sourceDependencyHash ?? '') || null,
+            physicalViewName: String(item.physical_view_name ?? item.physicalViewName ?? existing?.physicalViewName ?? '') || null,
+            generatedByRequestId: String(item.generated_by_request_id ?? item.generatedByRequestId ?? existing?.generatedByRequestId ?? '') || null,
+            purpose: String(item.purpose ?? existing?.purpose ?? '') || null,
+            businessDescription: String(item.business_description ?? item.businessDescription ?? existing?.businessDescription ?? '') || null,
+            grain: String(item.grain ?? existing?.grain ?? '') || null,
+            keys: Array.isArray(item.keys) ? item.keys.map(String) : (existing?.keys ?? []),
+            outputColumns: Array.isArray(item.output_columns ?? item.outputColumns)
+              ? (item.output_columns ?? item.outputColumns) as Array<Record<string, unknown>>
+              : (existing?.outputColumns ?? []),
+            columnSemantics: Array.isArray(item.column_semantics ?? item.columnSemantics)
+              ? (item.column_semantics ?? item.columnSemantics) as Array<Record<string, unknown>>
+              : (existing?.columnSemantics ?? []),
+            semanticProjection:
+              (item.semantic_projection ?? item.semanticProjection ?? existing?.semanticProjection ?? {}) as Record<string, unknown>,
+            semanticQuality: String(item.semantic_quality ?? item.semanticQuality ?? existing?.semanticQuality ?? '') || null,
+            lineageDepth: Number(item.lineage_depth ?? item.lineageDepth ?? existing?.lineageDepth ?? 0),
+            alias: String(item.alias ?? existing?.alias ?? '') || undefined,
+            drivingTableId: String(item.driving_table_id ?? item.drivingTableId ?? '') || undefined,
+            tableIds: Array.isArray(item.table_ids ?? item.tableIds)
+              ? ((item.table_ids ?? item.tableIds) as unknown[]).map(String)
+              : (existing?.tableIds ?? []),
+            baseSourceTables: Array.isArray(item.base_source_tables ?? item.baseSourceTables)
+              ? (item.base_source_tables ?? item.baseSourceTables) as TableRef[]
+              : (existing?.baseSourceTables ?? []),
+            selectedColumnsByTable:
+              (item.selected_columns_by_table ?? item.selectedColumnsByTable ?? existing?.selectedColumnsByTable ?? {}) as Record<string, string[]>,
+            joins: Array.isArray(item.joins) ? item.joins as DerivedSource['joins'] : (existing?.joins ?? []),
+            filters: Array.isArray(item.filters) ? item.filters as RuleGroup[] : (existing?.filters ?? []),
+            columns: Array.isArray(item.columns) ? item.columns as Column[] : (existing?.columns ?? []),
+          } satisfies DerivedSource;
+        });
+        const relationGraph = snapshot?.relation_graph as Record<string, unknown> | null | undefined;
+        const graphEdges = relationGraph?.edges;
+        if (Array.isArray(graphEdges)) {
+          const relationLabels = new Map<string, string>();
+          for (const source of state.derivedSources) {
+            // RelationshipFlow uses the stable derived-source ID as its node
+            // identity; DERIVED.<name> is display text only.
+            relationLabels.set(source.id, source.id);
+          }
+          state.relationships = normalizeSnapshotRelationships(graphEdges, relationLabels);
+        }
+
+        // Semantic identity is snapshot-scoped. Never retain the previous
+        // mapping's bundle when this mapping has no linked semantic bundle.
+        const semantic = (snapshot?.semantic ?? {}) as Record<string, unknown>;
+        state.semanticBundleId = String(
+          detail.sttm.semantic_bundle_id ?? semantic.bundle_id ?? "",
+        ) || null;
+        state.semanticBundleLabel = String(semantic.bundle_label ?? "") || null;
+        state.semanticLevel = String(semantic.level ?? "") || null;
+        state.semanticStatus = String(semantic.status ?? "") || null;
+        state.semanticViewName = String(semantic.view_name ?? "") || null;
+        state.semanticContextSummary = null;
+        state.semanticContextItems = null;
+        state.semanticLineage = [];
+        state.semanticDatahubContext = null;
+        state.datahubStatus = null;
+
+        // Reset transient state
+        const checkedIds = Array.isArray(snapshot?.checked_mapping_row_ids)
+          ? snapshot.checked_mapping_row_ids.map(String)
+          : [];
+        state.selectedMappingIds = checkedIds.length
+          ? checkedIds
+          : state.mappings.filter((mapping) => mapping.status === "MAPPED").map((mapping) => mapping.id);
+        state.activeMappingId = String(snapshot?.active_mapping_row_id ?? "") || null;
+        state.pendingAiMappingReviews = [];
+        state.mappingSuggestions = [];
+        state.autoMapStatusMessage = null;
+
+        // Chat and notification state belongs to user + project + mapping. A
+        // newly opened STTM must never inherit the previous workspace thread.
+        state.chatMessages = [currentAssistantWelcome()];
+        state.agentThreadId = null;
+        state.agentLogicalConversationId = null;
+        state.agentPhysicalThreadSegment = null;
+        state.agentParentMessageId = null;
+        state.assistantSignals = [];
+        state.assistantInferences = [];
+        state.assistantUnreadCount = 0;
+        state.firRecommendations = [];
+        state.firPrimaryQuestion = null;
+        state.firRecommendationCheckpoint = null;
+        state.firRecommendationContextKey = null;
+
+        // Set active STTM identity
+        state.activeSttmId = sttmId;
+        state.activeProjectId = projectId;
+        state.activeSttmName = detail.sttm.sttm_name ?? null;
+        state.activeProjectName = detail.project?.project_name ?? null;
+        state.activeSnapshotId = String(
+          snapshot?.snapshot_id ?? detail.sttm.last_snapshot_id ?? "",
+        ) || null;
+        state.sessionSavedAt = new Date().toISOString();
+
+        // Determine target page from snapshot page field.
+        // 'summary' → summary step, 'mapping' → mapping step, anything else (incl.
+        // 'builder' or absent snapshot) → source/target selection step.
+        const page = typeof snapshot?.page === 'string' ? snapshot.page : '';
+        const targetPage =
+          page === 'summary' ? '/sttm/builder/new/summary' :
+          page === 'mapping' || state.mappings.length > 0
+            ? '/sttm/builder/new/mapping'
+            : '/sttm/builder/new';
+
+        state.openSttmStatus = 'success';
+        state.openSttmTargetPage = targetPage;
+        state.openSttmErrorMessage = null;
+        state.openSttmRequestId = null;
+      })
+      .addCase(openSttmFromBackend.rejected, (state, action) => {
+        if (state.openSttmRequestId !== action.meta.requestId) return;
+        state.openSttmStatus = 'error';
+        state.openSttmErrorMessage = String(action.payload ?? 'Failed to load STTM.');
+        state.openSttmTargetPage = null;
+        state.openSttmRequestId = null;
       });
   },
 });
 
 export const {
+  clearAssistantSignalsForContext,
   assistantStreamStarted,
   assistantStreamDelta,
+  assistantStreamSqlDelta,
   assistantStreamStatus,
   assistantStreamOptions,
   assistantStreamFinished,
@@ -3257,8 +5224,12 @@ export const {
   setChatMessageFeedbackStatus,
   autoMapStreamStatus,
   applySemanticRefresh,
+  markPreparedWorkspaceContextUpdating,
+  applyPreparedWorkspaceContext,
+  failPreparedWorkspaceContext,
   toggleSource,
   selectTarget,
+  selectAllSources,
   clearSources,
   clearTargets,
   setDrivingTable,
@@ -3271,8 +5242,12 @@ export const {
   openPendingDerivedSourceDraft,
   acknowledgePendingDerivedSourceDraft,
   dismissPendingDerivedSourceDraft,
+  resetChatSession,
+  restoreChatSession,
   loadMappingWorkspaceSnapshot,
   hydrateBuilderSession,
+  resetBuilderForNewMapping,
+  clearOpenSttmNavigation,
   initializeMappings,
   updateMapping,
   applyPendingAiMappingReview,
@@ -3285,6 +5260,8 @@ export const {
   setMappingSql,
   setMappingPreviewSql,
   setMappingSqlVariant,
+  setCompiledMappingResult,
+  applyParsedSqlWorkspace,
 } = sttmBuilderSlice.actions;
 
 export default sttmBuilderSlice.reducer;

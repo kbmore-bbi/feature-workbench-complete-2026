@@ -1,4 +1,6 @@
 "use client";
+import { AiaAlert, AiaBox, AiaButton, AiaCircularProgress, AiaDialog, AiaDialogActions, AiaDialogContent, AiaDialogTitle, AiaIconButton, AiaCheckbox, AiaPaper, AiaStack, AiaTableBody, AiaTableCellPrimitive, AiaTableHead, AiaTablePrimitive, AiaTableRowPrimitive, AiaTooltip } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
@@ -10,27 +12,7 @@ import {
   TableRowsRoundedIcon,
   TerminalRoundedIcon,
 } from '@/utils/icons';
-import {
-  Alert,
-  Box,
-  Button,
-  Checkbox,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  IconButton,
-  Paper,
-  Stack,
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableRow,
-  Tooltip,
-  Typography,
-} from '@mui/material';
+
 import { AiaResizeHandle } from '@/components/ui/aia-resize-handle';
 import { useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
 import { SttmSidebarCollapseFooter } from '@/features/sttm/layout/sttm-sidebar-collapse-footer';
@@ -44,6 +26,7 @@ import { fetchAttributes } from '@/features/sttm/store/sttm-builder-slice';
 import { collectSelectedSourceQualifiedNames } from '@/features/sttm/shared/sttm-selection-utils';
 import {
   buildFallbackSourceQuerySql,
+  buildCompilerRelationGraph,
   buildMappingInsertSql,
   buildMappingSelectSql,
   buildSourceQueryPreviewSql,
@@ -54,17 +37,24 @@ import { dbService } from '@/services/dbService';
 import { MappingSqlPreview } from '@/components/sql';
 import { MappingProgressIndicator } from '@/features/sttm/shared/mapping-progress-indicator';
 import { BuilderWorkspaceTabBar } from '@/features/sttm/shared/builder-workspace-tab-bar';
+import { CARD_TITLE_SX, BODY_SX } from '@/config/typography-tokens';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
+import { useTour } from '@/features/tour/engine/tour-context';
 import type {
   MappingSqlPreviewResponse,
+  MappingSqlCompileResponse,
+  MappingSqlParseResponse,
+  MappingSqlReviewRequest,
   MappingSqlReviewResponse,
   TableRef,
 } from '@/types/api-contract';
+import type { JoinConfig, MappingState } from '@/features/sttm/types/sttm.types';
 
 type MappingTab = 'mapping' | 'sql-preview' | 'data-preview' | 'data-lineage';
 
 const MIN_SIDEBAR_WIDTH = 248;
 const MAX_SIDEBAR_WIDTH = 420;
-const COLLAPSED_SIDEBAR_WIDTH = 54;
+const COLLAPSED_SIDEBAR_WIDTH = 70;
 
 type PreviewDisplayRow = {
   mappingId: string;
@@ -241,29 +231,6 @@ function getReviewAgentLabel(reviewAgent: string | null | undefined): string {
 }
 
 export default function MappingPage() {
-  const [isClient, setIsClient] = useState(false);
-
-  useEffect(() => {
-    setIsClient(true);
-  }, []);
-
-  if (!isClient) {
-    return (
-      <Box
-        sx={{
-          flex: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          bgcolor: '#fff',
-          minHeight: 320,
-        }}
-      >
-        <CircularProgress size={28} />
-      </Box>
-    );
-  }
-
   return <MappingPageContent />;
 }
 
@@ -274,6 +241,11 @@ function MappingPageContent() {
   const dispatch = useAppDispatch();
   const lastValidatedReviewContextRef = useRef<string | null>(null);
   const [activeTab, setActiveTab] = useState<MappingTab>('mapping');
+  const { notifyTourContextChanged } = useTour();
+
+  useEffect(() => {
+    notifyTourContextChanged();
+  }, [activeTab, notifyTourContextChanged]);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [reviewLoading, setReviewLoading] = useState(false);
@@ -286,9 +258,14 @@ function MappingPageContent() {
   const [reviewSelectionVariant, setReviewSelectionVariant] = useState<'original' | 'optimized' | null>(null);
   const [approvedPreviewSql, setApprovedPreviewSql] = useState<string | null>(null);
   const [validatedPreviewData, setValidatedPreviewData] = useState<MappingSqlPreviewResponse | null>(null);
+  const [editableSql, setEditableSql] = useState('');
+  const [sqlParseLoading, setSqlParseLoading] = useState(false);
+  const [sqlParseResult, setSqlParseResult] = useState<MappingSqlParseResponse | null>(null);
+  const [sqlParseDialogOpen, setSqlParseDialogOpen] = useState(false);
   const [selectedPreviewRowIndex, setSelectedPreviewRowIndex] = useState(0);
   const {
     mappings,
+    mappingLoading,
     targetAttributeGroup,
     initializeMappings,
     fullData,
@@ -307,10 +284,20 @@ function MappingPageContent() {
     semanticBundleId,
     semanticBundleLabel,
     semanticViewName,
-    requestSemanticRefresh,
+    mappingSql,
+    compiledMappingSql,
+    compiledMappingPreviewSql,
+    compiledMappingContextHash,
+    openSttmStatus,
+    sessionHydrated,
+    activeProjectId,
+    activeSttmId,
+    applySemanticRefresh,
+    refreshAssistantSignals,
     setMappingPreviewSql,
-    setMappingSql,
     setMappingSqlVariant,
+    setCompiledMappingResult,
+    applyParsedSqlWorkspace,
   } = useSttmBuilderContext();
 
   const hasSelectedSources = useMemo(
@@ -333,12 +320,13 @@ function MappingPageContent() {
     [targetAttributeGroup],
   );
 
-  useEffect(() => {
-    if (!hasSelectedInputs || !hasSelectedTarget || semanticViewName) {
-      return;
-    }
-    void requestSemanticRefresh();
-  }, [hasSelectedInputs, hasSelectedTarget, requestSemanticRefresh, semanticViewName]);
+  const savedWorkspaceHydrating =
+    !sessionHydrated ||
+    openSttmStatus === 'loading' ||
+    (Boolean(activeProjectId && activeSttmId) &&
+      (openSttmStatus !== 'success' ||
+        loadState.attributes === 'idle' ||
+        loadState.attributes === 'loading'));
 
   const totalCount = mappings.length;
   const mappedCount = mappings.filter((m) => m.status === 'MAPPED').length;
@@ -391,6 +379,9 @@ function MappingPageContent() {
   };
 
   useEffect(() => {
+    if (savedWorkspaceHydrating) {
+      return;
+    }
     if (!hasSelectedInputs || !hasSelectedTarget) {
       router.replace('/sttm/builder/new');
       return;
@@ -409,6 +400,7 @@ function MappingPageContent() {
     hasTargetColumns,
     loadState.attributes,
     router,
+    savedWorkspaceHydrating,
   ]);
 
   const targetTableKey = targetAttributeGroup?.qualifiedName ?? '';
@@ -422,44 +414,39 @@ function MappingPageContent() {
   );
 
   useEffect(() => {
-    if (!targetAttributeGroup || !targetColumnsSignature) {
-      return;
-    }
-
-    const targetColumns = targetAttributeGroup.columns
-      .filter((col) => col.name)
-      .map((col) => col.name as string);
-    const targetColumnSet = new Set(targetColumns);
-
-    const matchesCurrentTarget =
-      mappings.length === targetColumns.length &&
-      mappings.every((m) => targetColumnSet.has(m.targetColumn));
-
-    if (matchesCurrentTarget) {
+    if (
+      savedWorkspaceHydrating ||
+      !targetAttributeGroup ||
+      !targetColumnsSignature ||
+      mappings.length > 0
+    ) {
       return;
     }
 
     const initialMappings = targetAttributeGroup.columns
       .filter((col) => col.name)
-      .map((col, idx) => ({
-        id: `${targetTableKey}-${idx}`,
-        targetColumn: col.name as string,
-        targetType: col.type || 'VARCHAR',
-        sourceColumn: null,
-        sourceType: null,
-        expression: null,
-        rule: 'Select...' as const,
-        status: 'UNMAPPED' as const,
-        nlRule: null,
-        loadOrder: null,
-        description: null,
-        confidenceScore: null,
-        confidenceReason: null,
-        candidateSourceColumns: [],
-        unmatchedReason: null,
-        aiSuggestedRule: null,
-        aiSuggestedRuleType: null,
-      }));
+      .map((col, idx) => {
+        const targetColumn = col.name as string;
+        return {
+          id: `${targetTableKey}-${idx}`,
+          targetColumn,
+          targetType: col.type || 'VARCHAR',
+          sourceColumn: null,
+          sourceType: null,
+          expression: null,
+          rule: 'Select...' as const,
+          status: 'UNMAPPED' as const,
+          nlRule: null,
+          loadOrder: null,
+          description: null,
+          confidenceScore: null,
+          confidenceReason: null,
+          candidateSourceColumns: [],
+          unmatchedReason: null,
+          aiSuggestedRule: null,
+          aiSuggestedRuleType: null,
+        };
+      });
     initializeMappings(initialMappings);
   }, [
     targetAttributeGroup,
@@ -467,20 +454,25 @@ function MappingPageContent() {
     targetColumnsSignature,
     mappings,
     initializeMappings,
+    savedWorkspaceHydrating,
   ]);
 
   const selectedSourceKey = useMemo(
     () =>
-      collectSelectedSourceQualifiedNames(fullData?.sources ?? [])
+      Array.from(new Set([
+        ...collectSelectedSourceQualifiedNames(fullData?.sources ?? []),
+        ...sources.filter((table) => table.isSelected).map((table) => table.qualifiedName),
+      ]))
         .sort()
         .join('|'),
-    [fullData?.sources],
+    [fullData?.sources, sources],
   );
 
   const selectedTargetKey =
     targets.find((table) => table.isSelected)?.qualifiedName ?? '';
 
   useEffect(() => {
+    if (openSttmStatus === 'loading') return;
     if (selectedSourceKey) {
       dispatch(
         fetchAttributes({
@@ -497,7 +489,7 @@ function MappingPageContent() {
         }),
       );
     }
-  }, [dispatch, selectedSourceKey, selectedTargetKey]);
+  }, [dispatch, openSttmStatus, selectedSourceKey, selectedTargetKey]);
 
   const selectedTargetQualifiedName =
     targets.find((table) => table.isSelected)?.qualifiedName ??
@@ -636,6 +628,146 @@ function MappingPageContent() {
     ],
   );
 
+  const compilerRelationGraph = useMemo(
+    () => buildCompilerRelationGraph({
+      sourceTables: selectedSourceTables,
+      sourceColumnsByTable: Object.fromEntries(
+        sourceAttributeGroups.map((group) => [group.qualifiedName, group.columns]),
+      ),
+      derivedSources: selectedDerivedSourceRecords,
+      relationships,
+      mappings,
+    }),
+    [mappings, relationships, selectedDerivedSourceRecords, selectedSourceTables, sourceAttributeGroups],
+  );
+  const [compiledSql, setCompiledSql] = useState<MappingSqlCompileResponse | null>(null);
+  const [compilerError, setCompilerError] = useState<string | null>(null);
+  const compilerContextHash = useMemo(
+    () =>
+      JSON.stringify({
+        relationGraph: compilerRelationGraph,
+        mappings: mappings.filter((mapping) => mapping.status === 'MAPPED').map((mapping) => ({
+          targetColumn: mapping.targetColumn,
+          targetType: mapping.targetType,
+          sourceColumn: mapping.sourceColumn,
+          sourceColumns: mapping.sourceColumns,
+          mappingMode: mapping.mappingMode,
+          constantValue: mapping.constantValue,
+          expression: mapping.expression,
+          rule: mapping.rule,
+          sourceDependencies: mapping.sourceDependencies,
+          valueBindingIds: mapping.valueBindingIds,
+        })),
+        targetTable: selectedTargetTableRef,
+        drivingTableId,
+        sourceFilterSql,
+        sourceGroupBySql,
+        sourceOrderBySql,
+      }),
+    [
+      compilerRelationGraph,
+      drivingTableId,
+      mappings,
+      selectedTargetTableRef,
+      sourceFilterSql,
+      sourceGroupBySql,
+      sourceOrderBySql,
+    ],
+  );
+
+  useEffect(() => {
+    const activeMappings = mappings.filter((mapping) => mapping.status === 'MAPPED');
+    if (
+      mappingLoading
+      || !activeMappings.length
+      || !compilerRelationGraph.nodes.length
+      || mappingSql.trim()
+    ) {
+      setCompiledSql(null);
+      setCompilerError(null);
+      return;
+    }
+    if (
+      compiledMappingContextHash === compilerContextHash
+      && compiledMappingSql.trim()
+      && compiledMappingPreviewSql.trim()
+    ) {
+      setCompiledSql(null);
+      setCompilerError(null);
+      return;
+    }
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      try {
+        const response = await dbService.compileMappingSql({
+          relation_graph: compilerRelationGraph,
+          mappings: activeMappings.map((mapping) => ({
+            target_column: mapping.targetColumn,
+            target_type: mapping.targetType,
+            source_column: mapping.sourceColumn,
+            source_columns: mapping.sourceColumns ?? parseSourceColumns(mapping.sourceColumn),
+            mapping_mode: mapping.mappingMode ?? 'source',
+            constant_value: mapping.constantValue ?? null,
+            expression: mapping.expression,
+            rule: mapping.rule,
+            status: mapping.status,
+            nl_rule: mapping.nlRule,
+            description: mapping.description,
+            source_dependencies: mapping.sourceDependencies ?? mapping.sourceColumns ?? parseSourceColumns(mapping.sourceColumn),
+            value_binding_ids: mapping.mappingMode === 'constant'
+              ? (mapping.valueBindingIds?.length ? mapping.valueBindingIds : [mapping.id])
+              : [],
+            precedent_decision: mapping.precedentDecision,
+            precedent_mapping_id: mapping.precedentMappingId,
+          })),
+          target_table: selectedTargetTableRef,
+          driving_relation_id: drivingTableId || compilerRelationGraph.nodes[0]?.relation_id || null,
+          where_predicates: sourceFilterSql?.trim() ? [sourceFilterSql.trim()] : [],
+          group_by_expressions: sourceGroupBySql?.trim() ? [sourceGroupBySql.trim()] : [],
+          order_by_expressions: sourceOrderBySql?.trim() ? [sourceOrderBySql.trim()] : [],
+          self_contained_derived: true,
+          validate_with_explain: false,
+          allow_unresolved_placeholders: true,
+          // Linked mappings guide the agents, but current SQL is always compiled
+          // from the current relation graph and current mapping expressions.
+          accepted_precedent_sttm_id: null,
+        });
+        if (!cancelled) {
+          setCompiledSql(response);
+          setCompilerError(null);
+          setCompiledMappingResult({
+            generatedSql: response.generated_sql,
+            previewSql: response.preview_sql,
+            contextHash: compilerContextHash,
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setCompilerError(error instanceof Error ? error.message : 'The relation graph could not be compiled.');
+        }
+      }
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    compilerRelationGraph,
+    compilerContextHash,
+    compiledMappingContextHash,
+    compiledMappingPreviewSql,
+    compiledMappingSql,
+    drivingTableId,
+    mappingLoading,
+    mappingSql,
+    mappings,
+    selectedTargetTableRef,
+    sourceFilterSql,
+    sourceGroupBySql,
+    sourceOrderBySql,
+    setCompiledMappingResult,
+  ]);
+
   const sourceQueryPreviewSql = useMemo(
     () =>
       buildSourceQueryPreviewSql({
@@ -646,6 +778,142 @@ function MappingPageContent() {
       }),
     [resolvedSourceQuerySql, sourceFilterSql, sourceGroupBySql, sourceOrderBySql],
   );
+
+  // `mappingSql` is the immutable/imported mapping SQL. The SQL assembled
+  // from rows is useful as a live preview for brand-new mappings, but it must
+  // never replace the uploaded source text when a saved mapping is reopened.
+  const canonicalOrGeneratedPreviewSql = useMemo(
+    () => (mappingSql.trim()
+      ? mappingSql
+      : compiledMappingContextHash === compilerContextHash && compiledMappingPreviewSql.trim()
+        ? compiledMappingPreviewSql
+        : compiledSql?.preview_sql ?? previewSql),
+    [compiledMappingContextHash, compiledMappingPreviewSql, compiledSql, compilerContextHash, compilerError, mappingSql, previewSql],
+  );
+
+  const canonicalOrGeneratedExecutionSql = useMemo(
+    () => (mappingSql.trim()
+      ? mappingSql
+      : compiledMappingContextHash === compilerContextHash && compiledMappingSql.trim()
+        ? compiledMappingSql
+        : compiledSql?.generated_sql ?? generatedInsertSql),
+    [compiledMappingContextHash, compiledMappingSql, compiledSql, compilerContextHash, compilerError, generatedInsertSql, mappingSql],
+  );
+
+  useEffect(() => {
+    if (!sqlParseDialogOpen) {
+      setEditableSql(canonicalOrGeneratedPreviewSql);
+    }
+  }, [canonicalOrGeneratedPreviewSql, sqlParseDialogOpen]);
+
+  const knownSqlTables = useMemo(() => {
+    const refs = new Map<string, TableRef>();
+    const collect = (
+      databases: NonNullable<typeof fullData>['sources'],
+    ) => {
+      for (const database of databases ?? []) {
+        for (const schema of database.schemas ?? []) {
+          for (const table of schema.tables ?? []) {
+            const ref = qualifiedNameToTableRef(table.qualifiedName);
+            if (ref) refs.set(table.qualifiedName.toUpperCase(), ref);
+          }
+        }
+      }
+    };
+    collect(fullData?.sources ?? []);
+    collect(fullData?.targets ?? []);
+    return Array.from(refs.values());
+  }, [fullData]);
+
+  const handleApplyParsedSql = useCallback(() => {
+    if (!sqlParseResult?.valid) return;
+    const workspace = sqlParseResult.parsed_workspace;
+    const parsedMappings: MappingState[] = (workspace.mapping_rows ?? []).map((item, index) => {
+      const targetColumn = String(item.target_column ?? item.target_alias ?? `COLUMN_${index + 1}`);
+      const sourceColumns = Array.isArray(item.source_columns)
+        ? item.source_columns.map(String)
+        : [];
+      return {
+        id: `sql:${targetColumn}:${index}`,
+        targetColumn,
+        targetType:
+          targetAttributeGroup?.columns.find((column) => column.name === targetColumn)?.type ?? 'TEXT',
+        sourceColumn:
+          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+            ? null
+            : sourceColumns[0] ?? (String(item.source_column ?? '') || null),
+        sourceColumns,
+        sourceType: null,
+        mappingMode:
+          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+            ? 'constant'
+            : 'source',
+        constantValue:
+          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+            ? String(item.constant_value ?? '')
+            : null,
+        expression:
+          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+            ? null
+            : item.expression ? String(item.expression) : null,
+        rule:
+          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+            ? 'Value'
+            : item.expression ? 'Custom' : 'Direct',
+        status: 'MAPPED',
+      };
+    });
+    const parsedRelationships: JoinConfig[] = (workspace.relationships ?? []).map((item, index) => {
+      const keys = Array.isArray(item.keys) ? item.keys.map(String) : [];
+      const condition = String(item.condition ?? '');
+      const conditionColumns = keys.length >= 2
+        ? keys.slice(0, 2)
+        : condition.split('=').map((value) => value.trim()).filter(Boolean).slice(0, 2);
+      const joinType = String(item.join_type ?? 'INNER').replace(/\s+JOIN$/i, '').toUpperCase();
+      return {
+        id: `sql-join:${index}`,
+        joinType: (['INNER', 'LEFT', 'RIGHT', 'FULL'].includes(joinType) ? joinType : 'INNER') as JoinConfig['joinType'],
+        leftTableId: String(item.left_table ?? ''),
+        rightTableId: String(item.right_table ?? ''),
+        source: 'USER_DEFINED',
+        conditions: conditionColumns.length >= 2
+          ? [{
+              leftColumn: conditionColumns[0].split('.').pop(),
+              operator: '=',
+              rightColumn: conditionColumns[1].split('.').pop(),
+            }]
+          : [],
+      };
+    });
+    applyParsedSqlWorkspace({
+      sourceTableFqns: workspace.source_tables ?? [],
+      targetTableFqn: workspace.target_table ?? null,
+      relationships: parsedRelationships,
+      mappings: parsedMappings,
+      derivedSources: (workspace.derived_sources ?? []).map((item) => ({
+        name: String(item.name ?? 'derived_source'),
+        sqlText: item.sql_text ? String(item.sql_text) : null,
+        inputTables: Array.isArray(item.tables_referenced)
+          ? item.tables_referenced.map(String)
+          : [],
+      })),
+      filterSql: (workspace.filters ?? [])
+        .map((item) => String(item.sql_fragment ?? ''))
+        .filter(Boolean)
+        .join('\n'),
+      sql: String(workspace.sql ?? editableSql),
+    });
+    setSqlParseDialogOpen(false);
+    setReviewResult(null);
+    setValidatedPreviewData(null);
+    refreshAssistantSignals('sql.applied');
+  }, [
+    applyParsedSqlWorkspace,
+    editableSql,
+    refreshAssistantSignals,
+    sqlParseResult,
+    targetAttributeGroup,
+  ]);
 
   const mappedMappings = useMemo(
     () =>
@@ -659,6 +927,8 @@ function MappingPageContent() {
             mapping.sourceColumns && mapping.sourceColumns.length
               ? mapping.sourceColumns
               : parseSourceColumns(mapping.sourceColumn),
+          mapping_mode: mapping.mappingMode ?? "source",
+          constant_value: mapping.constantValue ?? null,
           expression: mapping.expression,
           rule: mapping.rule,
           status: mapping.status,
@@ -681,18 +951,20 @@ function MappingPageContent() {
       semantic_bundle_id: semanticBundleId,
       semantic_bundle_label: semanticBundleLabel,
       semantic_view_name: semanticViewName,
+      relation_graph: compilerRelationGraph,
       source_query_sql: sourceQueryPreviewSql,
-      preview_sql: previewSql,
-      generated_sql: generatedInsertSql,
+      preview_sql: canonicalOrGeneratedPreviewSql,
+      generated_sql: canonicalOrGeneratedExecutionSql,
       mappings: mappedMappings,
       preview_limit: 5,
     }),
     [
       derivedSources,
       drivingTableRef,
-      generatedInsertSql,
+      canonicalOrGeneratedExecutionSql,
+      canonicalOrGeneratedPreviewSql,
+      compilerRelationGraph,
       mappedMappings,
-      previewSql,
       relationshipPayload,
       selectedColumnsByTable,
       selectedSourceTables,
@@ -703,6 +975,40 @@ function MappingPageContent() {
       sourceQueryPreviewSql,
     ],
   );
+
+  const handleReviewSqlChanges = useCallback(async () => {
+    if (!editableSql.trim()) return;
+    setSqlParseLoading(true);
+    try {
+      const result = await dbService.parseMappingSql({
+        sql: editableSql,
+        known_tables: knownSqlTables,
+        current_workspace: {
+          source_tables: selectedSourceTables.map(
+            (table) => `${table.database}.${table.schema}.${table.table}`,
+          ),
+          target_table: selectedTargetQualifiedName,
+          mapping_rows: mappedMappings,
+          relationships: relationshipPayload,
+          filters: sourceFilterSql ? [{ sql_fragment: sourceFilterSql }] : [],
+        },
+      });
+      setSqlParseResult(result);
+      setSqlParseDialogOpen(true);
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : 'SQL parsing failed.');
+    } finally {
+      setSqlParseLoading(false);
+    }
+  }, [
+    editableSql,
+    knownSqlTables,
+    mappedMappings,
+    relationshipPayload,
+    selectedSourceTables,
+    selectedTargetQualifiedName,
+    sourceFilterSql,
+  ]);
 
   const reviewContextSignature = useMemo(
     () =>
@@ -719,13 +1025,11 @@ function MappingPageContent() {
           joinType: join.join_type,
           conditions: join.conditions,
         })),
-        previewSql,
-        generatedInsertSql,
+        mappingSql: canonicalOrGeneratedPreviewSql,
       }),
     [
       drivingTableId,
-      generatedInsertSql,
-      previewSql,
+      canonicalOrGeneratedPreviewSql,
       relationshipPayload,
       selectedDerivedSourceRecords,
       selectedSourceTables,
@@ -741,9 +1045,8 @@ function MappingPageContent() {
     setReviewSelectionVariant(null);
     setApprovedPreviewSql(null);
     setSelectedPreviewRowIndex(0);
-    setPreviewError(null);
+        setPreviewError(null);
     setReviewBannerDismissed(false);
-    setMappingSql(generatedInsertSql);
     setMappingPreviewSql(previewSql);
     setMappingSqlVariant('original');
   }, [
@@ -751,7 +1054,6 @@ function MappingPageContent() {
     previewSql,
     reviewResult,
     setMappingPreviewSql,
-    setMappingSql,
     setMappingSqlVariant,
     validatedPreviewData,
   ]);
@@ -776,7 +1078,6 @@ function MappingPageContent() {
     setReviewResult(null);
     setReviewStage(null);
     setReviewBannerDismissed(false);
-    setMappingSql(generatedInsertSql);
     setMappingPreviewSql(previewSql);
     setMappingSqlVariant('original');
   }, [
@@ -788,7 +1089,6 @@ function MappingPageContent() {
     reviewLoading,
     reviewResult,
     setMappingPreviewSql,
-    setMappingSql,
     setMappingSqlVariant,
     validatedPreviewData,
   ]);
@@ -827,7 +1127,6 @@ function MappingPageContent() {
       setApprovedVariant(variant);
       setApprovedPreviewSql(approvedPreview);
       setMappingPreviewSql(result.executed_preview_sql || approvedPreview);
-      setMappingSql(result.executed_generated_sql || approvedGenerated);
       setMappingSqlVariant(result.variant_used ?? variant);
       setValidatedPreviewData(result);
       setActiveTab('data-preview');
@@ -848,6 +1147,33 @@ function MappingPageContent() {
 
   const handleRunPreview = async () => {
     if (!reviewResult) {
+      setPreviewLoading(true);
+      setPreviewError(null);
+      setReviewStage('Running the current SQL preview in Snowflake...');
+      try {
+        const result = await dbService.previewMappingSql({
+          ...mappingSqlRequestPayload,
+          chosen_variant: 'original',
+          approved_preview_sql: canonicalOrGeneratedPreviewSql,
+          approved_generated_sql: canonicalOrGeneratedExecutionSql,
+        });
+        setApprovedVariant('original');
+        setApprovedPreviewSql(result.executed_preview_sql || canonicalOrGeneratedPreviewSql);
+        setMappingPreviewSql(result.executed_preview_sql || canonicalOrGeneratedPreviewSql);
+        setMappingSqlVariant('original');
+        setValidatedPreviewData(result);
+        setActiveTab('data-preview');
+        setReviewStage(`SQL preview finished. ${result.preview_rows.length} sample row(s) were returned.`);
+      } catch (error) {
+        setPreviewError(
+          error instanceof Error ? error.message : 'Unable to run the current SQL preview.',
+        );
+        setValidatedPreviewData(null);
+        setActiveTab('sql-preview');
+        setReviewStage('Preview execution failed. Validate SQL to generate a reviewed repair.');
+      } finally {
+        setPreviewLoading(false);
+      }
       return;
     }
     const variant = reviewResult.requires_approval
@@ -868,29 +1194,56 @@ function MappingPageContent() {
     }
     setReviewLoading(true);
     setReviewError(null);
-    setPreviewError(null);
+        setPreviewError(null);
     setValidatedPreviewData(null);
     setReviewResult(null);
     setReviewBannerDismissed(false);
     setApprovedVariant('original');
-    setReviewStage('Checking the generated SQL in Snowflake for syntax and execution readiness...');
+    setReviewStage(
+      semanticViewName
+        ? 'Checking the generated SQL with Cortex Analyst and Snowflake validation...'
+        : 'Preparing the semantic view before Cortex Analyst reviews the SQL...',
+    );
+    refreshAssistantSignals("before_validation");
     try {
-      const result = await dbService.reviewMappingSql(mappingSqlRequestPayload);
+      let reviewPayload: MappingSqlReviewRequest = mappingSqlRequestPayload;
+      if (!semanticViewName) {
+        const semanticRefresh = await dbService.refreshSemanticContext({
+          selected_source_tables: selectedSourceTables,
+          selected_derived_sources: derivedSources
+            .filter((source) => source.isSelected)
+            .map((source) => source.id),
+          target_table: selectedTargetTableRef,
+          relationships: relationshipPayload as Array<Record<string, unknown>>,
+          requested_level: 'FULL_REGISTRY',
+          force: false,
+        });
+        applySemanticRefresh(semanticRefresh);
+        reviewPayload = {
+          ...mappingSqlRequestPayload,
+          semantic_bundle_id: semanticRefresh.bundle_id ?? mappingSqlRequestPayload.semantic_bundle_id,
+          semantic_bundle_label: semanticRefresh.bundle_label ?? mappingSqlRequestPayload.semantic_bundle_label,
+          semantic_view_name: semanticRefresh.semantic_view_name ?? null,
+          semantic_model_yaml: semanticRefresh.semantic_model_yaml ?? null,
+        };
+        setReviewStage(
+          semanticRefresh.semantic_view_name || semanticRefresh.semantic_model_yaml
+            ? 'Semantic model ready. Cortex Analyst is reviewing the SQL...'
+            : 'No Analyst-ready semantic model was available. Running Snowflake validation only...',
+        );
+      }
+      const result = await dbService.reviewMappingSql(reviewPayload);
       lastValidatedReviewContextRef.current = reviewContextSignature;
       setReviewResult(result);
       setReviewSelectionVariant(result.requires_approval ? 'original' : null);
       const defaultPreviewSql =
         result.optimized_preview_sql ?? result.original_preview_sql;
-      const defaultGeneratedSql =
-        result.optimized_generated_sql ?? result.original_generated_sql;
       setApprovedPreviewSql(result.requires_approval ? result.original_preview_sql : defaultPreviewSql);
       if (result.requires_approval) {
         setMappingPreviewSql(result.original_preview_sql);
-        setMappingSql(result.original_generated_sql);
         setMappingSqlVariant('original');
       } else {
         setMappingPreviewSql(defaultPreviewSql);
-        setMappingSql(defaultGeneratedSql);
         setMappingSqlVariant('original');
       }
       setActiveTab('sql-preview');
@@ -912,7 +1265,9 @@ function MappingPageContent() {
       if (result.requires_approval && result.optimized_preview_sql) {
         setReviewDialogOpen(true);
       }
+      refreshAssistantSignals("after_validation");
     } catch (error) {
+      refreshAssistantSignals("after_validation");
       setReviewError(
         error instanceof Error ? error.message : 'Unable to validate the generated SQL.',
       );
@@ -933,21 +1288,21 @@ function MappingPageContent() {
     if (variant === 'optimized') {
       const optimizedPreviewSql =
         reviewResult.optimized_preview_sql ?? reviewResult.original_preview_sql;
-      const optimizedGeneratedSql =
-        reviewResult.optimized_generated_sql ?? reviewResult.original_generated_sql;
       setApprovedPreviewSql(optimizedPreviewSql);
       setMappingPreviewSql(optimizedPreviewSql);
-      setMappingSql(optimizedGeneratedSql);
       setMappingSqlVariant('optimized');
-      setReviewStage('Optimized SQL applied. Run the preview when you are ready.');
+      setReviewStage(
+        reviewResult.review_kind === 'repair'
+          ? 'Suggested SQL repair applied. Run the preview when you are ready.'
+          : 'Optimized SQL applied. Run the preview when you are ready.',
+      );
     } else {
       setApprovedPreviewSql(reviewResult.original_preview_sql);
       setMappingPreviewSql(reviewResult.original_preview_sql);
-      setMappingSql(reviewResult.original_generated_sql);
       setMappingSqlVariant('original');
       setReviewStage('Original SQL selected. Run the preview when you are ready.');
     }
-  }, [reviewResult, setMappingPreviewSql, setMappingSql, setMappingSqlVariant]);
+  }, [reviewResult, setMappingPreviewSql, setMappingSqlVariant]);
 
   const previewDisplayRows = useMemo<PreviewDisplayRow[]>(() => {
     if (!validatedPreviewData || !validatedPreviewData.preview_rows?.length) {
@@ -1037,16 +1392,27 @@ function MappingPageContent() {
     }
   }, [previewResultRows.length, selectedPreviewRowIndex]);
 
-  const tabs: Array<{ key: MappingTab; label: string; icon: ReactNode; badge?: number }> = [
+  const tabs: Array<{ key: MappingTab; label: string; icon: ReactNode; badge?: number; tourTarget?: string }> = [
     { key: 'mapping', label: 'Mapping', icon: <ChecklistRtlRoundedIcon sx={{ fontSize: 17 }} /> },
     {
       key: 'sql-preview',
       label: 'SQL Preview',
       icon: <TerminalRoundedIcon sx={{ fontSize: 17 }} />,
       badge: mappedCount > 0 ? mappedCount : undefined,
+      tourTarget: TOUR_TARGETS.sttmSqlPreviewTab,
     },
-    { key: 'data-preview', label: 'Data Preview', icon: <TableRowsRoundedIcon sx={{ fontSize: 17 }} /> },
-    { key: 'data-lineage', label: 'Data Lineage', icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} /> },
+    {
+      key: 'data-preview',
+      label: 'Data Preview',
+      icon: <TableRowsRoundedIcon sx={{ fontSize: 17 }} />,
+      tourTarget: TOUR_TARGETS.sttmDataPreviewTab,
+    },
+    {
+      key: 'data-lineage',
+      label: 'Data Lineage',
+      icon: <AccountTreeOutlinedIcon sx={{ fontSize: 17 }} />,
+      tourTarget: TOUR_TARGETS.sttmDataLineageTab,
+    },
   ];
 
   const progressTrailing = (
@@ -1099,6 +1465,8 @@ function MappingPageContent() {
       ? 'error'
       : previewError
         ? 'warning'
+        : reviewResult && !reviewResult.execution_ready
+          ? 'error'
         : reviewResult?.requires_approval
           ? 'warning'
           : reviewLoading || previewLoading
@@ -1119,25 +1487,25 @@ function MappingPageContent() {
         : null;
 
     return (
-      <Stack spacing={1.25}>
+      <AiaStack spacing={1.25}>
         {primaryMessage ? (
-          <Alert
+          <AiaAlert
             severity={tone}
             sx={{ borderRadius: 2, py: 0.25 }}
             action={
               reviewLoading || previewLoading ? (
-                <CircularProgress size={18} color="inherit" />
+                <AiaCircularProgress size={18} color="inherit" />
               ) : reviewResult?.requires_approval ? (
-                <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-                  <Button
+                <AiaBox sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                  <AiaButton
                     color="inherit"
                     size="small"
                     sx={{ textTransform: 'none', fontWeight: 700 }}
                     onClick={() => setReviewDialogOpen(true)}
                   >
                     View diff
-                  </Button>
-                  <Button
+                  </AiaButton>
+                  <AiaButton
                     color="inherit"
                     size="small"
                     disabled={reviewSelectionVariant === 'optimized'}
@@ -1147,41 +1515,88 @@ function MappingPageContent() {
                     }}
                   >
                     {reviewSelectionVariant === 'optimized' ? 'Applied' : 'Apply'}
-                  </Button>
-                  <IconButton size="small" color="inherit" onClick={() => setReviewBannerDismissed(true)}>
+                  </AiaButton>
+                  <AiaIconButton size="small" color="inherit" onClick={() => setReviewBannerDismissed(true)}>
                     <CloseRoundedIcon fontSize="small" />
-                  </IconButton>
-                </Box>
+                  </AiaIconButton>
+                </AiaBox>
               ) : (
-                <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                <AiaBox sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
                   {reviewResult && !reviewError && !previewError && !reviewLoading && !previewLoading ? (
-                    <Typography sx={{ fontSize: '0.76rem', fontWeight: 700, opacity: 0.9 }}>
-                      {reviewResult.requires_approval ? 'Review required' : 'No changes required'}
-                    </Typography>
+                    <AiaText sx={{ fontSize: '0.76rem', fontWeight: 700, opacity: 0.9 }}>
+                      {!reviewResult.execution_ready
+                        ? 'Fix required'
+                        : reviewResult.requires_approval
+                          ? 'Review required'
+                          : 'No changes required'}
+                    </AiaText>
                   ) : null}
-                  <IconButton size="small" color="inherit" onClick={() => setReviewBannerDismissed(true)}>
+                  <AiaIconButton size="small" color="inherit" onClick={() => setReviewBannerDismissed(true)}>
                     <CloseRoundedIcon fontSize="small" />
-                  </IconButton>
-                </Box>
+                  </AiaIconButton>
+                </AiaBox>
               )
             }
           >
             {reviewResult && !reviewError && !previewError ? (
-              <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, mb: 0.4 }}>
+              <AiaText sx={{ fontSize: '0.82rem', fontWeight: 700, mb: 0.4 }}>
                 Reviewed by {getReviewAgentLabel(reviewResult.review_agent)}
-              </Typography>
+              </AiaText>
             ) : null}
-            <Typography sx={{ fontSize: '0.8rem', lineHeight: 1.5 }}>
+            <AiaText sx={{ fontSize: '0.8rem', lineHeight: 1.5 }}>
               {primaryMessage}
-            </Typography>
+            </AiaText>
             {secondaryMessage ? (
-              <Typography sx={{ fontSize: '0.76rem', lineHeight: 1.45, mt: 0.5 }}>
+              <AiaText sx={{ fontSize: '0.76rem', lineHeight: 1.45, mt: 0.5 }}>
                 {secondaryMessage}
-              </Typography>
+              </AiaText>
             ) : null}
-          </Alert>
+            {reviewResult && !reviewResult.execution_ready && reviewResult.repair_options?.length ? (
+              <AiaBox sx={{ mt: 1.25, display: 'grid', gap: 0.75 }}>
+                <AiaText sx={{ fontSize: '0.78rem', fontWeight: 800 }}>
+                  Ways to fix this
+                </AiaText>
+                {reviewResult.repair_options.map((option) => (
+                  <AiaBox
+                    key={`${option.code}-${option.identifier ?? ''}`}
+                    sx={{
+                      minWidth: 0,
+                      p: 1,
+                      border: '1px solid currentColor',
+                      borderRadius: 1.5,
+                      opacity: 0.95,
+                    }}
+                  >
+                    <AiaBox sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1, flexWrap: 'wrap' }}>
+                      <AiaBox sx={{ minWidth: 0, flex: '1 1 280px' }}>
+                        <AiaText sx={{ fontSize: '0.76rem', fontWeight: 800, overflowWrap: 'anywhere' }}>
+                          {option.title}
+                        </AiaText>
+                        <AiaText sx={{ mt: 0.25, fontSize: '0.73rem', lineHeight: 1.45, overflowWrap: 'anywhere', wordBreak: 'break-word' }}>
+                          {option.description}
+                        </AiaText>
+                      </AiaBox>
+                      {option.action === 'review_suggested_sql' ? (
+                        <AiaButton color="inherit" size="small" sx={{ textTransform: 'none', fontWeight: 700 }} onClick={() => setReviewDialogOpen(true)}>
+                          Compare repair
+                        </AiaButton>
+                      ) : option.action === 'open_mapping' ? (
+                        <AiaButton color="inherit" size="small" sx={{ textTransform: 'none', fontWeight: 700 }} onClick={() => setActiveTab('mapping')}>
+                          Open mapping
+                        </AiaButton>
+                      ) : (
+                        <AiaText sx={{ fontSize: '0.7rem', fontWeight: 800, opacity: 0.85 }}>
+                          Use Edit SQL above
+                        </AiaText>
+                      )}
+                    </AiaBox>
+                  </AiaBox>
+                ))}
+              </AiaBox>
+            ) : null}
+          </AiaAlert>
         ) : null}
-      </Stack>
+      </AiaStack>
     );
   }, [
     compactReviewSummary,
@@ -1205,7 +1620,7 @@ function MappingPageContent() {
         trailing={progressTrailing}
       />
 
-      <Box
+      <AiaBox
         sx={{
           display: 'flex',
           flex: 1,
@@ -1215,8 +1630,8 @@ function MappingPageContent() {
         }}
       >
         {activeTab === 'mapping' ? (
-        <Box
-          sx={{
+        <AiaBox
+              sx={{
             display: 'flex',
             width: collapsed ? COLLAPSED_SIDEBAR_WIDTH : width,
             minWidth: collapsed ? COLLAPSED_SIDEBAR_WIDTH : MIN_SIDEBAR_WIDTH,
@@ -1230,8 +1645,8 @@ function MappingPageContent() {
           }}
         >
           {collapsed ? (
-            <Box
-              sx={{
+            <AiaBox
+            sx={{
                 width: '100%',
                 height: '100%',
                 minHeight: 0,
@@ -1239,19 +1654,19 @@ function MappingPageContent() {
                 flexDirection: 'column',
               }}
             >
-              <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+              <AiaBox sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                 <SourceTargetAttributeList embedded />
-              </Box>
+              </AiaBox>
               <SttmSidebarCollapseFooter
                 collapsed
                 centered
                 expandLabel="Expand source sidebar"
                 onToggle={() => setCollapsed(false)}
               />
-            </Box>
+            </AiaBox>
           ) : (
-            <Box sx={{ display: 'flex', width: '100%', minWidth: 0, minHeight: 0, flex: 1 }}>
-              <Box
+            <AiaBox sx={{ display: 'flex', width: '100%', minWidth: 0, minHeight: 0, flex: 1 }}>
+              <AiaBox
                 sx={{
                   minWidth: 0,
                   flex: 1,
@@ -1262,52 +1677,60 @@ function MappingPageContent() {
                 }}
               >
                 <SourceTargetAttributeList embedded />
-              </Box>
+              </AiaBox>
               <AiaResizeHandle
                 direction="horizontal"
                 onMouseDown={beginResize}
                 sx={{ alignSelf: 'stretch', height: '100%' }}
               />
-            </Box>
+            </AiaBox>
           )}
-        </Box>
+        </AiaBox>
         ) : null}
 
-        <Box
-          sx={{
-            flex: 1,
-            minWidth: 0,
-            minHeight: 0,
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-          }}
-        >
-        {activeTab === 'mapping' ? (
-          <Box
+        <AiaBox
             sx={{
-              minWidth: 0,
               flex: 1,
+              minWidth: 0,
               minHeight: 0,
               overflow: 'hidden',
               display: 'flex',
               flexDirection: 'column',
             }}
           >
+        {activeTab === 'mapping' ? (
+          <AiaBox
+              sx={{
+              minWidth: 0,
+              flex: 1,
+              minHeight: 0,
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+              }}
+            >
             <SourceTargetAttributeMapping />
-          </Box>
+          </AiaBox>
         ) : null}
 
         {activeTab === 'sql-preview' ? (
-          <Box sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+          <AiaBox
+            data-tour={TOUR_TARGETS.sttmSqlPreviewPanel}
+            sx={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}
+          >
             <MappingSqlPreview
+              sqlTitle={mappingSql.trim() ? 'Imported SQL' : 'Generated SQL'}
               targetLabel={selectedTargetQualifiedName?.split('.').pop() ?? null}
               mappedCount={mappedCount}
               tableCount={selectedInputCount}
               filterCount={filterCount}
               joinCount={relationships.length}
               sourceQuerySql={sourceQueryPreviewSql}
-              generatedSql={approvedVariant === 'optimized' && approvedPreviewSql ? approvedPreviewSql : previewSql}
+              generatedSql={
+                approvedVariant === 'optimized' && approvedPreviewSql
+                  ? approvedPreviewSql
+                  : canonicalOrGeneratedPreviewSql
+              }
               onValidate={() => {
                 void handleValidateSql();
               }}
@@ -1317,186 +1740,209 @@ function MappingPageContent() {
               onRunPreview={() => {
                 void handleRunPreview();
               }}
-              runDisabled={
-                previewLoading ||
-                !reviewResult ||
-                !reviewResult.execution_ready ||
-                (reviewResult.requires_approval && !reviewSelectionVariant)
-              }
+              runDisabled={previewLoading}
               runLoading={previewLoading}
               runLabel={previewLoading ? 'Running...' : 'Run Preview'}
-              statusPanel={sqlReviewStatusPanel}
+              statusPanel={
+                <>
+                  {compilerError ? (
+                    <AiaAlert severity="warning" sx={{ mb: 1 }}>
+                      <AiaText sx={{ fontSize: '0.8rem', fontWeight: 800 }}>
+                        SQL graph needs attention
+                      </AiaText>
+                      <AiaText sx={{ mt: 0.35, fontSize: '0.76rem', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+                        {compilerError}
+                      </AiaText>
+                      <AiaText sx={{ mt: 0.35, fontSize: '0.73rem', lineHeight: 1.45 }}>
+                        The live row-based preview is preserved below. Add the missing joins or map those targets to outputs from the connected derived source, then compile again.
+                      </AiaText>
+                    </AiaAlert>
+                  ) : null}
+                  {sqlReviewStatusPanel}
+                </>
+              }
+              editableSql={editableSql}
+              onEditableSqlChange={setEditableSql}
+              onReviewSqlChanges={() => {
+                void handleReviewSqlChanges();
+              }}
+              reviewSqlChangesLoading={sqlParseLoading}
             />
-          </Box>
-        ) : null}
+          </AiaBox>
+                  ) : null}
 
         {activeTab === 'data-preview' ? (
-          <Box sx={{ flex: 1, width: '100%', minWidth: 0, minHeight: 0, overflow: 'auto', p: 2, backgroundColor: '#fff' }}>
-            <Paper
+          <AiaBox
+            data-tour={TOUR_TARGETS.sttmDataPreviewPanel}
+            sx={{ flex: 1, width: '100%', minWidth: 0, minHeight: 0, overflow: 'auto', p: 2, backgroundColor: '#fff' }}
+          >
+            <AiaPaper
               elevation={0}
               sx={{ border: '1px solid #e5e7eb', borderRadius: 3, overflow: 'hidden', width: '100%' }}
             >
-              <Box sx={{ px: 2, py: 1.5, borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <Typography sx={{ fontSize: '0.85rem', fontWeight: 800, color: '#111827' }}>
+              <AiaBox sx={{ px: 2, py: 1.5, borderBottom: '1px solid #e5e7eb', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <AiaText sx={CARD_TITLE_SX}>
                   Result preview
-                </Typography>
-                <Typography sx={{ fontSize: '0.76rem', color: '#64748b' }}>
+                </AiaText>
+                <AiaText sx={{ fontSize: '0.76rem', color: '#64748b' }}>
                   {validatedPreviewData?.preview_rows?.length ?? 0} sample rows
-                </Typography>
-              </Box>
+                </AiaText>
+              </AiaBox>
               {validatedPreviewData ? (
-                <Box sx={{ px: 2, py: 1.25, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
-                  <Typography sx={{ fontSize: '0.76rem', color: '#475569', lineHeight: 1.5 }}>
+                <AiaBox sx={{ px: 2, py: 1.25, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
+                  <AiaText sx={{ fontSize: '0.76rem', color: '#475569', lineHeight: 1.5 }}>
                     Sample values below come from executing the approved SQL in Snowflake. They are not AI-generated values.
                     {reviewResult
                       ? ` The approved SQL variant came from ${getReviewAgentLabel(reviewResult.review_agent)}.`
                       : ''}
-                  </Typography>
-                </Box>
+                  </AiaText>
+                </AiaBox>
               ) : null}
               {previewLoading ? (
-                <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                  <CircularProgress size={28} />
-                </Box>
+                <AiaBox sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+                  <AiaCircularProgress size={28} />
+                </AiaBox>
               ) : previewError ? (
-                <Box sx={{ p: 2.5 }}>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#b91c1c' }}>
+                <AiaBox sx={{ p: 2.5 }}>
+                  <AiaText sx={{ fontSize: '0.82rem', color: '#b91c1c' }}>
                     {previewError}
-                  </Typography>
-                </Box>
+                  </AiaText>
+                </AiaBox>
               ) : !validatedPreviewData ? (
-                <Box sx={{ p: 2.5 }}>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>
+                <AiaBox sx={{ p: 2.5 }}>
+                  <AiaText sx={BODY_SX}>
                     Validate the generated SQL first to preview actual sample output values.
-                  </Typography>
-                  <Button
+                  </AiaText>
+                  <AiaButton
                     variant="outlined"
-                    size="small"
-                    sx={{ mt: 1.5, textTransform: 'none', fontWeight: 700 }}
+                    size="medium"
+                    customColor="var(--color-primary)"
+                    customBorderColor="var(--color-primary)"
+                    sx={{ mt: 1.5 }}
                     onClick={() => {
                       setActiveTab('sql-preview');
                     }}
                   >
                     Go to SQL preview
-                  </Button>
-                </Box>
+                  </AiaButton>
+                </AiaBox>
               ) : previewResultRows.length === 0 ? (
-                <Box sx={{ p: 2.5 }}>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>
+                <AiaBox sx={{ p: 2.5 }}>
+                  <AiaText sx={{ fontSize: '0.82rem', color: '#64748b' }}>
                     The approved SQL executed successfully, but it returned 0 preview rows for this sample run.
-                  </Typography>
-                  <Typography sx={{ fontSize: '0.76rem', color: '#94a3b8', mt: 0.75, lineHeight: 1.5 }}>
+                  </AiaText>
+                  <AiaText sx={{ fontSize: '0.76rem', color: '#94a3b8', mt: 0.75, lineHeight: 1.5 }}>
                     This usually means the current joins, filters, or transformed expressions did not produce matching sample output rows yet.
-                  </Typography>
-                </Box>
+                  </AiaText>
+                </AiaBox>
               ) : (
-                <Stack spacing={2} sx={{ p: 2 }}>
+                <AiaStack spacing={2} sx={{ p: 2 }}>
                   {validatedPreviewData.warnings?.length ? (
-                    <Alert severity="warning" sx={{ borderRadius: 2 }}>
+                    <AiaAlert severity="warning" sx={{ borderRadius: 2 }}>
                       {validatedPreviewData.warnings.join(' ')}
-                    </Alert>
+                    </AiaAlert>
                   ) : null}
-                  <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
-                    <Box sx={{ px: 2, py: 1.25, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800 }}>Sample output rows</Typography>
-                      <Typography sx={{ mt: 0.4, fontSize: '0.72rem', color: '#64748b' }}>
+                  <AiaPaper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                    <AiaBox sx={{ px: 2, py: 1.25, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
+                      <AiaText sx={{ fontSize: '0.82rem', fontWeight: 800 }}>Sample output rows</AiaText>
+                      <AiaText sx={{ mt: 0.4, fontSize: '0.72rem', color: '#64748b' }}>
                         Select one row to drive the column trace below.
-                      </Typography>
-                    </Box>
-                    <Box sx={{ overflow: 'auto' }}>
-                      <Table size="small" stickyHeader>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell sx={{ width: 56, fontWeight: 800 }}>Use</TableCell>
-                            <TableCell sx={{ width: 52, fontWeight: 800 }}>#</TableCell>
+                      </AiaText>
+                    </AiaBox>
+                    <AiaBox sx={{ overflow: 'auto' }}>
+                      <AiaTablePrimitive size="small" stickyHeader>
+                        <AiaTableHead>
+                          <AiaTableRowPrimitive>
+                            <AiaTableCellPrimitive sx={{ width: 56, fontWeight: 800 }}>Use</AiaTableCellPrimitive>
+                            <AiaTableCellPrimitive sx={{ width: 52, fontWeight: 800 }}>#</AiaTableCellPrimitive>
                             {validatedPreviewData.preview_columns.map((column) => (
-                              <TableCell key={column.name} sx={{ minWidth: 180, fontWeight: 800 }}>
+                              <AiaTableCellPrimitive key={column.name} sx={{ minWidth: 180, fontWeight: 800 }}>
                                 {column.name}
-                              </TableCell>
+                              </AiaTableCellPrimitive>
                             ))}
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
+                          </AiaTableRowPrimitive>
+                        </AiaTableHead>
+                        <AiaTableBody>
                           {previewResultRows.map((row) => (
-                            <TableRow
+                            <AiaTableRowPrimitive
                               key={`result-${row.index}`}
                               hover
                               selected={selectedPreviewRowIndex === row.index - 1}
-                              sx={{
+                  sx={{
                                 cursor: 'pointer',
                                 '&.Mui-selected': { backgroundColor: '#eff6ff' },
                                 '&.Mui-selected:hover': { backgroundColor: '#dbeafe' },
                               }}
                               onClick={() => setSelectedPreviewRowIndex(row.index - 1)}
                             >
-                              <TableCell padding="checkbox">
-                                <Checkbox
+                              <AiaTableCellPrimitive padding="checkbox">
+                                <AiaCheckbox
                                   checked={selectedPreviewRowIndex === row.index - 1}
-                                  onChange={() => setSelectedPreviewRowIndex(row.index - 1)}
+                                  checkHandler={() => setSelectedPreviewRowIndex(row.index - 1)}
                                   size="small"
                                 />
-                              </TableCell>
-                              <TableCell sx={{ fontSize: '0.8rem', color: '#64748b' }}>{row.index}</TableCell>
+                              </AiaTableCellPrimitive>
+                              <AiaTableCellPrimitive sx={{ fontSize: '0.8rem', color: '#64748b' }}>{row.index}</AiaTableCellPrimitive>
                               {validatedPreviewData.preview_columns.map((column) => (
-                                <TableCell key={`${row.index}-${column.name}`} sx={{ fontSize: '0.82rem', color: '#111827', whiteSpace: 'nowrap' }}>
+                                <AiaTableCellPrimitive key={`${row.index}-${column.name}`} sx={{ fontSize: '0.82rem', color: '#111827', whiteSpace: 'nowrap' }}>
                                   {stringifyPreviewValue(row[column.name])}
-                                </TableCell>
+                                </AiaTableCellPrimitive>
                               ))}
-                            </TableRow>
+                            </AiaTableRowPrimitive>
                           ))}
-                        </TableBody>
-                      </Table>
-                    </Box>
-                  </Paper>
-                  <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
-                    <Box sx={{ px: 2, py: 1.25, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800 }}>
+                        </AiaTableBody>
+                      </AiaTablePrimitive>
+                    </AiaBox>
+                  </AiaPaper>
+                  <AiaPaper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                    <AiaBox sx={{ px: 2, py: 1.25, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
+                      <AiaText sx={{ fontSize: '0.82rem', fontWeight: 800 }}>
                         Column trace for sample row {selectedPreviewRowIndex + 1}
-                      </Typography>
-                    </Box>
-                    <Box sx={{ overflow: 'auto' }}>
-                      <Table size="small" stickyHeader>
-                        <TableHead>
-                          <TableRow>
-                            <TableCell sx={{ width: 52, fontWeight: 800 }}>#</TableCell>
-                            <TableCell sx={{ minWidth: 240, fontWeight: 800 }}>Target Attr</TableCell>
-                            <TableCell sx={{ minWidth: 210, fontWeight: 800 }}>Source Column</TableCell>
-                            <TableCell sx={{ minWidth: 170, fontWeight: 800 }}>Source Value</TableCell>
-                            <TableCell sx={{ minWidth: 200, fontWeight: 800 }}>Transformed Value</TableCell>
-                            <TableCell sx={{ minWidth: 280, fontWeight: 800 }}>Description</TableCell>
-                          </TableRow>
-                        </TableHead>
-                        <TableBody>
+                      </AiaText>
+                    </AiaBox>
+                    <AiaBox sx={{ overflow: 'auto' }}>
+                      <AiaTablePrimitive size="small" stickyHeader>
+                        <AiaTableHead>
+                          <AiaTableRowPrimitive>
+                            <AiaTableCellPrimitive sx={{ width: 52, fontWeight: 800 }}>#</AiaTableCellPrimitive>
+                            <AiaTableCellPrimitive sx={{ minWidth: 240, fontWeight: 800 }}>Target Attr</AiaTableCellPrimitive>
+                            <AiaTableCellPrimitive sx={{ minWidth: 210, fontWeight: 800 }}>Source Column</AiaTableCellPrimitive>
+                            <AiaTableCellPrimitive sx={{ minWidth: 170, fontWeight: 800 }}>Source Value</AiaTableCellPrimitive>
+                            <AiaTableCellPrimitive sx={{ minWidth: 200, fontWeight: 800 }}>Transformed Value</AiaTableCellPrimitive>
+                            <AiaTableCellPrimitive sx={{ minWidth: 280, fontWeight: 800 }}>Description</AiaTableCellPrimitive>
+                          </AiaTableRowPrimitive>
+                        </AiaTableHead>
+                        <AiaTableBody>
                           {previewDisplayRows.map((row) => (
-                            <TableRow key={`${row.mappingId}-${row.rowIndex}`} hover>
+                            <AiaTableRowPrimitive key={`${row.mappingId}-${row.rowIndex}`} hover>
                               {row.rowIndex === 0 ? (
-                                <TableCell rowSpan={row.rowCount} sx={{ fontSize: '0.82rem', color: '#64748b', verticalAlign: 'top' }}>
+                                <AiaTableCellPrimitive rowSpan={row.rowCount} sx={{ fontSize: '0.82rem', color: '#64748b', verticalAlign: 'top' }}>
                                   {row.displayIndex}
-                                </TableCell>
+                                </AiaTableCellPrimitive>
                               ) : null}
                               {row.rowIndex === 0 ? (
-                                <TableCell rowSpan={row.rowCount} sx={{ verticalAlign: 'top' }}>
-                                  <Box sx={{ minWidth: 0 }}>
-                                    <Typography sx={{ fontSize: '0.92rem', fontWeight: 800, color: '#111827' }}>
+                                <AiaTableCellPrimitive rowSpan={row.rowCount} sx={{ verticalAlign: 'top' }}>
+                                  <AiaBox sx={{ minWidth: 0 }}>
+                                    <AiaText sx={{ fontSize: '0.92rem', fontWeight: 800, color: '#111827' }}>
                                       {row.targetColumn}
-                                    </Typography>
-                                    <Typography sx={{ fontSize: '0.72rem', color: '#94a3b8', mt: 0.25 }}>
+                                    </AiaText>
+                                    <AiaText sx={{ fontSize: '0.72rem', color: '#94a3b8', mt: 0.25 }}>
                                       {row.targetType || '—'}
-                                    </Typography>
-                                  </Box>
-                                </TableCell>
+                                    </AiaText>
+                                  </AiaBox>
+                                </AiaTableCellPrimitive>
                               ) : null}
-                              <TableCell sx={{ verticalAlign: 'top' }}>
-                                <Box sx={{ display: 'grid', gap: 0.45 }}>
-                                  <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.55 }}>
-                                    <Typography sx={{ fontSize: '0.84rem', fontWeight: 700, color: '#111827', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
+                              <AiaTableCellPrimitive sx={{ verticalAlign: 'top' }}>
+                                <AiaBox sx={{ display: 'grid', gap: 0.45 }}>
+                                  <AiaBox sx={{ display: 'flex', alignItems: 'flex-start', gap: 0.55 }}>
+                                    <AiaText sx={{ fontSize: '0.84rem', fontWeight: 700, color: '#111827', lineHeight: 1.4, overflowWrap: 'anywhere' }}>
                                       {row.sourceColumnDisplay}
-                                    </Typography>
+                                    </AiaText>
                                     {row.confidenceScore !== null ? (
-                                      <Box
-                                        sx={{
+                                      <AiaBox
+                    sx={{
                                           display: 'inline-flex',
-                                          alignItems: 'center',
+                      alignItems: 'center',
                                           gap: 0.35,
                                           px: 0.65,
                                           py: 0.15,
@@ -1505,36 +1951,43 @@ function MappingPageContent() {
                                           ...confidenceTone(row.confidenceScore),
                                         }}
                                         >
-                                          <Typography sx={{ fontSize: '0.68rem', fontWeight: 800, color: 'inherit' }}>
+                                          <AiaText sx={{ fontSize: '0.68rem', fontWeight: 800, color: 'inherit' }}>
                                             {Math.round(row.confidenceScore * 100)}%
-                                          </Typography>
+                                          </AiaText>
                                           {row.confidenceReason || row.candidateSourceColumns.length ? (
-                                            <Tooltip
+                                            <AiaTooltip
                                               title={
-                                                row.confidenceReason ||
-                                                (row.candidateSourceColumns.length
-                                                  ? `Best alternatives: ${row.candidateSourceColumns.join(', ')}`
-                                                  : '')
+                                                [
+                                                  row.description && row.description !== '—'
+                                                    ? `Business fit: ${row.description}`
+                                                    : null,
+                                                  row.confidenceReason
+                                                    ? `Evidence: ${row.confidenceReason}`
+                                                    : null,
+                                                  row.candidateSourceColumns.length
+                                                    ? `Best alternatives: ${row.candidateSourceColumns.join(', ')}`
+                                                    : null,
+                                                ].filter(Boolean).join('\n')
                                               }
                                               placement="top"
                                               arrow
                                             >
                                               <InfoOutlinedIcon sx={{ fontSize: 13, color: 'inherit', cursor: 'help' }} />
-                                            </Tooltip>
+                                            </AiaTooltip>
                                           ) : null}
-                                        </Box>
+                                        </AiaBox>
                                     ) : null}
-                                  </Box>
+                                  </AiaBox>
                                   {row.sourceColumnDisplay !== row.sourceColumnFullName ? (
-                                    <Typography sx={{ fontSize: '0.7rem', color: '#94a3b8', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
+                                    <AiaText sx={{ fontSize: '0.7rem', color: '#94a3b8', lineHeight: 1.35, overflowWrap: 'anywhere' }}>
                                       {row.sourceColumnFullName}
-                                    </Typography>
+                                    </AiaText>
                                   ) : null}
-                                </Box>
-                              </TableCell>
-                              <TableCell sx={{ verticalAlign: 'top' }}>
-                                <Box
-                                  sx={{
+                                </AiaBox>
+                              </AiaTableCellPrimitive>
+                              <AiaTableCellPrimitive sx={{ verticalAlign: 'top' }}>
+                                <AiaBox
+                    sx={{
                                     display: 'inline-flex',
                                     alignItems: 'center',
                                     px: 1.25,
@@ -1547,13 +2000,13 @@ function MappingPageContent() {
                                   }}
                                 >
                                   {row.sourceValue}
-                                </Box>
-                              </TableCell>
+                                </AiaBox>
+                              </AiaTableCellPrimitive>
                               {row.rowIndex === 0 ? (
-                                <TableCell rowSpan={row.rowCount} sx={{ verticalAlign: 'top' }}>
-                                  <Box sx={{ display: 'grid', gap: 0.7, minWidth: 180 }}>
-                                    <Box
-                                      sx={{
+                                <AiaTableCellPrimitive rowSpan={row.rowCount} sx={{ verticalAlign: 'top' }}>
+                                  <AiaBox sx={{ display: 'grid', gap: 0.7, minWidth: 180 }}>
+                                    <AiaBox
+                  sx={{
                                         display: 'inline-flex',
                                         alignItems: 'center',
                                         px: 1.25,
@@ -1566,10 +2019,10 @@ function MappingPageContent() {
                                       }}
                                     >
                                       {row.transformedValue}
-                                    </Box>
+                                    </AiaBox>
                                     {row.expressionLabel ? (
-                                      <Box
-                                        sx={{
+                                      <AiaBox
+                  sx={{
                                           display: 'inline-flex',
                                           px: 1.1,
                                           py: 0.55,
@@ -1578,38 +2031,126 @@ function MappingPageContent() {
                                           color: '#6d28d9',
                                         }}
                                       >
-                                        <Typography sx={{ fontSize: '0.7rem', fontWeight: 700, lineHeight: 1.45 }}>
+                                        <AiaText sx={{ fontSize: '0.7rem', fontWeight: 700, lineHeight: 1.45 }}>
                                           {row.expressionLabel}
-                                        </Typography>
-                                      </Box>
+                                        </AiaText>
+                                      </AiaBox>
                                     ) : null}
-                                  </Box>
-                                </TableCell>
+                                  </AiaBox>
+                                </AiaTableCellPrimitive>
                               ) : null}
                               {row.rowIndex === 0 ? (
-                                <TableCell rowSpan={row.rowCount} sx={{ verticalAlign: 'top' }}>
-                                  <Typography sx={{ fontSize: '0.82rem', color: '#475569', lineHeight: 1.5 }}>
+                                <AiaTableCellPrimitive rowSpan={row.rowCount} sx={{ verticalAlign: 'top' }}>
+                                  <AiaText sx={{ fontSize: '0.82rem', color: '#475569', lineHeight: 1.5 }}>
                                     {row.description}
-                                  </Typography>
-                                </TableCell>
+                                  </AiaText>
+                                </AiaTableCellPrimitive>
                               ) : null}
-                            </TableRow>
+                            </AiaTableRowPrimitive>
                           ))}
-                        </TableBody>
-                      </Table>
-                    </Box>
-                  </Paper>
-                </Stack>
+                        </AiaTableBody>
+                      </AiaTablePrimitive>
+                    </AiaBox>
+                  </AiaPaper>
+                </AiaStack>
               )}
-            </Paper>
-          </Box>
+            </AiaPaper>
+          </AiaBox>
         ) : null}
         {activeTab === 'data-lineage' ? (
-          <SttmLineageWorkspacePanel />
+          <AiaBox data-tour={TOUR_TARGETS.sttmDataLineagePanel} sx={{ flex: 1, minHeight: 0, minWidth: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+            <SttmLineageWorkspacePanel />
+          </AiaBox>
         ) : null}
-        </Box>
-      </Box>
-      <Dialog
+        </AiaBox>
+      </AiaBox>
+      <AiaDialog
+        open={sqlParseDialogOpen}
+        onClose={() => setSqlParseDialogOpen(false)}
+        fullWidth
+        maxWidth="md"
+      >
+        <AiaDialogTitle sx={{ fontWeight: 800 }}>
+          Review SQL workspace changes
+        </AiaDialogTitle>
+        <AiaDialogContent dividers>
+          {!sqlParseResult ? (
+            <AiaAlert severity="warning">No parsed SQL result is available.</AiaAlert>
+          ) : (
+            <AiaStack spacing={2}>
+              <AiaAlert severity={sqlParseResult.valid ? 'info' : 'error'}>
+                {sqlParseResult.valid
+                  ? 'The SQL resolved successfully. Applying it will update the complete mapping workspace in one operation.'
+                  : 'The SQL cannot be applied until every ambiguous or unresolved reference is corrected.'}
+              </AiaAlert>
+              {sqlParseResult.unresolved_references.length ? (
+                <AiaBox>
+                  <AiaText sx={{ fontSize: '0.82rem', fontWeight: 800 }}>Unresolved references</AiaText>
+                  {sqlParseResult.unresolved_references.map((reference) => (
+                    <AiaText key={reference} sx={{ mt: 0.5, fontSize: '0.78rem', color: '#b91c1c', overflowWrap: 'anywhere' }}>
+                      {reference}
+                    </AiaText>
+                  ))}
+                </AiaBox>
+              ) : null}
+              {Object.keys(sqlParseResult.ambiguous_references).length ? (
+                <AiaBox>
+                  <AiaText sx={{ fontSize: '0.82rem', fontWeight: 800 }}>Ambiguous references</AiaText>
+                  {Object.entries(sqlParseResult.ambiguous_references).map(([reference, candidates]) => (
+                    <AiaText key={reference} sx={{ mt: 0.5, fontSize: '0.78rem', color: '#b91c1c', overflowWrap: 'anywhere' }}>
+                      {reference}: {candidates.join(', ')}
+                    </AiaText>
+                  ))}
+                </AiaBox>
+              ) : null}
+              {sqlParseResult.warnings.length ? (
+                <AiaBox>
+                  <AiaText sx={{ fontSize: '0.82rem', fontWeight: 800 }}>Warnings</AiaText>
+                  {sqlParseResult.warnings.map((warning) => (
+                    <AiaText key={warning} sx={{ mt: 0.5, fontSize: '0.78rem', color: '#92400e' }}>
+                      {warning}
+                    </AiaText>
+                  ))}
+                </AiaBox>
+              ) : null}
+              <AiaBox
+                sx={{
+                  display: 'grid',
+                  gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' },
+                  gap: 1.25,
+                }}
+              >
+                {Object.entries(sqlParseResult.diff).map(([category, changes]) => (
+                  <AiaPaper key={category} variant="outlined" sx={{ p: 1.5, borderRadius: 2, minWidth: 0 }}>
+                    <AiaText sx={{ fontSize: '0.76rem', fontWeight: 800, textTransform: 'capitalize' }}>
+                      {category.replaceAll('_', ' ')}
+                    </AiaText>
+                    <AiaText sx={{ mt: 0.35, fontSize: '0.74rem', color: '#64748b' }}>
+                      {changes.length} change{changes.length === 1 ? '' : 's'}
+                    </AiaText>
+                    {changes.slice(0, 4).map((change, index) => (
+                      <AiaText key={`${category}-${index}`} sx={{ mt: 0.5, fontSize: '0.72rem', overflowWrap: 'anywhere' }}>
+                        {typeof change === 'string' ? change : JSON.stringify(change)}
+                      </AiaText>
+                    ))}
+                  </AiaPaper>
+                ))}
+              </AiaBox>
+            </AiaStack>
+          )}
+        </AiaDialogContent>
+        <AiaDialogActions sx={{ px: 3, py: 2 }}>
+          <AiaButton onClick={() => setSqlParseDialogOpen(false)}>Cancel</AiaButton>
+          <AiaButton
+            variant="contained"
+            disabled={!sqlParseResult?.valid}
+            onClick={handleApplyParsedSql}
+          >
+            Apply workspace changes
+          </AiaButton>
+        </AiaDialogActions>
+      </AiaDialog>
+      <AiaDialog
         open={reviewDialogOpen}
         onClose={() => setReviewDialogOpen(false)}
         fullWidth
@@ -1623,52 +2164,52 @@ function MappingPageContent() {
           },
         }}
       >
-        <DialogTitle sx={{ fontWeight: 800 }}>
-          Review optimized SQL
-        </DialogTitle>
-        <DialogContent dividers sx={{ overflowY: 'auto', minHeight: 240, p: 0 }}>
+        <AiaDialogTitle sx={{ fontWeight: 800 }}>
+          {reviewResult?.review_kind === 'repair' ? 'Review suggested SQL repair' : 'Review optimized SQL'}
+        </AiaDialogTitle>
+        <AiaDialogContent dividers sx={{ overflowY: 'auto', minHeight: 240, p: 0 }}>
           {reviewResult ? (
-            <Box sx={{ display: 'grid', gap: 2, p: 3 }}>
-              <Alert severity="info" sx={{ borderRadius: 2 }}>
-                <Typography sx={{ fontSize: '0.82rem', whiteSpace: 'pre-line' }}>
+            <AiaBox sx={{ display: 'grid', gap: 2, p: 3 }}>
+              <AiaAlert severity="info" sx={{ borderRadius: 2 }}>
+                <AiaText sx={{ fontSize: '0.82rem', whiteSpace: 'pre-line' }}>
                   {reviewResult.review_summary}
-                </Typography>
-              </Alert>
+                </AiaText>
+              </AiaAlert>
               {reviewResult.warnings?.length ? (
-                <Alert severity="warning" sx={{ borderRadius: 2 }}>
-                  <Typography sx={{ fontSize: '0.8rem', whiteSpace: 'pre-line' }}>
+                <AiaAlert severity="warning" sx={{ borderRadius: 2 }}>
+                  <AiaText sx={{ fontSize: '0.8rem', whiteSpace: 'pre-line' }}>
                     {reviewResult.warnings.join(' ')}
-                  </Typography>
-                </Alert>
+                  </AiaText>
+                </AiaAlert>
               ) : null}
               {reviewDiffDocument?.lines.length ? (
-                <Paper
+                <AiaPaper
                   variant="outlined"
-                  sx={{
+                sx={{
                     borderRadius: 2,
                     overflow: 'hidden',
-                    display: 'flex',
+                  display: 'flex',
                     flexDirection: 'column',
                   }}
                 >
-                  <Box sx={{ px: 2, py: 1.25, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
-                      <Typography sx={{ fontSize: '0.82rem', fontWeight: 800 }}>{reviewDiffDocument.title}</Typography>
-                      <Box sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
-                        <Typography sx={{ fontSize: '0.74rem', fontWeight: 700, color: '#b91c1c' }}>
+                  <AiaBox sx={{ px: 2, py: 1.25, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
+                    <AiaBox sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2, flexWrap: 'wrap' }}>
+                      <AiaText sx={{ fontSize: '0.82rem', fontWeight: 800 }}>{reviewDiffDocument.title}</AiaText>
+                      <AiaBox sx={{ display: 'flex', gap: 1.5, flexWrap: 'wrap' }}>
+                        <AiaText sx={{ fontSize: '0.74rem', fontWeight: 700, color: '#b91c1c' }}>
                           - {reviewDiffSummary.removals} removal{reviewDiffSummary.removals === 1 ? '' : 's'}
-                        </Typography>
-                        <Typography sx={{ fontSize: '0.74rem', fontWeight: 700, color: '#15803d' }}>
+                        </AiaText>
+                        <AiaText sx={{ fontSize: '0.74rem', fontWeight: 700, color: '#15803d' }}>
                           + {reviewDiffSummary.additions} addition{reviewDiffSummary.additions === 1 ? '' : 's'}
-                        </Typography>
-                      </Box>
-                    </Box>
-                    <Typography sx={{ mt: 0.75, fontSize: '0.74rem', color: '#64748b' }}>
-                      Green lines are from the optimized analyst version. Red lines are from the current version that would be replaced.
-                    </Typography>
-                  </Box>
-                  <Box
-                    sx={{
+                        </AiaText>
+                      </AiaBox>
+                    </AiaBox>
+                    <AiaText sx={{ mt: 0.75, fontSize: '0.74rem', color: '#64748b' }}>
+                      Green lines are from the suggested {reviewResult.review_kind === 'repair' ? 'repaired' : 'optimized'} version. Red lines are from the current version that would be replaced.
+                    </AiaText>
+                  </AiaBox>
+                  <AiaBox
+                  sx={{
                       fontFamily: 'ui-monospace, SFMono-Regular, monospace',
                       fontSize: '0.74rem',
                       overflowY: 'auto',
@@ -1678,7 +2219,7 @@ function MappingPageContent() {
                     }}
                   >
                     {reviewDiffDocument.lines.map((row, index) => (
-                      <Box
+                      <AiaBox
                         key={`diff-${index}`}
                         sx={{
                           display: 'grid',
@@ -1711,7 +2252,7 @@ function MappingPageContent() {
                           whiteSpace: 'pre',
                         }}
                       >
-                        <Typography component="span" sx={{ fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 800, color: 'inherit', textAlign: 'center' }}>
+                        <AiaText component="span" sx={{ fontFamily: 'inherit', fontSize: 'inherit', fontWeight: 800, color: 'inherit', textAlign: 'center' }}>
                           {row.kind === 'added'
                             ? '+'
                             : row.kind === 'removed'
@@ -1719,62 +2260,62 @@ function MappingPageContent() {
                               : row.kind === 'separator'
                                 ? '⋯'
                                 : ' '}
-                        </Typography>
-                        <Typography component="span" sx={{ fontFamily: 'inherit', fontSize: 'inherit', color: 'inherit', fontStyle: row.kind === 'separator' ? 'italic' : 'normal' }}>
+                        </AiaText>
+                        <AiaText component="span" sx={{ fontFamily: 'inherit', fontSize: 'inherit', color: 'inherit', fontStyle: row.kind === 'separator' ? 'italic' : 'normal' }}>
                           {row.text || ' '}
-                        </Typography>
-                      </Box>
+                        </AiaText>
+                      </AiaBox>
                     ))}
-                  </Box>
-                </Paper>
+                  </AiaBox>
+                </AiaPaper>
               ) : null}
-              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
-                <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
-                  <Box sx={{ px: 2, py: 1.1, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
-                    <Typography sx={{ fontSize: '0.8rem', fontWeight: 800 }}>
+              <AiaBox sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1fr 1fr' }, gap: 2 }}>
+                <AiaPaper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                  <AiaBox sx={{ px: 2, py: 1.1, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
+                    <AiaText sx={{ fontSize: '0.8rem', fontWeight: 800 }}>
                       Original SQL
-                    </Typography>
-                  </Box>
-                  <Box sx={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: '0.72rem', maxHeight: '32vh', overflow: 'auto', bgcolor: '#fff' }}>
+                    </AiaText>
+                  </AiaBox>
+                  <AiaBox sx={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: '0.72rem', maxHeight: '32vh', overflow: 'auto', bgcolor: '#fff' }}>
                     {(reviewResult.original_preview_sql || '').split('\n').map((line, index) => (
-                      <Box key={`original-sql-${index}`} sx={{ px: 1.5, py: 0.42, borderBottom: '1px solid #f3f4f6', whiteSpace: 'pre', color: '#111827' }}>
+                      <AiaBox key={`original-sql-${index}`} sx={{ px: 1.5, py: 0.42, borderBottom: '1px solid #f3f4f6', whiteSpace: 'pre', color: '#111827' }}>
                         {line || ' '}
-                      </Box>
+                      </AiaBox>
                     ))}
-                  </Box>
-                </Paper>
-                <Paper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
-                  <Box sx={{ px: 2, py: 1.1, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
-                    <Typography sx={{ fontSize: '0.8rem', fontWeight: 800 }}>
-                      Optimized SQL
-                    </Typography>
-                  </Box>
-                  <Box sx={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: '0.72rem', maxHeight: '32vh', overflow: 'auto', bgcolor: '#fff' }}>
+                  </AiaBox>
+                </AiaPaper>
+                <AiaPaper variant="outlined" sx={{ borderRadius: 2, overflow: 'hidden' }}>
+                  <AiaBox sx={{ px: 2, py: 1.1, borderBottom: '1px solid #e5e7eb', bgcolor: '#f8fafc' }}>
+                    <AiaText sx={{ fontSize: '0.8rem', fontWeight: 800 }}>
+                      {reviewResult.review_kind === 'repair' ? 'Suggested repaired SQL' : 'Optimized SQL'}
+                    </AiaText>
+                  </AiaBox>
+                  <AiaBox sx={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: '0.72rem', maxHeight: '32vh', overflow: 'auto', bgcolor: '#fff' }}>
                     {(reviewResult.optimized_preview_sql || '').split('\n').map((line, index) => (
-                      <Box key={`optimized-sql-${index}`} sx={{ px: 1.5, py: 0.42, borderBottom: '1px solid #f3f4f6', whiteSpace: 'pre', color: '#111827' }}>
+                      <AiaBox key={`optimized-sql-${index}`} sx={{ px: 1.5, py: 0.42, borderBottom: '1px solid #f3f4f6', whiteSpace: 'pre', color: '#111827' }}>
                         {line || ' '}
-                      </Box>
+                      </AiaBox>
                     ))}
-                  </Box>
-                </Paper>
-              </Box>
-            </Box>
-          ) : null}
+                  </AiaBox>
+                </AiaPaper>
+              </AiaBox>
+            </AiaBox>
+        ) : null}
           {!reviewResult ? (
-            <Box sx={{ p: 3 }}>
-              <Alert severity="warning" sx={{ borderRadius: 2 }}>
-                <Typography sx={{ fontSize: '0.8rem', lineHeight: 1.5 }}>
+            <AiaBox sx={{ p: 3 }}>
+              <AiaAlert severity="warning" sx={{ borderRadius: 2 }}>
+                <AiaText sx={{ fontSize: '0.8rem', lineHeight: 1.5 }}>
                   The SQL review changed before the dialog finished rendering. Please validate SQL again to review the latest version.
-                </Typography>
-              </Alert>
-            </Box>
-          ) : null}
-        </DialogContent>
-        <DialogActions sx={{ px: 3, py: 2 }}>
-          <Button onClick={() => setReviewDialogOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
+                </AiaText>
+              </AiaAlert>
+            </AiaBox>
+        ) : null}
+        </AiaDialogContent>
+        <AiaDialogActions sx={{ px: 3, py: 2 }}>
+          <AiaButton onClick={() => setReviewDialogOpen(false)} sx={{ textTransform: 'none', fontWeight: 700 }}>
             Cancel
-          </Button>
-          <Button
+          </AiaButton>
+          <AiaButton
             variant="outlined"
             onClick={() => {
               void handleApproveReviewedSql('original');
@@ -1783,8 +2324,8 @@ function MappingPageContent() {
             sx={{ textTransform: 'none', fontWeight: 700 }}
           >
             {reviewSelectionVariant === 'original' ? 'Original selected' : 'Keep original and run preview'}
-          </Button>
-          <Button
+          </AiaButton>
+          <AiaButton
             variant="contained"
             onClick={() => {
               void handleApproveReviewedSql('optimized');
@@ -1792,10 +2333,12 @@ function MappingPageContent() {
             disabled={reviewSelectionVariant === 'optimized'}
             sx={{ textTransform: 'none', fontWeight: 700 }}
           >
-            {reviewSelectionVariant === 'optimized' ? 'Optimized SQL applied' : 'Use optimized and run preview'}
-          </Button>
-        </DialogActions>
-      </Dialog>
+            {reviewSelectionVariant === 'optimized'
+              ? reviewResult?.review_kind === 'repair' ? 'Suggested repair applied' : 'Optimized SQL applied'
+              : reviewResult?.review_kind === 'repair' ? 'Use suggested repair' : 'Use optimized and run preview'}
+          </AiaButton>
+        </AiaDialogActions>
+      </AiaDialog>
       <PreProcessModal />
     </div>
   );

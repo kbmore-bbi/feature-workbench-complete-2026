@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.config import Settings
+from app.core.conversation_memory import ConversationMemoryService
 from app.core.exceptions import SnowflakeAgentError
+from app.core.learning_retrieval import LearningRetrievalService
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.schema.contracts import ApiActor, ApiError, ApiWarning, build_response_envelope
 from app.schema.dbt_conversion import (
@@ -51,9 +53,13 @@ class DbtConversionService:
         *,
         agent_client: SnowflakeAgentClient,
         settings: Settings,
+        learning_service: LearningRetrievalService | None = None,
+        memory_service: ConversationMemoryService | None = None,
     ) -> None:
         self._agent = agent_client
         self._settings = settings
+        self._learning_service = learning_service
+        self._memory = memory_service
         agent_name = settings.resolved_dbt_conversion_agent.strip()
         if not agent_name:
             raise SnowflakeAgentError(
@@ -104,6 +110,15 @@ class DbtConversionService:
             **response_meta,
             "agent_name": self._agent_name,
         }
+        self._record_fir_artifact(
+            body=body,
+            request_id=request_id,
+            actor=actor,
+            context=merged_context,
+            prepared_payload=prepared_payload,
+            response=response_data,
+            status="failed" if response_error else "completed",
+        )
         return DbtConversionOutcome(
             data=response_data,
             context=merged_context,
@@ -301,6 +316,15 @@ class DbtConversionService:
                     },
                 )
                 return
+            self._record_fir_artifact(
+                body=body,
+                request_id=request_id,
+                actor=actor,
+                context=outcome.context,
+                prepared_payload=prepared_payload,
+                response=outcome.data,
+                status="failed" if outcome.error else "completed",
+            )
             envelope = build_response_envelope(
                 operation=DBT_CONVERSION_OPERATION,
                 request=None,
@@ -459,6 +483,7 @@ class DbtConversionService:
             body.materialization
             or ("view" if target_layer == "mart" else "incremental")
         )
+        fir_context = self._retrieve_fir_context(body=body, context=context)
         payload = {
             "contract_version": "1.0",
             "request_id": request_id,
@@ -471,6 +496,8 @@ class DbtConversionService:
             },
             "data": _prune_empty(
                 {
+                    "project_id": body.project_id or context.get("project_id"),
+                    "sttm_id": body.sttm_id or context.get("sttm_id"),
                     "project_name": body.project_name or f"{body.target_table.table} DBT Conversion",
                     "domain_name": domain_name,
                     "target_layer": target_layer,
@@ -493,6 +520,7 @@ class DbtConversionService:
                     "derived_source_lineage": body.derived_source_lineage,
                     "datahub_context": body.datahub_context,
                     "checklist": body.checklist or _DEFAULT_CHECKLIST,
+                    "fir_context": fir_context,
                 }
             ),
             "warnings": [],
@@ -504,6 +532,102 @@ class DbtConversionService:
             },
         }
         return _prune_empty(payload)
+
+    def _retrieve_fir_context(
+        self,
+        *,
+        body: DbtConversionRequest,
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        learning_service = getattr(self, "_learning_service", None)
+        if learning_service is None:
+            return {}
+        project_id = str(body.project_id or context.get("project_id") or "").strip()
+        if not project_id:
+            return {}
+        source_tables = [
+            ".".join([table.database, table.schema, table.table])
+            for table in body.source_tables
+        ]
+        target_table = ".".join(
+            [body.target_table.database, body.target_table.schema, body.target_table.table]
+        )
+        learning = learning_service.get_comprehensive_learning_context(
+            project_id=project_id,
+            source_tables=source_tables,
+            target_table=target_table,
+            target_columns=[
+                mapping.target_column
+                for mapping in body.mappings
+                if mapping.target_column
+            ],
+            sttm_id=body.sttm_id or context.get("sttm_id"),
+            context_key=context.get("context_key"),
+            milestone="dbt_conversion",
+            target_agent="AGT_DBT_CONVERSION",
+        )
+        return learning.model_dump(mode="json", exclude_none=True)
+
+    def _record_fir_artifact(
+        self,
+        *,
+        body: DbtConversionRequest,
+        request_id: str | None,
+        actor: ApiActor | None,
+        context: dict[str, Any],
+        prepared_payload: dict[str, Any],
+        response: DbtConversionResponse,
+        status: str,
+    ) -> None:
+        memory = getattr(self, "_memory", None)
+        if memory is None:
+            return
+        try:
+            fir_context = prepared_payload.get("data", {}).get("fir_context") or {}
+            artifact_id = memory.record_agent_artifact(
+                request_id=request_id,
+                session_id=context.get("session_id"),
+                thread_id=context.get("thread_id"),
+                agent_name=self._agent_name,
+                artifact_type="dbt_conversion",
+                payload=response.model_dump(mode="json", exclude_none=True),
+                artifact_status=status,
+                entity_type="sttm",
+                entity_ids=[
+                    value
+                    for value in (
+                        body.project_id or context.get("project_id"),
+                        body.sttm_id or context.get("sttm_id"),
+                    )
+                    if value
+                ],
+                semantic_bundle_id=body.semantic_bundle_id,
+                summary=response.message,
+                created_by=actor.user_id if actor else None,
+                context_key=context.get("context_key") or fir_context.get("context_key"),
+                snapshot_id=context.get("snapshot_id"),
+                retrieved_inference_ids=response.retrieved_inference_ids
+                or fir_context.get("retrieved_inference_ids")
+                or [],
+                retrieved_recommendation_ids=response.retrieved_recommendation_ids
+                or fir_context.get("retrieved_recommendation_ids")
+                or [],
+                used_inference_ids=response.used_inference_ids,
+                used_recommendation_ids=response.used_recommendation_ids,
+            )
+            for recommendation_id in response.used_recommendation_ids:
+                memory.record_fir_recommendation_outcome(
+                    recommendation_id=recommendation_id,
+                    outcome_type="used",
+                    context_key=context.get("context_key") or fir_context.get("context_key"),
+                    snapshot_id=context.get("snapshot_id"),
+                    request_id=request_id,
+                    artifact_id=artifact_id,
+                    user_id=actor.user_id if actor else None,
+                    payload={"agent_name": self._agent_name, "artifact_type": "dbt_conversion"},
+                )
+        except Exception as exc:
+            logger.warning("Could not persist DBT FIR artifact: %s", exc)
 
     @staticmethod
     def _build_prompt(payload: dict[str, Any]) -> str:
@@ -567,6 +691,10 @@ class DbtConversionService:
             domain_name=_string_or_none(source_payload.get("domain_name")),
             target_layer=_string_or_none(source_payload.get("target_layer")),
             branch=_string_or_none(source_payload.get("branch")) or "main",
+            retrieved_inference_ids=_string_list(source_payload.get("retrieved_inference_ids")),
+            retrieved_recommendation_ids=_string_list(source_payload.get("retrieved_recommendation_ids")),
+            used_inference_ids=_string_list(source_payload.get("used_inference_ids")),
+            used_recommendation_ids=_string_list(source_payload.get("used_recommendation_ids")),
         )
         warnings = _normalize_warnings(payload.get("warnings"), source_payload.get("warnings"))
 
@@ -595,6 +723,12 @@ def _string_or_none(value: Any) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]
 
 
 def _normalize_sql(sql_text: str | None) -> str | None:

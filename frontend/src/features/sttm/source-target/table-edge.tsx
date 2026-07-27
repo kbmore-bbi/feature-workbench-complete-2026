@@ -1,12 +1,14 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
 import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
   type EdgeProps,
 } from "@xyflow/react";
+
+import { AiaTooltip } from "@/components/ui/aia-tooltip";
 
 export interface TableEdgeData {
   joinType?: string;
@@ -43,6 +45,8 @@ export function TableEdge({
   data,
   selected,
 }: EdgeProps) {
+  const [edgeHovered, setEdgeHovered] = useState(false);
+
   const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
@@ -54,11 +58,9 @@ export function TableEdge({
 
   const edgeData = data as TableEdgeData | undefined;
   const joinType = edgeData?.joinType || "INNER";
-  const label = edgeData?.label ?? `${joinType} · ${edgeData?.conditionCount ?? 1}`;
-  const count = edgeData?.conditionCount ?? 1;
+  const tooltipLabel = edgeData?.label ?? `${joinType} · ${edgeData?.conditionCount ?? 1}`;
   const stroke = joinStrokeColor(joinType);
   const readOnly = edgeData?.readOnly ?? false;
-  const dashed = edgeData?.dashed ?? false;
 
   return (
     <>
@@ -67,58 +69,74 @@ export function TableEdge({
         path={edgePath}
         style={{
           stroke: selected ? "#4f46e5" : stroke,
-          strokeWidth: selected ? 2.5 : 2,
-          strokeDasharray: dashed ? "6 4" : undefined,
+          strokeWidth: 1,
+          strokeDasharray: "3",
+          pointerEvents: "none",
         }}
       />
 
+      <path
+        d={edgePath}
+        fill="none"
+        stroke="transparent"
+        strokeWidth={14}
+        style={{ cursor: "pointer", pointerEvents: "stroke" }}
+        onMouseEnter={() => setEdgeHovered(true)}
+        onMouseLeave={() => setEdgeHovered(false)}
+      />
+
       <EdgeLabelRenderer>
-        <div
-          className={`tedge-label ${selected ? "tedge-label--selected" : ""}`}
-          style={{
-            transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
-          }}
+        <AiaTooltip
+          title={tooltipLabel}
+          open={edgeHovered}
+          disableFocusListener
+          disableTouchListener
+          placement="top"
+          arrow
         >
-          <div className="tedge-label__inner">
-            {!readOnly ? (
-              <button
-                className="tedge-label__icon-btn tedge-label__icon-btn--edit"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  edgeData?.onEdit?.(id);
-                }}
-                title="Edit Join"
-              >
-                ✎
-              </button>
-            ) : null}
-            <div
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                color: selected ? "#4338ca" : stroke,
-                padding: "0 4px",
-                minWidth: 56,
-                textAlign: "center",
+          <span
+            className="tedge-tooltip-anchor"
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+              width: 1,
+              height: 1,
+              pointerEvents: "none",
+            }}
+          />
+        </AiaTooltip>
+
+        {!readOnly ? (
+          <div
+            className="tedge-actions"
+            style={{
+              transform: `translate(-50%, -50%) translate(${labelX}px,${labelY}px)`,
+            }}
+          >
+            <button
+              type="button"
+              className="tedge-label__icon-btn tedge-label__icon-btn--edit"
+              onClick={(event) => {
+                event.stopPropagation();
+                edgeData?.onEdit?.(id);
               }}
-              title={label}
+              aria-label="Edit join"
             >
-              {label}
-            </div>
-            {!readOnly ? (
-              <button
-                className="tedge-label__icon-btn tedge-label__icon-btn--delete"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  edgeData?.onDelete?.(id);
-                }}
-                title="Delete Join"
-              >
-                ✕
-              </button>
-            ) : null}
+              ✎
+            </button>
+            <button
+              type="button"
+              className="tedge-label__icon-btn tedge-label__icon-btn--delete"
+              onClick={(event) => {
+                event.stopPropagation();
+                edgeData?.onDelete?.(id);
+              }}
+              aria-label="Delete join"
+            >
+              ✕
+            </button>
           </div>
-        </div>
+        ) : null}
       </EdgeLabelRenderer>
     </>
   );

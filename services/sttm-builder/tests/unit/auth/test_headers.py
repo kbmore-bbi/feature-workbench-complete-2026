@@ -32,6 +32,8 @@ def test_extract_snowflake_context_reads_ingress_headers() -> None:
         "snowflake_user": "VIEWER_USER",
         "email": "viewer@example.com",
         "snowflake_user_token": "ingress-user-token",
+        "snowflake_role": None,
+        "oauth_session_id": None,
     }
 
 
@@ -53,4 +55,6 @@ def test_extract_snowflake_context_uses_local_dev_settings_when_enabled() -> Non
         "snowflake_user": "DEV_USER",
         "email": "dev@example.com",
         "snowflake_user_token": "",
+        "snowflake_role": None,
+        "oauth_session_id": None,
     }

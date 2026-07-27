@@ -6,8 +6,32 @@ import {
   mockSnowflakeContext,
   mockUserRoles,
   mockUserSession,
-} from './mock/authMockData';
+} from '@/data/mock/auth';
 import { mockDelay, throwMockError, useMockDb } from './mock/mockConfig';
+
+// v3 was sessionStorage (cleared on tab close); v4 is localStorage (persists across sessions).
+const STTM_BUILDER_SESSION_STORAGE_KEY_LEGACY = "sttm-builder-session-v3";
+const STTM_BUILDER_SESSION_STORAGE_KEY = "sttm-builder-session-v4";
+const AUTH_SESSION_CACHE_TTL_MS = 5 * 60 * 1000;
+
+let cachedUserSession: { value: UserSession; expiresAt: number } | null = null;
+let pendingUserSession: Promise<UserSession> | null = null;
+
+export function clearBrowserWorkbenchSession() {
+  cachedUserSession = null;
+  pendingUserSession = null;
+  if (typeof window === "undefined") {
+    return;
+  }
+  try {
+    window.localStorage.removeItem(STTM_BUILDER_SESSION_STORAGE_KEY);
+    // Also clear the legacy sessionStorage key if it still exists.
+    window.sessionStorage.removeItem(STTM_BUILDER_SESSION_STORAGE_KEY_LEGACY);
+    window.sessionStorage.removeItem("sttm.activeSemanticContext");
+  } catch {
+    // Ignore browser storage cleanup failures.
+  }
+}
 
 export type SnowflakeContext = {
   current_user: string;
@@ -29,7 +53,24 @@ export const authService = {
       throwMockError();
       return mockDelay(mockUserSession);
     }
-    return getApiData<UserSession>(API_ROUTES.auth.session, { skipGlobalError: true });
+    if (cachedUserSession && cachedUserSession.expiresAt > Date.now()) {
+      return cachedUserSession.value;
+    }
+    if (pendingUserSession) return pendingUserSession;
+    pendingUserSession = getApiData<UserSession>(API_ROUTES.auth.session, {
+      skipGlobalError: true,
+    })
+      .then((value) => {
+        cachedUserSession = {
+          value,
+          expiresAt: Date.now() + AUTH_SESSION_CACHE_TTL_MS,
+        };
+        return value;
+      })
+      .finally(() => {
+        pendingUserSession = null;
+      });
+    return pendingUserSession;
   },
 
   getPermissions: async (): Promise<PermissionSet> => {
@@ -54,5 +95,15 @@ export const authService = {
       return mockDelay(mockUserRoles);
     }
     return getApiData<UserRolesResponse>(API_ROUTES.user.roles);
+  },
+
+  getLoginUrl: (next = "/dashboard"): string => {
+    const encodedNext = encodeURIComponent(next);
+    return `/api${API_ROUTES.auth.login}?next=${encodedNext}`;
+  },
+
+  logout: (): void => {
+    clearBrowserWorkbenchSession();
+    window.location.href = `/api${API_ROUTES.auth.logout}`;
   },
 };

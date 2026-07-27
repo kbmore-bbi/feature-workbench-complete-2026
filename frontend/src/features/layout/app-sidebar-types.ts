@@ -1,7 +1,8 @@
-export type AppNavItem = "Dashboard" | "Projects" | "Mappings";
+export type AppNavItem = "Dashboard" | "Administration" | "Projects" | "Mappings";
 
 export const APP_NAV_ROUTES: Record<AppNavItem, string> = {
   Dashboard: "/dashboard",
+  Administration: "/administration",
   Projects: "/projects",
   Mappings: "/mappings",
 };
@@ -19,6 +20,12 @@ export function shouldShowAppSidebar(pathname: string): boolean {
 export function resolveAppNavItem(pathname: string): AppNavItem | undefined {
   if (pathname === APP_NAV_ROUTES.Dashboard || pathname.startsWith(`${APP_NAV_ROUTES.Dashboard}/`)) {
     return "Dashboard";
+  }
+  if (
+    pathname === APP_NAV_ROUTES.Administration ||
+    pathname.startsWith(`${APP_NAV_ROUTES.Administration}/`)
+  ) {
+    return "Administration";
   }
   if (pathname === APP_NAV_ROUTES.Projects || pathname.startsWith(`${APP_NAV_ROUTES.Projects}/`)) {
     return "Projects";

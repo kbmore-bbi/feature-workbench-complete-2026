@@ -1,6 +1,7 @@
 "use client";
+import { AiaBox } from '@/components/ui';
 
-import { Box } from "@mui/material";
+
 import type { SummaryMetrics } from "./summary-utils";
 import { SummaryInlineStats, SummaryTargetLabel } from "./summary-inline-stats";
 
@@ -11,7 +12,7 @@ type SummaryStatsRowProps = {
 
 export function SummaryStatsRow({ metrics, targetQualifiedName }: SummaryStatsRowProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "flex",
         alignItems: "center",
@@ -27,6 +28,6 @@ export function SummaryStatsRow({ metrics, targetQualifiedName }: SummaryStatsRo
     >
       <SummaryInlineStats metrics={metrics} />
       <SummaryTargetLabel targetQualifiedName={targetQualifiedName} />
-    </Box>
+    </AiaBox>
   );
 }

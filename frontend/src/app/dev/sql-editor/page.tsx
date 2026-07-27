@@ -1,7 +1,9 @@
 'use client';
+import { AiaBox, AiaChip, AiaPaper, AiaStack } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useMemo, useState } from 'react';
-import { Box, Chip, Paper, Stack, Typography } from '@mui/material';
+
 import {
   SqlEditor,
   SQL_DERIVED_QUICK_ACTIONS,
@@ -49,38 +51,37 @@ export default function SqlEditorPlaygroundPage() {
   );
 
   return (
-    <Box
+    <AiaBox
       sx={{
         minHeight: 'calc(100vh - 64px)',
         bgcolor: '#f8fafc',
         p: { xs: 2, md: 3 },
       }}
     >
-      <Stack spacing={2} sx={{ maxWidth: 1400, mx: 'auto', height: '100%' }}>
-        <Box>
-          <Typography sx={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f172a' }}>
+      <AiaStack spacing={2} sx={{ maxWidth: 1400, mx: 'auto', height: '100%' }}>
+        <AiaBox>
+          <AiaText sx={{ fontSize: '1.35rem', fontWeight: 800, color: '#0f172a' }}>
             SQL Editor Playground
-          </Typography>
-          <Typography sx={{ fontSize: '0.9rem', color: '#64748b', mt: 0.5 }}>
+          </AiaText>
+          <AiaText sx={{ fontSize: '0.9rem', color: '#64748b', mt: 0.5 }}>
             Dev page for validating the shared SqlEditor and Function Library components.
-          </Typography>
-        </Box>
+          </AiaText>
+        </AiaBox>
 
-        <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
+        <AiaStack direction="row" spacing={1} useFlexGap sx={{ flexWrap: 'wrap' }}>
           {MODES.map((item) => (
-            <Chip
+            <AiaChip
               key={item.id}
               label={item.label}
               clickable
               color={mode === item.id ? 'primary' : 'default'}
-              variant={mode === item.id ? 'filled' : 'outlined'}
               onClick={() => setMode(item.id)}
               sx={{ fontWeight: 700 }}
             />
           ))}
-        </Stack>
+        </AiaStack>
 
-        <Paper
+        <AiaPaper
           elevation={0}
           sx={{
             p: 2,
@@ -89,20 +90,20 @@ export default function SqlEditorPlaygroundPage() {
             bgcolor: '#fff',
           }}
         >
-          <Typography sx={{ fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>
+          <AiaText sx={{ fontSize: '0.95rem', fontWeight: 700, color: '#1e293b' }}>
             {activeMode.label}
-          </Typography>
-          <Typography sx={{ fontSize: '0.82rem', color: '#64748b', mt: 0.5 }}>
+          </AiaText>
+          <AiaText sx={{ fontSize: '0.82rem', color: '#64748b', mt: 0.5 }}>
             {activeMode.description}
-          </Typography>
+          </AiaText>
           {uploadMessage ? (
-            <Typography sx={{ fontSize: '0.78rem', color: '#059669', mt: 1, fontWeight: 600 }}>
+            <AiaText sx={{ fontSize: '0.78rem', color: '#059669', mt: 1, fontWeight: 600 }}>
               {uploadMessage}
-            </Typography>
+            </AiaText>
           ) : null}
-        </Paper>
+        </AiaPaper>
 
-        <Box sx={{ width: '100%' }}>
+        <AiaBox sx={{ width: '100%' }}>
           {mode === 'preprocess' ? (
             <SqlEditor
               value={sql}
@@ -148,8 +149,8 @@ export default function SqlEditorPlaygroundPage() {
               maxHeight={SQL_EDITOR_PREVIEW_HEIGHT}
             />
           ) : null}
-        </Box>
-      </Stack>
-    </Box>
+        </AiaBox>
+      </AiaStack>
+    </AiaBox>
   );
 }

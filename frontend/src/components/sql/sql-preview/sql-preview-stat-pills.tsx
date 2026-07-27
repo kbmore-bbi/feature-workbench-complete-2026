@@ -1,7 +1,7 @@
 'use client';
+import { AiaChip } from '@/components/ui';
 
-import { Box } from '@mui/material';
-import { SQL_PREVIEW_STAT_PILL_SX } from './sql-preview-styles';
+import { SQL_PREVIEW_COUNT_CHIP_PROPS } from './sql-preview-styles';
 
 export type SqlPreviewStat = {
   id: string;
@@ -20,9 +20,7 @@ export function SqlPreviewStatPills({ stats }: SqlPreviewStatPillsProps) {
   return (
     <>
       {stats.map((stat) => (
-        <Box key={stat.id} sx={SQL_PREVIEW_STAT_PILL_SX}>
-          {stat.label}
-        </Box>
+        <AiaChip key={stat.id} label={stat.label} {...SQL_PREVIEW_COUNT_CHIP_PROPS} />
       ))}
     </>
   );

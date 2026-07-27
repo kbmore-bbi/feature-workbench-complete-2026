@@ -1,13 +1,15 @@
 "use client";
+import { AiaBox, AiaButton } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import type { ReactNode } from "react";
-import { Box, Button, Typography } from "@mui/material";
 
 export type BuilderWorkspaceTab<T extends string> = {
   key: T;
   label: string;
   icon?: ReactNode;
   badge?: string | number;
+  tourTarget?: string;
 };
 
 type BuilderWorkspaceTabBarProps<T extends string> = {
@@ -24,7 +26,7 @@ function TabBadge({ value }: { value: string | number }) {
   const label = String(value);
 
   return (
-    <Box
+    <AiaBox
       component="span"
       sx={{
         ml: 0.35,
@@ -33,7 +35,7 @@ function TabBadge({ value }: { value: string | number }) {
         height: 18,
         px: label.length > 1 ? 0.35 : 0,
         borderRadius: "999px",
-        bgcolor: "#0f172a",
+        bgcolor: "var(--color-primary)",
         color: "#ffffff",
         display: "inline-flex",
         alignItems: "center",
@@ -41,7 +43,7 @@ function TabBadge({ value }: { value: string | number }) {
         flexShrink: 0,
       }}
     >
-      <Typography
+      <AiaText
         component="span"
         sx={{
           fontSize: "0.62rem",
@@ -52,8 +54,8 @@ function TabBadge({ value }: { value: string | number }) {
         }}
       >
         {label}
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }
 
@@ -71,9 +73,10 @@ export function BuilderWorkspaceTabBar<T extends string>({
       {tabs.map((tab) => {
         const selected = activeTab === tab.key;
         return (
-          <Button
+          <AiaButton
             key={tab.key}
             variant="text"
+            data-tour={tab.tourTarget}
             onClick={() => onTabChange(tab.key)}
             sx={{
               minWidth: 0,
@@ -87,15 +90,18 @@ export function BuilderWorkspaceTabBar<T extends string>({
               display: "inline-flex",
               gap: 0.55,
               alignItems: "center",
-              color: selected ? "#0f172a" : "#64748b",
+              color: selected ? "var(--color-primary)" : "#64748b",
               backgroundColor: "transparent",
               border: "none",
-              borderBottom: selected ? "2px solid #0f172a" : "2px solid transparent",
+              borderBottom: selected ? "2px solid var(--color-primary)" : "2px solid transparent",
               boxShadow: "none",
               mb: "-1px",
+              "& .MuiSvgIcon-root": {
+                color: "inherit",
+              },
               "&:hover": {
                 backgroundColor: "transparent",
-                color: selected ? "#0f172a" : "#475569",
+                color: selected ? "var(--color-primary)" : "#475569",
                 boxShadow: "none",
               },
             }}
@@ -103,28 +109,28 @@ export function BuilderWorkspaceTabBar<T extends string>({
             {tab.icon}
             {tab.label}
             {tab.badge !== undefined ? <TabBadge value={tab.badge} /> : null}
-          </Button>
+          </AiaButton>
         );
       })}
       {afterTabs}
       {trailing ? (
-        <Box sx={{ ml: "auto", display: "flex", alignItems: "center", minWidth: 0, flexShrink: 0 }}>
+        <AiaBox sx={{ ml: "auto", display: "flex", alignItems: "center", minWidth: 0, flexShrink: 0 }}>
           {trailing}
-        </Box>
+        </AiaBox>
       ) : null}
     </>
   );
 
   if (embedded) {
     return (
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, minWidth: 0, flexWrap: "wrap" }}>
+      <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1.5, minWidth: 0, flexWrap: "wrap" }}>
         {content}
-      </Box>
+      </AiaBox>
     );
   }
 
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "flex",
         alignItems: "center",
@@ -138,6 +144,6 @@ export function BuilderWorkspaceTabBar<T extends string>({
       }}
     >
       {content}
-    </Box>
+    </AiaBox>
   );
 }

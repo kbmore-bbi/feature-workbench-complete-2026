@@ -9,16 +9,14 @@ type AiaChipCellProps = AiaTableCellProps & {
   color?: 'default' | 'primary' | 'secondary' | 'error' | 'warning' | 'info' | 'success';
   rounded?: boolean;
   size?: 'small' | 'medium';
-  variant?: 'filled' | 'outlined';
   chipSx?: SxProps<Theme>;
 };
 
 export const AiaChipCell = ({
   label,
-  color,
+  color = 'default',
   rounded = true,
   size = 'small',
-  variant = 'filled',
   chipSx,
   align,
   width,
@@ -33,7 +31,6 @@ export const AiaChipCell = ({
         size={size}
         color={color}
         rounded={rounded}
-        variant={variant}
         sx={chipSx}
       />
     ) : null}

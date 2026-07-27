@@ -30,6 +30,8 @@ export type SqlEditorProps = {
 
   title?: string;
   subtitle?: string;
+  /** Optional controls rendered in the SQL toolbar beside the built-in actions. */
+  toolbarActions?: import('react').ReactNode;
   placeholder?: string;
   emptyText?: string;
 
@@ -49,6 +51,13 @@ export type SqlEditorProps = {
   functionCategories?: SqlFunctionCategory[];
   functionsByCategory?: Record<SqlFunctionCategoryId, string[]>;
   defaultFunctionCategory?: SqlFunctionCategoryId;
+
+  /** Optional `data-tour` anchors for the function library panel (e.g. derived-table modal tour). */
+  functionLibraryTourTargets?: {
+    library?: string;
+    panel?: string;
+    tabs?: string;
+  };
 
   showLineNumbers?: boolean;
   /** Fill parent height with min/max bounds instead of a fixed height. */

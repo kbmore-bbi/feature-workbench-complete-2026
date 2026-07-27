@@ -1,19 +1,16 @@
 "use client";
+import { AiaBox, AiaButton, AiaCircularProgress, AiaCollapse } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import { useState } from "react";
 import {
-  CheckCircleRoundedIcon,
   KeyboardArrowDownRoundedIcon,
   KeyboardArrowRightRoundedIcon,
-  RadioButtonUncheckedRoundedIcon,
+  TableChartOutlinedIcon,
 } from '@/utils/icons';
+import { AiaCheckbox } from "@/components/ui/aia-checkbox";
+import { BODY_SX, SECONDARY_TEXT_SX, TYPOGRAPHY_TOKENS } from "@/config/typography-tokens";
 import { HierarchyIcon } from '@/features/sttm/shared/hierarchy-icons';
-import {
-  Box,
-  Button,
-  CircularProgress,
-  Collapse,
-  Typography,
-} from "@mui/material";
+
 import { AiaSearchbox } from "@/components/ui/aia-searchbox";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import { ResizableSidebarSections } from "@/features/sttm/layout/resizable-sidebar-sections";
@@ -21,15 +18,41 @@ import { useSidebarSlot } from "@/features/sttm/layout/sidebar-slot-context";
 import { SttmSidebarCollapseFooter } from "@/features/sttm/layout/sttm-sidebar-collapse-footer";
 import { SttmSidebarCollapsedRail } from "@/features/sttm/layout/sttm-sidebar-collapsed-rail";
 import { SttmSidebarSectionIcon } from "@/features/sttm/layout/sttm-sidebar-icons";
+import {
+  sttmSidebarBodyTextMutedSx,
+  sttmSidebarBodyTextSx,
+  sttmSidebarChevronSx,
+  sttmSidebarHierarchyIconSx,
+  sttmSidebarSearchboxSx,
+  sttmSidebarSearchInputSx,
+} from "@/features/sttm/layout/sttm-sidebar-text-styles";
 import type {
   DatabaseNode,
+  DerivedSource,
   SchemaNode,
   SelectionSide,
 } from "@/features/sttm/types/sttm.types";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+import {
+  writeDerivedWorkspaceDragPayload,
+  writeWorkspaceDragPayload,
+} from "@/features/sttm/source-target/source-workspace-dnd";
+
+function getDerivedSourceCounts(source: DerivedSource) {
+  const sourceTableCount = source.tableIds?.length ?? source.baseSourceTables?.length ?? 0;
+  const selectedColumnCount = source.selectedColumnsByTable
+    ? Object.values(source.selectedColumnsByTable).reduce(
+        (total, columns) => total + columns.length,
+        0,
+      )
+    : (source.columns?.length ?? 0);
+
+  return { sourceTableCount, selectedColumnCount };
+}
 
 function SidebarStateShell({ children }: { children: React.ReactNode }) {
   return (
-    <Box
+    <AiaBox
       sx={{
         width: "100%",
         minWidth: 0,
@@ -42,7 +65,7 @@ function SidebarStateShell({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-    </Box>
+    </AiaBox>
   );
 }
 
@@ -67,18 +90,12 @@ export default function DataSelectionPanel() {
   if (loadState.initial === "loading") {
     return (
       <SidebarStateShell>
-        <Box sx={{ textAlign: "center" }}>
-          <CircularProgress size={22} />
-          <Typography
-            sx={{
-              mt: 1.5,
-              fontSize: "12px",
-              color: "var(--color-muted)",
-            }}
-          >
+        <AiaBox sx={{ textAlign: "center" }}>
+          <AiaCircularProgress size={22} />
+          <AiaText sx={{ ...sttmSidebarBodyTextMutedSx, mt: 1.5 }}>
             Loading databases...
-          </Typography>
-        </Box>
+          </AiaText>
+        </AiaBox>
       </SidebarStateShell>
     );
   }
@@ -86,28 +103,16 @@ export default function DataSelectionPanel() {
   if (loadState.initial === "error") {
     return (
       <SidebarStateShell>
-        <Box sx={{ textAlign: "center" }}>
-          <Typography
-            sx={{
-              fontSize: "13px",
-              fontWeight: 700,
-              color: "var(--color-title)",
-            }}
-          >
+        <AiaBox sx={{ textAlign: "center" }}>
+          <AiaText sx={sttmSidebarBodyTextSx}>
             Unable to load databases
-          </Typography>
+          </AiaText>
 
-          <Typography
-            sx={{
-              mt: 0.75,
-              fontSize: "12px",
-              color: "var(--color-muted)",
-            }}
-          >
+          <AiaText sx={{ ...sttmSidebarBodyTextMutedSx, mt: 0.75 }}>
             {errorState.initial || "Please try again."}
-          </Typography>
+          </AiaText>
 
-          <Button
+          <AiaButton
             variant="contained"
             onClick={() => {
               void reloadInitialData();
@@ -131,8 +136,8 @@ export default function DataSelectionPanel() {
             }}
           >
             Retry
-          </Button>
-        </Box>
+          </AiaButton>
+        </AiaBox>
       </SidebarStateShell>
     );
   }
@@ -143,34 +148,22 @@ export default function DataSelectionPanel() {
   if (!hasDatabases) {
     return (
       <SidebarStateShell>
-        <Box sx={{ textAlign: "center" }}>
-          <Typography
-            sx={{
-              fontSize: "13px",
-              fontWeight: 700,
-              color: "var(--color-title)",
-            }}
-          >
+        <AiaBox sx={{ textAlign: "center" }}>
+          <AiaText sx={sttmSidebarBodyTextSx}>
             No databases found
-          </Typography>
+          </AiaText>
 
-          <Typography
-            sx={{
-              mt: 0.75,
-              fontSize: "12px",
-              color: "var(--color-muted)",
-            }}
-          >
+          <AiaText sx={{ ...sttmSidebarBodyTextMutedSx, mt: 0.75 }}>
             There are no source or target databases available.
-          </Typography>
-        </Box>
+          </AiaText>
+        </AiaBox>
       </SidebarStateShell>
     );
   }
 
   if (collapsed) {
     return (
-      <Box
+      <AiaBox
         sx={{
           width: "100%",
           minWidth: 0,
@@ -188,7 +181,7 @@ export default function DataSelectionPanel() {
             { kind: "derived", label: "Derived Sources Selection" },
           ]}
         />
-      </Box>
+      </AiaBox>
     );
   }
 
@@ -240,8 +233,14 @@ export default function DataSelectionPanel() {
     });
 
     return (
-      <Box key={schema.schemaId}>
-        <Box
+      <AiaBox key={schema.schemaId}>
+        <AiaBox
+          draggable={!isTablesLoading}
+          onDragStart={(event) => {
+            writeWorkspaceDragPayload(event.dataTransfer, {
+              items: [{ kind: "schema", dbId, schemaId: schema.schemaId }],
+            });
+          }}
           onClick={() => {
             if (!isTablesLoading) {
               setExpandedSchemas((prev) => ({
@@ -279,61 +278,56 @@ export default function DataSelectionPanel() {
           <HierarchyIcon
             level="schema"
             sx={{
+              ...sttmSidebarHierarchyIconSx,
               color: schema.isSelected
                 ? "var(--color-primary-save)"
                 : "var(--color-muted)",
             }}
           />
 
-          <Typography
+          <AiaText
             sx={{
+              ...sttmSidebarBodyTextSx,
               flex: 1,
-              fontSize: 12,
-              fontWeight: schema.isSelected ? 700 : 500,
+              fontWeight: 400,
               color: schema.isSelected
                 ? "var(--color-primary-save)"
                 : "var(--color-text)",
-              lineHeight: 1.2,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",
             }}
           >
             {schema.schemaName}
-          </Typography>
+          </AiaText>
 
           {isTablesLoading ? (
-            <CircularProgress size={14} />
+            <AiaCircularProgress size={18} />
           ) : isSchemaExpanded ? (
-            <KeyboardArrowDownRoundedIcon
-              sx={{ fontSize: 16, color: "var(--color-muted)" }}
-            />
+            <KeyboardArrowDownRoundedIcon sx={sttmSidebarChevronSx} />
           ) : (
-            <KeyboardArrowRightRoundedIcon
-              sx={{ fontSize: 16, color: "var(--color-muted)" }}
-            />
+            <KeyboardArrowRightRoundedIcon sx={sttmSidebarChevronSx} />
           )}
-        </Box>
+        </AiaBox>
 
         {tablesError ? (
-          <Typography
+          <AiaText
             sx={{
+              ...sttmSidebarBodyTextSx,
               pl: 5,
               pr: 1,
               pb: 0.5,
-              fontSize: 11,
               color: "var(--color-danger, #d32f2f)",
-              lineHeight: 1.3,
             }}
           >
             {tablesError}
-          </Typography>
+          </AiaText>
         ) : null}
 
-        <Collapse in={isSchemaExpanded} timeout="auto" unmountOnExit>
-          <Box sx={{ mt: 0.2 }}>
+        <AiaCollapse in={isSchemaExpanded} timeout="auto" unmountOnExit>
+          <AiaBox sx={{ mt: 0.2 }}>
             {isTablesLoading ? (
-              <Box
+              <AiaBox
                 sx={{
                   display: "flex",
                   alignItems: "center",
@@ -342,15 +336,21 @@ export default function DataSelectionPanel() {
                   py: 0.6,
                 }}
               >
-                <CircularProgress size={14} />
-                <Typography sx={{ fontSize: 11, color: "var(--color-muted)" }}>
+                <AiaCircularProgress size={18} />
+                <AiaText sx={sttmSidebarBodyTextMutedSx}>
                   Loading tables...
-                </Typography>
-              </Box>
+                </AiaText>
+              </AiaBox>
             ) : visibleTables.length ? (
               visibleTables.map((table) => (
-                <Box
+                <AiaBox
                   key={table.tableId}
+                  draggable
+                  onDragStart={(event) => {
+                    writeWorkspaceDragPayload(event.dataTransfer, {
+                      items: [{ kind: "table", tableId: table.tableId }],
+                    });
+                  }}
                   sx={{
                     display: "flex",
                     alignItems: "center",
@@ -360,37 +360,38 @@ export default function DataSelectionPanel() {
                     py: 0.45,
                     borderRadius: "6px",
                     color: "var(--color-text)",
+                    cursor: "grab",
+                    "&:active": { cursor: "grabbing" },
                   }}
                 >
-                  <HierarchyIcon level="table" />
-                  <Typography
+                  <HierarchyIcon level="table" sx={sttmSidebarHierarchyIconSx} />
+                  <AiaText
                     sx={{
-                      fontSize: 11,
+                      ...sttmSidebarBodyTextSx,
                       whiteSpace: "nowrap",
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                     }}
                   >
                     {table.tableName}
-                  </Typography>
-                </Box>
+                  </AiaText>
+                </AiaBox>
               ))
             ) : (
-              <Typography
+              <AiaText
                 sx={{
+                  ...sttmSidebarBodyTextMutedSx,
                   pl: 5,
                   pr: 1,
                   py: 0.5,
-                  fontSize: 11,
-                  color: "var(--color-muted)",
                 }}
               >
                 No tables found
-              </Typography>
+              </AiaText>
             )}
-          </Box>
-        </Collapse>
-      </Box >
+          </AiaBox>
+        </AiaCollapse>
+      </AiaBox>
     );
   };
 
@@ -399,7 +400,7 @@ export default function DataSelectionPanel() {
     type: SelectionSide,
     searchText: string,
   ) => (
-    <Box sx={{ py: 0.5 }}>
+    <AiaBox sx={{ py: 0.5 }}>
       {items.filter((db) => shouldShowDatabase(db, searchText)).map((db) => {
         const expandKey = `${type}:${db.dbId}`;
         const isDbExpanded = Boolean(expandedDbs[expandKey]);
@@ -407,8 +408,14 @@ export default function DataSelectionPanel() {
         const schemasError = errorState.schemasByDb[expandKey];
 
         return (
-          <Box key={db.dbId} sx={{ mb: 0.4 }}>
-            <Box
+          <AiaBox key={db.dbId} sx={{ mb: 0.4 }}>
+            <AiaBox
+              draggable={!isSchemasLoading}
+              onDragStart={(event) => {
+                writeWorkspaceDragPayload(event.dataTransfer, {
+                  items: [{ kind: "database", dbId: db.dbId }],
+                });
+              }}
               onClick={() => {
                 if (!isSchemasLoading) {
                   void toggleDb(type, db.dbId);
@@ -421,7 +428,7 @@ export default function DataSelectionPanel() {
                 px: 1,
                 py: 0.6,
                 borderRadius: "6px",
-                cursor: isSchemasLoading ? "default" : "pointer",
+                cursor: isSchemasLoading ? "default" : "grab",
                 backgroundColor: db.isSelected
                   ? "var(--color-surface-muted)"
                   : "transparent",
@@ -433,45 +440,41 @@ export default function DataSelectionPanel() {
               }}
             >
               {isDbExpanded ? (
-                <KeyboardArrowDownRoundedIcon
-                  sx={{ fontSize: 16, color: "var(--color-muted)" }}
-                />
+                <KeyboardArrowDownRoundedIcon sx={sttmSidebarChevronSx} />
               ) : (
-                <KeyboardArrowRightRoundedIcon
-                  sx={{ fontSize: 16, color: "var(--color-muted)" }}
-                />
+                <KeyboardArrowRightRoundedIcon sx={sttmSidebarChevronSx} />
               )}
 
               <HierarchyIcon
                 level="database"
                 sx={{
+                  ...sttmSidebarHierarchyIconSx,
                   color: db.isSelected
                     ? "var(--color-primary-save)"
                     : "var(--color-text)",
                 }}
               />
 
-              <Typography
+              <AiaText
                 sx={{
+                  ...sttmSidebarBodyTextSx,
                   flex: 1,
-                  fontSize: 12,
-                  fontWeight: db.isSelected ? 700 : 500,
-                  color: "var(--color-text)",
+                  fontWeight: 400,
                   whiteSpace: "nowrap",
                   overflow: "hidden",
                   textOverflow: "ellipsis",
                 }}
               >
                 {db.dbName}
-              </Typography>
+              </AiaText>
 
-              {isSchemasLoading ? <CircularProgress size={14} /> : null}
-            </Box>
+              {isSchemasLoading ? <AiaCircularProgress size={18} /> : null}
+            </AiaBox>
 
-            <Collapse in={isDbExpanded} timeout="auto" unmountOnExit>
-              <Box sx={{ mt: 0.2 }}>
+            <AiaCollapse in={isDbExpanded} timeout="auto" unmountOnExit>
+              <AiaBox sx={{ mt: 0.2 }}>
                 {isSchemasLoading ? (
-                  <Box
+                  <AiaBox
                     sx={{
                       display: "flex",
                       alignItems: "center",
@@ -480,29 +483,23 @@ export default function DataSelectionPanel() {
                       py: 0.75,
                     }}
                   >
-                    <CircularProgress size={14} />
-                    <Typography
-                      sx={{
-                        fontSize: 11,
-                        color: "var(--color-muted)",
-                      }}
-                    >
+                    <AiaCircularProgress size={18} />
+                    <AiaText sx={sttmSidebarBodyTextMutedSx}>
                       Loading schemas...
-                    </Typography>
-                  </Box>
+                    </AiaText>
+                  </AiaBox>
                 ) : schemasError ? (
-                  <Box sx={{ pl: 3, pr: 1, py: 0.5 }}>
-                    <Typography
+                  <AiaBox sx={{ pl: 3, pr: 1, py: 0.5 }}>
+                    <AiaText
                       sx={{
-                        fontSize: 11,
+                        ...sttmSidebarBodyTextSx,
                         color: "var(--color-danger, #d32f2f)",
-                        lineHeight: 1.3,
                       }}
                     >
                       {schemasError}
-                    </Typography>
+                    </AiaText>
 
-                    <Button
+                    <AiaButton
                       variant="text"
                       onClick={() => {
                         void loadSchemas(type, db.dbId);
@@ -511,14 +508,14 @@ export default function DataSelectionPanel() {
                         mt: 0.25,
                         px: 0,
                         minWidth: "auto",
-                        fontSize: 11,
+                        ...sttmSidebarBodyTextSx,
                         textTransform: "none",
                         color: "var(--color-primary-save)",
                       }}
                     >
                       Retry
-                    </Button>
-                  </Box>
+                    </AiaButton>
+                  </AiaBox>
                 ) : (
                   db.schemas
                     .filter(
@@ -527,93 +524,94 @@ export default function DataSelectionPanel() {
                     )
                     .map((schema) => renderSchema(schema, db.dbId, type, searchText))
                 )}
-              </Box>
-            </Collapse>
-          </Box>
+              </AiaBox>
+            </AiaCollapse>
+          </AiaBox>
         );
       })}
-    </Box>
+    </AiaBox>
   );
 
   const renderDerivedSourcesContent = () => (
-    <Box sx={{ py: 0.5, px: 0.5 }}>
+    <AiaBox sx={{ py: 0.5, px: 0.5 }}>
       {derivedSources.length ? (
-        derivedSources.map((source) => (
-          <Box
-            key={source.id}
-            onClick={() => toggleDerivedSource(source.id)}
-            sx={{
-              mb: 0.75,
-              px: 1,
-              py: 0.9,
-              borderRadius: "8px",
-              border: "1px solid",
-              borderColor: source.isSelected ? "#16a34a" : "#d1fae5",
-              backgroundColor: source.isSelected ? "#dcfce7" : "#ecfdf5",
-              cursor: "pointer",
-              transition: "120ms ease",
-              "&:hover": {
-                backgroundColor: source.isSelected ? "#dcfce7" : "#e7f9ee",
-              },
-            }}
-          >
-            <Box
+        derivedSources.map((source) => {
+          const isSelected = !!source.isSelected;
+          const { sourceTableCount, selectedColumnCount } = getDerivedSourceCounts(source);
+
+          return (
+            <AiaBox
+              key={source.id}
+              draggable
+              onDragStart={(event) => {
+                writeDerivedWorkspaceDragPayload(event.dataTransfer, {
+                  derivedSourceIds: [source.id],
+                });
+              }}
               sx={{
                 display: "flex",
-                alignItems: "flex-start",
+                alignItems: "center",
+                px: 1,
+                py: 0.6,
+                mb: 0.5,
                 gap: 1,
+                cursor: "grab",
+                "&:active": { cursor: "grabbing" },
               }}
             >
-              {source.isSelected ? (
-                <CheckCircleRoundedIcon
-                  sx={{ mt: 0.1, fontSize: 16, color: "#16a34a", flexShrink: 0 }}
-                />
-              ) : (
-                <RadioButtonUncheckedRoundedIcon
-                  sx={{ mt: 0.1, fontSize: 16, color: "#22c55e", flexShrink: 0 }}
-                />
-              )}
-              <Box sx={{ minWidth: 0, flex: 1 }}>
-                <Typography
+              <AiaCheckbox
+                checked={isSelected}
+                checkHandler={() => toggleDerivedSource(source.id)}
+                uncheckedColor="var(--aia-primary-bg-color)"
+                checkedColor="var(--aia-primary-bg-color)"
+              />
+
+              <TableChartOutlinedIcon
+                sx={{
+                  color: "#9ca3af",
+                  fontSize: 20,
+                  flexShrink: 0,
+                }}
+              />
+
+              <AiaBox sx={{ flexGrow: 1, minWidth: 0 }}>
+                <AiaText
                   sx={{
-                    fontSize: 12,
-                    fontWeight: 700,
-                    color: "#166534",
-                    lineHeight: 1.3,
-                    whiteSpace: "normal",
-                    overflowWrap: "anywhere",
-                    wordBreak: "break-word",
+                    ...BODY_SX,
+                    color: TYPOGRAPHY_TOKENS.body.color,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
                   }}
                 >
                   {source.sourceName}
-                </Typography>
-                <Typography
+                </AiaText>
+                <AiaText
                   sx={{
-                    mt: 0.4,
-                    fontSize: 11,
-                    color: "#047857",
-                    lineHeight: 1.35,
+                    ...SECONDARY_TEXT_SX,
+                    display: "block",
+                    mt: 0,
+                    color: TYPOGRAPHY_TOKENS.secondaryText.color,
                   }}
                 >
-                  {(source.tableIds?.length ?? 0)} source tables · {(source.columns?.length ?? 0)} selected columns
-                </Typography>
-              </Box>
-            </Box>
-          </Box>
-        ))
+                  {sourceTableCount} source tables · {selectedColumnCount} selected columns
+                </AiaText>
+              </AiaBox>
+            </AiaBox>
+          );
+        })
       ) : (
-        <Typography
+        <AiaText
           sx={{
+            ...sttmSidebarBodyTextMutedSx,
             px: 1,
             py: 0.5,
-            fontSize: 11,
-            color: "var(--color-muted)",
           }}
         >
           No derived sources saved yet.
-        </Typography>
+        </AiaText>
       )}
-    </Box>
+    </AiaBox>
   );
 
   const renderDatabaseSection = (
@@ -623,24 +621,21 @@ export default function DataSelectionPanel() {
     onSearchChange: (value: string) => void,
   ) => (
     <>
-      <Box sx={{ px: 1.5, pb: 1, flexShrink: 0 }}>
+      <AiaBox sx={{ px: 1.5, pb: 1, flexShrink: 0 }}>
         <AiaSearchbox
           value={searchText}
           onChange={onSearchChange}
           placeholder="Search schemas..."
-          inputSx={{
-            '& .MuiInputBase-input': {
-              fontSize: '0.8rem',
-            },
-          }}
+          sx={sttmSidebarSearchboxSx}
+          inputSx={sttmSidebarSearchInputSx}
         />
-      </Box>
+      </AiaBox>
       {renderDatabaseSectionContent(items, type, searchText)}
     </>
   );
 
   return (
-    <Box
+    <AiaBox
       sx={{
         width: "100%",
         minWidth: 0,
@@ -651,13 +646,14 @@ export default function DataSelectionPanel() {
         overflow: "hidden",
       }}
     >
-      <Box sx={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+      <AiaBox sx={{ flex: 1, minHeight: 0, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <ResizableSidebarSections
           sections={[
             {
               id: "source",
               title: "Source Selection",
-              icon: <SttmSidebarSectionIcon kind="source" fontSize={13} />,
+              icon: <SttmSidebarSectionIcon kind="source" />,
+              tourTarget: TOUR_TARGETS.sttmSourceSelection,
               content: renderDatabaseSection(
                 fullData?.sources || [],
                 "source",
@@ -668,7 +664,8 @@ export default function DataSelectionPanel() {
             {
               id: "target",
               title: "Target Selection",
-              icon: <SttmSidebarSectionIcon kind="target" fontSize={13} />,
+              icon: <SttmSidebarSectionIcon kind="target" />,
+              tourTarget: TOUR_TARGETS.sttmTargetSelection,
               content: renderDatabaseSection(
                 fullData?.targets || [],
                 "target",
@@ -679,19 +676,20 @@ export default function DataSelectionPanel() {
             {
               id: "derived",
               title: "Derived Sources Selection",
-              icon: <SttmSidebarSectionIcon kind="derived" fontSize={13} />,
+              icon: <SttmSidebarSectionIcon kind="derived" />,
+              tourTarget: TOUR_TARGETS.sttmDerivedSources,
               content: renderDerivedSourcesContent(),
             },
           ]}
           defaultExpanded={{ source: true, target: true, derived: true }}
         />
-      </Box>
+      </AiaBox>
 
       <SttmSidebarCollapseFooter
         collapsed={false}
         collapseLabel="Collapse source sidebar"
         onToggle={() => setCollapsed(true)}
       />
-    </Box>
+    </AiaBox>
   );
 }

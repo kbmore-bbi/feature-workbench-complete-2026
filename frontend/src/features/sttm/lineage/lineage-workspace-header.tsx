@@ -1,9 +1,11 @@
 "use client";
+import { AiaBox, AiaButton, AiaStack } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { GridViewRoundedIcon } from "@/utils/icons";
-import { Box, Button, Stack, Typography } from "@mui/material";
 
 export type LineageLegendItem = {
+  id: string;
   label: string;
   color: string;
 };
@@ -32,7 +34,7 @@ export function LineageWorkspaceHeader({
   onExpandAll,
 }: LineageWorkspaceHeaderProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         px: 2.25,
         py: 1.5,
@@ -45,17 +47,17 @@ export function LineageWorkspaceHeader({
         backgroundColor: "#fff",
       }}
     >
-      <Box sx={{ minWidth: 0 }}>
-        <Typography sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a", lineHeight: 1.2 }}>
+      <AiaBox sx={{ minWidth: 0 }}>
+        <AiaText sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a", lineHeight: 1.2 }}>
           Data Lineage
-        </Typography>
-        <Typography sx={{ fontSize: 12.5, color: "#64748b", mt: 0.35, lineHeight: 1.45 }}>
+        </AiaText>
+        <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.35, lineHeight: 1.45 }}>
           Expand cards to see column mappings · click a connection to inspect it
-        </Typography>
-        <Stack direction="row" spacing={1.75} useFlexGap sx={{ flexWrap: "wrap", mt: 1.1 }}>
+        </AiaText>
+        <AiaStack direction="row" spacing={1.75} useFlexGap sx={{ flexWrap: "wrap", mt: 1.1 }}>
           {STAT_ITEMS.map(({ key, label, color }) => (
-            <Stack key={key} direction="row" spacing={0.6} sx={{ alignItems: "center" }}>
-              <Box
+            <AiaStack key={key} direction="row" spacing={0.6} sx={{ alignItems: "center" }}>
+              <AiaBox
                 sx={{
                   width: 7,
                   height: 7,
@@ -64,23 +66,23 @@ export function LineageWorkspaceHeader({
                   flexShrink: 0,
                 }}
               />
-              <Typography sx={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>
+              <AiaText sx={{ fontSize: 12, color: "#64748b", fontWeight: 500 }}>
                 {stats[key]} {label}
-              </Typography>
-            </Stack>
+              </AiaText>
+            </AiaStack>
           ))}
-        </Stack>
-      </Box>
+        </AiaStack>
+      </AiaBox>
 
-      <Stack
+      <AiaStack
         direction="row"
         spacing={1.5}
         useFlexGap
         sx={{ flexWrap: "wrap", alignItems: "center", justifyContent: "flex-end" }}
       >
         {legend.map((item) => (
-          <Stack key={item.label} direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
-            <Box
+          <AiaStack key={item.id} direction="row" spacing={0.75} sx={{ alignItems: "center" }}>
+            <AiaBox
               sx={{
                 width: 10,
                 height: 10,
@@ -89,12 +91,12 @@ export function LineageWorkspaceHeader({
                 flexShrink: 0,
               }}
             />
-            <Typography sx={{ fontSize: 12.5, fontWeight: 600, color: "#334155" }}>
+            <AiaText sx={{ fontSize: 12.5, fontWeight: 600, color: "#334155" }}>
               {item.label}
-            </Typography>
-          </Stack>
+            </AiaText>
+          </AiaStack>
         ))}
-        <Button
+        <AiaButton
           size="small"
           variant="outlined"
           startIcon={<GridViewRoundedIcon sx={{ fontSize: 16 }} />}
@@ -116,8 +118,8 @@ export function LineageWorkspaceHeader({
           }}
         >
           Expand All
-        </Button>
-      </Stack>
-    </Box>
+        </AiaButton>
+      </AiaStack>
+    </AiaBox>
   );
 }

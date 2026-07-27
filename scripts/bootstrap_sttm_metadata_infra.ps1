@@ -1,5 +1,6 @@
 param(
-    [string]$EnvFile = ""
+    [string]$EnvFile = "",
+    [switch]$LinkingMigrationOnly
 )
 
 $ErrorActionPreference = "Stop"
@@ -63,6 +64,43 @@ $args = @(
     "--schema", $cfg["SNOWFLAKE_SCHEMA"]
 )
 
+if ($LinkingMigrationOnly) {
+    $args += "--linking-migration-only"
+}
+
+$semanticDatabase = if ($cfg.ContainsKey("SNOWFLAKE_SEMANTIC_VIEWS_DATABASE") -and $cfg["SNOWFLAKE_SEMANTIC_VIEWS_DATABASE"]) {
+    $cfg["SNOWFLAKE_SEMANTIC_VIEWS_DATABASE"]
+} else {
+    $cfg["SNOWFLAKE_DATABASE"]
+}
+$semanticSchema = if ($cfg.ContainsKey("SNOWFLAKE_SEMANTIC_VIEWS_SCHEMA") -and $cfg["SNOWFLAKE_SEMANTIC_VIEWS_SCHEMA"]) {
+    $cfg["SNOWFLAKE_SEMANTIC_VIEWS_SCHEMA"]
+} else {
+    $cfg["SNOWFLAKE_SCHEMA"]
+}
+$semanticTableObject = if ($cfg.ContainsKey("SNOWFLAKE_SEMANTIC_TABLE_VIEWS_TABLE") -and $cfg["SNOWFLAKE_SEMANTIC_TABLE_VIEWS_TABLE"]) {
+    $cfg["SNOWFLAKE_SEMANTIC_TABLE_VIEWS_TABLE"]
+} else {
+    "LATEST_TABLE_VIEWS"
+}
+$semanticColumnObject = if ($cfg.ContainsKey("SNOWFLAKE_SEMANTIC_COLUMN_VIEWS_TABLE") -and $cfg["SNOWFLAKE_SEMANTIC_COLUMN_VIEWS_TABLE"]) {
+    $cfg["SNOWFLAKE_SEMANTIC_COLUMN_VIEWS_TABLE"]
+} else {
+    "LATEST_COLUMN_VIEWS"
+}
+$semanticNativeObject = if ($cfg.ContainsKey("SNOWFLAKE_SEMANTIC_NATIVE_VIEWS_TABLE") -and $cfg["SNOWFLAKE_SEMANTIC_NATIVE_VIEWS_TABLE"]) {
+    $cfg["SNOWFLAKE_SEMANTIC_NATIVE_VIEWS_TABLE"]
+} else {
+    "LATEST_NATIVE_VIEWS"
+}
+$args += @(
+    "--semantic-database", $semanticDatabase,
+    "--semantic-schema", $semanticSchema,
+    "--semantic-table-object", $semanticTableObject,
+    "--semantic-column-object", $semanticColumnObject,
+    "--semantic-native-object", $semanticNativeObject
+)
+
 if ($cfg.ContainsKey("SNOWFLAKE_PASSWORD") -and $cfg["SNOWFLAKE_PASSWORD"]) {
     $args += @("--password", $cfg["SNOWFLAKE_PASSWORD"])
 }
@@ -79,4 +117,11 @@ if ($cfg.ContainsKey("SNOWFLAKE_WAREHOUSE") -and $cfg["SNOWFLAKE_WAREHOUSE"]) {
     $args += @("--warehouse", $cfg["SNOWFLAKE_WAREHOUSE"])
 }
 
+# Force consistent UTF-8 behavior when reading repository SQL, YAML, and skill files.
+$env:PYTHONUTF8 = "1"
+$env:PYTHONIOENCODING = "utf-8"
+
 & $PythonExe @args
+if ($LASTEXITCODE -ne 0) {
+    throw "STTM metadata bootstrap failed with exit code $LASTEXITCODE"
+}

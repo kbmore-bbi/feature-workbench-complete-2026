@@ -2,6 +2,17 @@ from app.core.config import Settings
 from app.core.snowflake import get_user_connection
 
 
+def test_rest_snowflake_host_uses_public_oauth_endpoint_over_internal_host() -> None:
+    settings = Settings(
+        _env_file=None,
+        snowflake_host="internal-host.snowflakecomputing.internal",
+        snowflake_oauth_token_url="https://public-account.snowflakecomputing.com/oauth/token-request",
+    )
+
+    assert settings.resolved_snowflake_host == "internal-host.snowflakecomputing.internal"
+    assert settings.rest_snowflake_host == "public-account.snowflakecomputing.com"
+
+
 def test_get_user_connection_uses_direct_credentials_in_local_dev(monkeypatch) -> None:
     captured: dict[str, object] = {}
 

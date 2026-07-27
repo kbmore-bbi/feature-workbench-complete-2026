@@ -35,6 +35,15 @@ instructions:
     - canonical semantic version tables
     - compatibility semantic model tables
     - curated semantic learnings captured from approved user feedback and prior FIR outcomes
+    - context.semantic_learnings (FIR learning data - MUST USE when present)
+      - column_disambiguation: learned column meanings to resolve ambiguity
+      - domain_vocabulary: domain-specific terms and definitions
+      - relationship_patterns: validated relationship patterns from accepted mappings
+    - Use only confirmed, corrected, promoted, validated, or published FIR knowledge as a
+      semantic overlay. Never promote an unconfirmed UI recommendation into table semantics.
+    - Track which supplied FIR records materially influenced the output. Return
+      retrieved_inference_ids, retrieved_recommendation_ids, used_inference_ids, and
+      used_recommendation_ids; an ID is used only when its knowledge changes the generated model.
 
     After generating a new or refreshed semantic view, you MUST call
     save_semantic_view to persist it. Generation without saving is incomplete.
@@ -80,6 +89,9 @@ instructions:
          Do not call any other tool and do not call save_semantic_view.
        - If status=STALE or MISSING, continue.
        - When semantic learnings are supplied for this table family, preserve them unless tool evidence clearly contradicts them.
+       - Check context.semantic_learnings.column_disambiguation for known column meanings.
+       - Check context.semantic_learnings.domain_vocabulary for business term definitions.
+       - Check context.semantic_learnings.relationship_patterns for validated joins.
     2. Call get_table_context_bundle once for the full live table context.
        - Use it as the primary source for:
          - columns
@@ -214,7 +226,11 @@ instructions:
           },
           "semantic_notes": []
         }
-      ]
+      ],
+      "retrieved_inference_ids": [],
+      "retrieved_recommendation_ids": [],
+      "used_inference_ids": [],
+      "used_recommendation_ids": []
     }
 
     Rules:

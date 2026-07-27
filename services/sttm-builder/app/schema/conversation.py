@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from app.schema.contracts import CONTRACT_VERSION, ApiActor, ApiError, ApiWarning, OperationContext
 from app.schema.common import TableRef
-from app.schema.sttm_builder import STTMBuilderEnvelopeRequest
+from app.schema.sttm_builder import LearningContext, STTMBuilderEnvelopeRequest
+from app.schema.workspace_context import WorkbenchContextSnapshotV1
 
 
 class ConversationOperation(str, Enum):
@@ -56,6 +57,12 @@ class FeedbackInput(BaseModel):
     entity_type: str | None = None
     entity_id: str | None = None
     selection_context: dict[str, Any] | None = None
+    context_key: str | None = None
+    question_id: str | None = None
+    inference_id: str | None = None
+    agent_recommendation_id: str | None = None
+    snapshot_id: str | None = None
+    correction_payload: dict[str, Any] | None = None
 
 
 class EvidenceCitation(BaseModel):
@@ -112,7 +119,7 @@ class AssistantSignalStatus(str, Enum):
 class AssistantSignal(BaseModel):
     signal_id: str
     signal_type: AssistantSignalType
-    layer: Literal["feedback", "inference", "recommendation"]
+    layer: Literal["feedback", "inference", "recommendation", "notification"]
     status: AssistantSignalStatus
     source: str
     title: str
@@ -154,6 +161,8 @@ class ConversationSignalEvaluationData(BaseModel):
     activity_type: str = "selection_changed"
     page: str | None = None
     session_id: str | None = None
+    project_id: str | None = None
+    sttm_id: str | None = None
     source_tables: list[TableRef] = Field(default_factory=list)
     target_table: TableRef | None = None
     driving_table: TableRef | None = None
@@ -166,6 +175,7 @@ class ConversationSignalEvaluationData(BaseModel):
     surface: str | None = None
     mapping_summary: dict[str, Any] | None = None
     mapping_intent: MappingIntent | None = None
+    workspace_context: WorkbenchContextSnapshotV1 | None = None
 
 
 class ConversationSignalsResponseData(BaseModel):
@@ -193,6 +203,7 @@ class AssistantSignalResponseInput(BaseModel):
 
 class ConversationContext(OperationContext):
     surface: str | None = None
+    routing_hint: str | None = None
     semantic_level_requested: str | None = None
     session_id: str | None = None
     source_tables: list[TableRef] | None = None
@@ -208,6 +219,42 @@ class ConversationContext(OperationContext):
     selected_columns_by_table: dict[str, list[str]] | None = None
     datahub_context: dict[str, Any] | None = None
     mapping_intent: MappingIntent | None = None
+    checked_mapping_row_ids: list[str] | None = None
+    mapping_rows: list[dict[str, Any]] | None = None
+    workspace_context: WorkbenchContextSnapshotV1 | None = None
+    learning_context: LearningContext | None = None
+    workspace_context_id: str | None = None
+    workspace_context_hash: str | None = None
+    semantic_bundle_hash: str | None = None
+    learning_context_id: str | None = None
+    learning_context_hash: str | None = None
+    artifact_refs: list[dict[str, Any]] = Field(default_factory=list)
+    prepared_context_hash: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hydrate_legacy_fields_from_workspace(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        normalized = dict(data)
+        workspace = normalized.get("workspace_context")
+        if not isinstance(workspace, dict):
+            return normalized
+        normalized.setdefault("source_tables", workspace.get("source_tables") or None)
+        normalized.setdefault("driving_table", workspace.get("driving_table"))
+        normalized.setdefault("target_table", workspace.get("target_table"))
+        normalized.setdefault("relationships", workspace.get("relationships") or None)
+        normalized.setdefault("selected_columns_by_table", workspace.get("selected_columns_by_table") or None)
+        normalized.setdefault("mapping_intent", workspace.get("mapping_intent"))
+        semantic = workspace.get("semantic")
+        if isinstance(semantic, dict):
+            normalized.setdefault("semantic_bundle_id", semantic.get("bundle_id"))
+            normalized.setdefault("semantic_bundle_label", semantic.get("bundle_label"))
+            normalized.setdefault("semantic_view_name", semantic.get("view_name"))
+        derived = workspace.get("derived_sources")
+        if isinstance(derived, list):
+            normalized.setdefault("selected_derived_sources", [item.get("id") for item in derived if isinstance(item, dict) and item.get("id")] or None)
+        return normalized
 
 
 class ConversationRequestData(BaseModel):

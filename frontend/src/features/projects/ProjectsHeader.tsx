@@ -1,7 +1,9 @@
 "use client";
+import { AiaBox, AiaButton } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { AddRoundedIcon } from "@/utils/icons";
-import { Box, Button, Typography } from "@mui/material";
+import { CAPTION_SX, SECTION_TITLE_SX, SECONDARY_TEXT_SX } from '@/config/typography-tokens';
 
 type ProjectsHeaderProps = {
   projectCount: number;
@@ -15,7 +17,7 @@ export default function ProjectsHeader({
   onNewProject,
 }: ProjectsHeaderProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "flex",
         flexDirection: { xs: "column", lg: "row" },
@@ -24,24 +26,16 @@ export default function ProjectsHeader({
         gap: 2,
       }}
     >
-      <Box>
-        <Typography
-          sx={{
-            fontSize: "1.5rem",
-            fontWeight: 600,
-            color: "#111827",
-            lineHeight: 1.1,
-            letterSpacing: "-0.02em",
-          }}
-        >
+      <AiaBox>
+        <AiaText sx={{ ...SECTION_TITLE_SX, letterSpacing: "-0.02em" }}>
           Projects
-        </Typography>
-        <Typography sx={{ mt: 0.75, fontSize: 14, color: "#6B7280" }}>
+        </AiaText>
+        <AiaText sx={{ ...SECONDARY_TEXT_SX, mt: 0.75 }}>
           {projectCount} project folders · {totalMappings} total mappings
-        </Typography>
-      </Box>
+        </AiaText>
+      </AiaBox>
 
-      <Box
+      <AiaBox
         sx={{
           display: "flex",
           flexDirection: { xs: "column", sm: "row" },
@@ -49,35 +43,19 @@ export default function ProjectsHeader({
           gap: 1.5,
         }}
       >
-        <Typography sx={{ fontSize: 12, color: "#94A3B8", whiteSpace: "nowrap" }}>
+        <AiaText sx={{ ...CAPTION_SX, whiteSpace: "nowrap" }}>
           Click a project to explore its mappings
-        </Typography>
-        <Button
+        </AiaText>
+        <AiaButton
           variant="contained"
-          startIcon={<AddRoundedIcon sx={{ fontSize: 16, color: "#FFFFFF" }} />}
+          color="primary"
+          size="medium"
+          startIcon={<AddRoundedIcon sx={{ fontSize: 18 }} />}
           onClick={onNewProject}
-          sx={{
-            textTransform: "none",
-            borderRadius: "10px",
-            bgcolor: "#111827",
-            color: "#FFFFFF",
-            border: "1px solid #111827",
-            fontWeight: 700,
-            fontSize: 13,
-            px: 1.75,
-            py: 0.85,
-            boxShadow: "none",
-            whiteSpace: "nowrap",
-            "&:hover": {
-              bgcolor: "#1F2937",
-              borderColor: "#1F2937",
-              boxShadow: "none",
-            },
-          }}
         >
           New Project
-        </Button>
-      </Box>
-    </Box>
+        </AiaButton>
+      </AiaBox>
+    </AiaBox>
   );
 }

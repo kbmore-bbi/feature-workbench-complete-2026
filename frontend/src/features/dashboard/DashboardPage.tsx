@@ -1,19 +1,56 @@
 "use client";
+import { AiaBox, AiaLoadingOverlay } from '@/components/ui';
 
-import { Box } from "@mui/material";
+import { useEffect, useState } from "react";
 import DashboardStats from "./DashboardStats";
 import QuickStatsPanel from "./QuickStatsPanel";
 import RecentMappingsPanel from "./RecentMappingsPanel";
 import DashboardHeader from "./DashboardHeader";
+import {
+  getAllProjectsSummary,
+  type ProjectRecord,
+  type STTMRecord,
+} from "@/services/projectService";
 
 type DashboardPageProps = {
   initialNewMappingOpen?: boolean;
 };
 
 export default function DashboardPage(_props: DashboardPageProps) {
+  const [projects, setProjects] = useState<ProjectRecord[]>([]);
+  const [sttms, setSttms] = useState<STTMRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoading(true);
+    getAllProjectsSummary()
+      .then((summary) => {
+        if (cancelled) return;
+        setProjects(summary.projects);
+        setSttms(summary.sttms);
+      })
+      .catch((error) => {
+        if (process.env.NODE_ENV === "development") {
+          console.warn("Dashboard project/STTM metadata is unavailable.", error);
+        }
+        if (!cancelled) {
+          setProjects([]);
+          setSttms([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
-    <Box
+    <AiaBox
       sx={{
+        position: "relative",
         flex: 1,
         minHeight: 0,
         overflowY: "auto",
@@ -23,14 +60,15 @@ export default function DashboardPage(_props: DashboardPageProps) {
     >
       <DashboardHeader />
 
-      <Box className="mt-6">
-        <DashboardStats />
-      </Box>
+      <AiaBox className="mt-6">
+        <DashboardStats projects={projects} sttms={sttms} />
+      </AiaBox>
 
-      <Box className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_1fr]">
+      <AiaBox className="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-[1.35fr_1fr]">
         <QuickStatsPanel />
-        <RecentMappingsPanel />
-      </Box>
-    </Box>
+        <RecentMappingsPanel projects={projects} sttms={sttms} />
+      </AiaBox>
+      <AiaLoadingOverlay open={isLoading} label="Loading dashboard data…" />
+    </AiaBox>
   );
 }

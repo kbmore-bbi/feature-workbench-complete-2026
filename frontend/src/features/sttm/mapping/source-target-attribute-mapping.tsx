@@ -1,22 +1,11 @@
 'use client';
+import { AiaBox, AiaButton, AiaIconButton, AiaChip, AiaPaper, AiaTableBody, AiaTableCellPrimitive, AiaTableContainer, AiaTableHead, AiaTablePagination, AiaTablePrimitive, AiaTableRowPrimitive } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import React, { useEffect, useMemo, useState } from 'react';
 import { ArrowForwardRoundedIcon, CheckRoundedIcon, CloseRoundedIcon, FileUploadOutlinedIcon } from '@/utils/icons';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  TablePagination,
-  Paper,
-  Typography,
-  Box,
-  Button,
-  Chip,
-  IconButton,
-  InputBase,
-} from '@mui/material';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
+import { useTour } from '@/features/tour/engine/tour-context';
+
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import type { MappingRuleType } from '@/features/sttm/types/sttm.types';
 import {
@@ -26,7 +15,9 @@ import {
   parseSourceColumns,
 } from './mapping-utils';
 import { AiaCheckbox } from '@/components/ui/aia-checkbox';
+import { AiaInput } from '@/components/ui/aia-input';
 import { AiaSelect } from '@/components/ui/aia-select';
+import { AiaAutocomplete } from '@/components/ui/aia-auto-complete';
 import { AiaCheckboxCell, AiaInputCell } from '@/components/ui/aia-table';
 import {
   MappingRuleCell,
@@ -37,10 +28,23 @@ import {
 } from './cells';
 import { MappingDataPreviewCell } from './data-preview';
 import {
+  MAPPING_TABLE_CHECKBOX_SX,
   MAPPING_TABLE_CONTAINER_SX,
+  MAPPING_SELECTION_BAR_SX,
+  MAPPING_TABLE_FILTER_CONTROL_ROOT_SX,
+  MAPPING_TABLE_FILTER_INPUT_SX,
+  MAPPING_TABLE_FILTER_SELECT_SX,
   MAPPING_TABLE_HEADER_CELL_SX,
+  MAPPING_TABLE_HEADER_ROW_HEIGHT,
   MAPPING_TABLE_PAGINATION_SX,
   MAPPING_TABLE_ROW_SX,
+  MAPPING_TABLE_SEARCH_ROW_CELL_SX,
+  MAPPING_TABLE_SECONDARY_INPUT_SX,
+  MAPPING_TABLE_SECONDARY_INPUT_TYPOGRAPHY,
+  MAPPING_PREPROCESS_RULE_BUTTON_SPACER_SX,
+  MAPPING_PREPROCESS_RULE_FILTER_SX,
+  MAPPING_PREPROCESS_RULE_ROW_SX,
+  MAPPING_PREPROCESS_RULE_SELECT_WRAPPER_SX,
   mappingTableSx,
 } from './mapping-table-styles';
 
@@ -122,68 +126,78 @@ const STATUS_FILTER_OPTIONS = [
   { label: 'Unmapped', value: 'UNMAPPED' },
 ];
 
-const columnFilterControlSx = {
-  width: '100%',
-  minWidth: 0,
-  height: 28,
-  fontSize: '0.72rem',
-  lineHeight: 1.3,
-  borderRadius: '4px',
-  border: '1px solid #e5e7eb',
-  bgcolor: '#fff',
-  color: '#111827',
-  textAlign: 'left' as const,
-} as const;
+const headerCellSx = MAPPING_TABLE_HEADER_CELL_SX;
+const searchRowCellSx = MAPPING_TABLE_SEARCH_ROW_CELL_SX;
 
-const columnFilterInputSx = {
-  ...columnFilterControlSx,
-  px: 0.75,
-  py: 0.35,
-  '&::placeholder': {
-    color: '#9ca3af',
-    opacity: 1,
-  },
-  '&:focus': {
-    outline: 'none',
-    borderColor: '#94a3b8',
-    boxShadow: '0 0 0 1px rgba(148, 163, 184, 0.35)',
-  },
-} as const;
-
-const columnFilterSelectSx = {
+const columnFilterAutocompleteSx = {
   '& .MuiOutlinedInput-root': {
-    ...columnFilterControlSx,
+    ...MAPPING_TABLE_FILTER_CONTROL_ROOT_SX,
     display: 'flex',
     alignItems: 'center',
+    py: '0 !important',
+    pr: '4px !important',
   },
-  '& .MuiSelect-select': {
+  '& .MuiInputBase-input, & .MuiAutocomplete-input': {
     py: '4px !important',
-    pl: '6px !important',
-    pr: '28px !important',
+    pl: '2px !important',
     fontSize: '0.72rem',
     lineHeight: 1.3,
-    textAlign: 'left',
-    display: 'flex',
-    alignItems: 'center',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  '& .MuiSelect-icon': {
-    right: 4,
-    fontSize: '1.1rem',
-    color: '#64748b',
   },
   '& .MuiOutlinedInput-notchedOutline': {
     borderColor: '#e5e7eb',
   },
 } as const;
 
+const columnFilterAutocompleteFitContentSx = {
+  ...columnFilterAutocompleteSx,
+  width: 'max-content',
+  minWidth: 'max-content',
+  '& .MuiOutlinedInput-root': {
+    ...columnFilterAutocompleteSx['& .MuiOutlinedInput-root'],
+    width: 'max-content',
+    minWidth: 'max-content',
+  },
+  '& .MuiInputBase-input, & .MuiAutocomplete-input': {
+    ...columnFilterAutocompleteSx['& .MuiInputBase-input, & .MuiAutocomplete-input'],
+    width: 'auto !important',
+    minWidth: '12ch',
+    whiteSpace: 'nowrap',
+  },
+} as const;
+
+function PreProcessRuleColumnFilter({
+  value,
+  options,
+  onChange,
+}: {
+  value: string;
+  options: Array<{ label: string; value: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <AiaBox sx={MAPPING_PREPROCESS_RULE_ROW_SX}>
+      <AiaBox sx={MAPPING_PREPROCESS_RULE_SELECT_WRAPPER_SX}>
+        <AiaAutocomplete
+          hideLabel
+          value={value}
+          options={options}
+          onChange={(next) => onChange(Array.isArray(next) ? next[0] ?? '' : next)}
+          placeholder="All"
+          size="small"
+          fullWidth
+          sx={MAPPING_PREPROCESS_RULE_FILTER_SX}
+        />
+      </AiaBox>
+      <AiaBox sx={MAPPING_PREPROCESS_RULE_BUTTON_SPACER_SX} aria-hidden />
+    </AiaBox>
+  );
+}
+
 /** Minimum column widths — table scrolls horizontally when viewport is narrower. */
 const MAPPING_COLUMN_MIN_WIDTH = {
   checkbox: 64,
   targetColumn: 168,
-  preProcessRule: 248,
+  preProcessRule: 400,
   sourceColumn: 300,
   typePreview: 112,
   nlRule: 220,
@@ -198,18 +212,32 @@ const MAPPING_TABLE_MIN_WIDTH = Object.values(MAPPING_COLUMN_MIN_WIDTH).reduce(
   0,
 );
 
-const headerCellSx = MAPPING_TABLE_HEADER_CELL_SX;
-
 const multilineCellInputSx = {
+  ...MAPPING_TABLE_SECONDARY_INPUT_SX,
   '& .MuiOutlinedInput-root': {
+    ...MAPPING_TABLE_SECONDARY_INPUT_TYPOGRAPHY,
     alignItems: 'flex-start',
     minHeight: 44,
   },
   '& .MuiInputBase-input, & .MuiInputBase-inputMultiline': {
-    lineHeight: 1.45,
+    ...MAPPING_TABLE_SECONDARY_INPUT_TYPOGRAPHY,
     whiteSpace: 'pre-wrap',
     overflowWrap: 'anywhere',
     overflow: 'hidden !important',
+  },
+} as const;
+
+const mappingBodyInputSx = {
+  ...MAPPING_TABLE_SECONDARY_INPUT_SX,
+  '& .MuiOutlinedInput-root': {
+    ...MAPPING_TABLE_SECONDARY_INPUT_TYPOGRAPHY,
+    minHeight: 36,
+    borderRadius: '6px',
+    bgcolor: '#fff',
+  },
+  '& .MuiInputBase-input': {
+    ...MAPPING_TABLE_SECONDARY_INPUT_TYPOGRAPHY,
+    paddingY: '8px !important',
   },
 } as const;
 
@@ -238,13 +266,10 @@ function mappingFrozenCellSx(
   return {
     position: 'sticky' as const,
     left,
-    top: header ? 0 : searchRow ? 32 : undefined,
+    top: header ? 0 : searchRow ? MAPPING_TABLE_HEADER_ROW_HEIGHT : undefined,
     zIndex,
     bgcolor: backgroundColor,
     backgroundColor,
-    ...(lastFrozen
-      ? { boxShadow: '4px 0 8px -4px rgba(15, 23, 42, 0.12)' }
-      : {}),
   };
 }
 
@@ -265,7 +290,7 @@ const scrollableHeaderCellSx = {
 
 const scrollableSearchHeaderCellSx = {
   position: 'sticky' as const,
-  top: 32,
+  top: MAPPING_TABLE_HEADER_ROW_HEIGHT,
   zIndex: 2,
   bgcolor: '#fafafa',
   backgroundColor: '#fafafa',
@@ -281,12 +306,14 @@ function ColumnFilterInput({
   onChange: (value: string) => void;
 }) {
   return (
-    <InputBase
+    <AiaInput
       value={value}
-      onChange={(event) => onChange(event.target.value)}
+      onChange={onChange}
       placeholder={placeholder}
+      size="small"
+      fullWidth
       inputProps={{ 'aria-label': placeholder }}
-      sx={columnFilterInputSx}
+      sx={MAPPING_TABLE_FILTER_INPUT_SX}
     />
   );
 }
@@ -295,11 +322,30 @@ function ColumnFilterSelect({
   value,
   options,
   onChange,
+  searchable = false,
+  fitContent = false,
 }: {
   value: string;
   options: Array<{ label: string; value: string }>;
   onChange: (value: string) => void;
+  searchable?: boolean;
+  fitContent?: boolean;
 }) {
+  if (searchable) {
+    return (
+      <AiaAutocomplete
+        hideLabel
+        value={value}
+        options={options}
+        onChange={(next) => onChange(Array.isArray(next) ? next[0] ?? '' : next)}
+        placeholder="All"
+        size="small"
+        fullWidth={!fitContent}
+        sx={fitContent ? columnFilterAutocompleteFitContentSx : columnFilterAutocompleteSx}
+      />
+    );
+  }
+
   return (
     <AiaSelect
       value={value}
@@ -308,7 +354,7 @@ function ColumnFilterSelect({
       placeholder="All"
       size="small"
       fullWidth
-      sx={columnFilterSelectSx}
+      sx={MAPPING_TABLE_FILTER_SELECT_SX}
     />
   );
 }
@@ -329,6 +375,7 @@ const SourceTargetAttributeMapping = () => {
     sourceAttributeGroups,
     derivedSources,
   } = useSttmBuilderContext();
+  const { notifyTourContextChanged } = useTour();
 
   const [columnFilters, setColumnFilters] = useState<MappingColumnFilters>(EMPTY_COLUMN_FILTERS);
   const [page, setPage] = useState(0);
@@ -390,7 +437,13 @@ const SourceTargetAttributeMapping = () => {
       if (columnFilters.targetColumn && !includes(row.targetColumn, columnFilters.targetColumn)) {
         return false;
       }
-      if (columnFilters.sourceColumn && !includes(row.sourceColumn, columnFilters.sourceColumn)) {
+      if (
+        columnFilters.sourceColumn
+        && !includes(
+          row.mappingMode === "constant" ? row.constantValue : row.sourceColumn,
+          columnFilters.sourceColumn,
+        )
+      ) {
         return false;
       }
       if (columnFilters.typePreview && !includes(previewType, columnFilters.typePreview)) {
@@ -423,6 +476,12 @@ const SourceTargetAttributeMapping = () => {
   }, [columnFilters, rowsPerPage]);
 
   useEffect(() => {
+    if (selectedMappingIds.length > 0) {
+      notifyTourContextChanged();
+    }
+  }, [notifyTourContextChanged, selectedMappingIds.length]);
+
+  useEffect(() => {
     const maxPage = Math.max(0, Math.ceil(filteredMappings.length / rowsPerPage) - 1);
     if (page > maxPage) {
       setPage(maxPage);
@@ -442,7 +501,7 @@ const SourceTargetAttributeMapping = () => {
   };
 
   return (
-    <Box
+    <AiaBox
       sx={{
         width: '100%',
         flex: 1,
@@ -455,21 +514,9 @@ const SourceTargetAttributeMapping = () => {
       }}
     >
       {selectedMappingIds.length > 0 && (
-        <Box
-          sx={{
-            px: 2,
-            py: 1,
-            bgcolor: '#0f172a',
-            color: '#fff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 2,
-            borderBottom: '1px solid #1f2937',
-          }}
-        >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
-            <Box
+        <AiaBox data-tour={TOUR_TARGETS.sttmRowSelectionBar} sx={MAPPING_SELECTION_BAR_SX}>
+          <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 1.25, minWidth: 0 }}>
+            <AiaBox
               sx={{
                 width: 20,
                 height: 20,
@@ -481,35 +528,28 @@ const SourceTargetAttributeMapping = () => {
                 flexShrink: 0,
               }}
             >
-              <CheckRoundedIcon sx={{ fontSize: 15, color: '#111827' }} />
-            </Box>
-            <Typography sx={{ fontSize: '0.85rem', fontWeight: 700, whiteSpace: 'nowrap' }}>
+              <CheckRoundedIcon sx={{ fontSize: 15, color: 'var(--color-primary)' }} />
+            </AiaBox>
+            <AiaText sx={{ fontSize: '0.85rem', fontWeight: 700, whiteSpace: 'nowrap' }}>
               {selectedMappingIds.length} row{selectedMappingIds.length === 1 ? '' : 's'} selected
-            </Typography>
-            <Typography
+            </AiaText>
+            <AiaText
               sx={{ fontSize: '0.78rem', fontWeight: 500, color: '#94a3b8', whiteSpace: 'nowrap' }}
             >
               ({selectedMappedCount} mapped)
-            </Typography>
+            </AiaText>
             {selectedMappedCount > 0 && (
-              <Chip
+              <AiaChip
                 size="small"
+                color="success"
                 label={`${selectedMappedCount} Mapped`}
-                sx={{
-                  height: 22,
-                  fontSize: '0.7rem',
-                  fontWeight: 700,
-                  bgcolor: '#052e16',
-                  color: '#4ade80',
-                  border: '1px solid #166534',
-                  borderRadius: '999px',
-                }}
               />
             )}
-          </Box>
+          </AiaBox>
 
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
-            <Button
+          <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <AiaButton
+              data-tour={TOUR_TARGETS.sttmMarkMapped}
               size="small"
               startIcon={<CheckRoundedIcon sx={{ fontSize: 16 }} />}
               onClick={() => bulkMarkMapped(selectedMappingIds)}
@@ -526,8 +566,9 @@ const SourceTargetAttributeMapping = () => {
               }}
             >
               Mark Mapped
-            </Button>
-            <Button
+            </AiaButton>
+            <AiaButton
+              data-tour={TOUR_TARGETS.sttmSetDirect}
               size="small"
               startIcon={<ArrowForwardRoundedIcon sx={{ fontSize: 16 }} />}
               onClick={() => bulkSetDirect(selectedMappingIds)}
@@ -544,8 +585,9 @@ const SourceTargetAttributeMapping = () => {
               }}
             >
               Set Direct
-            </Button>
-            <Button
+            </AiaButton>
+            <AiaButton
+              data-tour={TOUR_TARGETS.sttmPublishRowMapping}
               size="small"
               startIcon={<FileUploadOutlinedIcon sx={{ fontSize: 16 }} />}
               sx={{
@@ -562,24 +604,25 @@ const SourceTargetAttributeMapping = () => {
               }}
             >
               Publish {selectedMappingIds.length} Mapping{selectedMappingIds.length === 1 ? '' : 's'}
-            </Button>
-            <IconButton
+            </AiaButton>
+            <AiaIconButton
               size="small"
               onClick={clearSelection}
               sx={{ color: '#94a3b8', ml: 0.25, '&:hover': { color: '#fff' } }}
             >
               <CloseRoundedIcon sx={{ fontSize: 18 }} />
-            </IconButton>
-          </Box>
-        </Box>
+            </AiaIconButton>
+          </AiaBox>
+        </AiaBox>
       )}
 
-      <TableContainer
-        component={Paper}
+      <AiaTableContainer
+        component={AiaPaper}
         elevation={0}
+        data-tour={TOUR_TARGETS.sttmMappingGrid}
         sx={MAPPING_TABLE_CONTAINER_SX}
       >
-          <Table
+          <AiaTablePrimitive
             stickyHeader
             size="small"
             sx={mappingTableSx(MAPPING_TABLE_MIN_WIDTH)}
@@ -589,9 +632,9 @@ const SourceTargetAttributeMapping = () => {
               <col key={`mapping-col-${index}`} style={{ width: columnWidth }} />
             ))}
           </colgroup>
-          <TableHead>
-            <TableRow>
-              <TableCell
+          <AiaTableHead>
+            <AiaTableRowPrimitive>
+              <AiaTableCellPrimitive
                 padding="none"
                 sx={{
                   ...headerCellSx,
@@ -604,13 +647,13 @@ const SourceTargetAttributeMapping = () => {
                   verticalAlign: 'middle',
                 }}
               >
-                <Box
+                <AiaBox
                   sx={{
                     display: 'flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     width: '100%',
-                    minHeight: 30,
+                    minHeight: MAPPING_TABLE_HEADER_ROW_HEIGHT,
                   }}
                 >
                   <AiaCheckbox
@@ -622,23 +665,12 @@ const SourceTargetAttributeMapping = () => {
                         checked,
                       )
                     }
-                    sx={{
-                      color: '#cbd5e1',
-                      '&.Mui-checked': {
-                        color: '#fff',
-                        bgcolor: '#111827',
-                        borderRadius: '4px',
-                      },
-                      '&.MuiCheckbox-indeterminate': {
-                        color: '#fff',
-                        bgcolor: '#111827',
-                        borderRadius: '4px',
-                      },
-                    }}
+                    sx={MAPPING_TABLE_CHECKBOX_SX}
                   />
-                </Box>
-              </TableCell>
-              <TableCell
+                </AiaBox>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
+                data-tour={TOUR_TARGETS.sttmTargetColumn}
                 sx={{
                   ...headerCellSx,
                   ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
@@ -650,8 +682,8 @@ const SourceTargetAttributeMapping = () => {
                 }}
               >
                 Target Column
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
@@ -660,8 +692,8 @@ const SourceTargetAttributeMapping = () => {
                 }}
               >
                 Pre-processing Rule
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
@@ -670,8 +702,8 @@ const SourceTargetAttributeMapping = () => {
                 }}
               >
                 Source Column
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
@@ -681,8 +713,8 @@ const SourceTargetAttributeMapping = () => {
                 }}
               >
                 Type (Preview)
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
@@ -691,8 +723,8 @@ const SourceTargetAttributeMapping = () => {
                 }}
               >
                 NL Rule
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
@@ -701,8 +733,9 @@ const SourceTargetAttributeMapping = () => {
                 }}
               >
                 Order
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
+                data-tour={TOUR_TARGETS.sttmDescriptionAi}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
@@ -710,22 +743,13 @@ const SourceTargetAttributeMapping = () => {
                   width: MAPPING_COLUMN_MIN_WIDTH.description,
                 }}
               >
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                   Description
-                  <Chip
-                    label="AI"
-                    size="small"
-                    sx={{
-                      height: 18,
-                      fontSize: '0.6rem',
-                      fontWeight: 800,
-                      bgcolor: '#dbeafe',
-                      color: '#1d4ed8',
-                    }}
-                  />
-                </Box>
-              </TableCell>
-              <TableCell
+                  <AiaChip label="AI" size="small" color="primary" sx={{ height: 22, fontSize: '0.6rem', fontWeight: 800 }} />
+                </AiaBox>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
+                data-tour={TOUR_TARGETS.sttmMappedStatus}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
@@ -734,8 +758,8 @@ const SourceTargetAttributeMapping = () => {
                 }}
               >
                 Status
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
@@ -745,32 +769,29 @@ const SourceTargetAttributeMapping = () => {
                 }}
               >
                 Data Preview
-              </TableCell>
-            </TableRow>
-            <TableRow>
-              <TableCell
+              </AiaTableCellPrimitive>
+            </AiaTableRowPrimitive>
+            <AiaTableRowPrimitive>
+              <AiaTableCellPrimitive
                 padding="none"
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.checkbox, { searchRow: true }),
                   width: MAPPING_COLUMN_MIN_WIDTH.checkbox,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
                   maxWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
                   px: 0.5,
-                  py: 0.45,
                 }}
               />
-              <TableCell
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
                     searchRow: true,
                     lastFrozen: true,
                   }),
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
                   width: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
-                  px: 1,
-                  py: 0.45,
                 }}
               >
                 <ColumnFilterInput
@@ -778,31 +799,27 @@ const SourceTargetAttributeMapping = () => {
                   placeholder="Search..."
                   onChange={(value) => updateColumnFilter('targetColumn', value)}
                 />
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
                   width: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
-                  px: 1,
-                  py: 0.45,
                 }}
               >
-                <ColumnFilterSelect
+                <PreProcessRuleColumnFilter
                   value={columnFilters.preProcessRule}
                   options={RULE_FILTER_OPTIONS}
                   onChange={(value) => updateColumnFilter('preProcessRule', value)}
                 />
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
                   width: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
-                  px: 1,
-                  py: 0.45,
                 }}
               >
                 <ColumnFilterInput
@@ -810,15 +827,13 @@ const SourceTargetAttributeMapping = () => {
                   placeholder="Search..."
                   onChange={(value) => updateColumnFilter('sourceColumn', value)}
                 />
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.typePreview,
                   width: MAPPING_COLUMN_MIN_WIDTH.typePreview,
-                  px: 1,
-                  py: 0.45,
                 }}
               >
                 <ColumnFilterInput
@@ -826,15 +841,13 @@ const SourceTargetAttributeMapping = () => {
                   placeholder="Search..."
                   onChange={(value) => updateColumnFilter('typePreview', value)}
                 />
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.nlRule,
                   width: MAPPING_COLUMN_MIN_WIDTH.nlRule,
-                  px: 1,
-                  py: 0.45,
                 }}
               >
                 <ColumnFilterInput
@@ -842,15 +855,13 @@ const SourceTargetAttributeMapping = () => {
                   placeholder="Search..."
                   onChange={(value) => updateColumnFilter('nlRule', value)}
                 />
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.order,
                   width: MAPPING_COLUMN_MIN_WIDTH.order,
-                  px: 1,
-                  py: 0.45,
                 }}
               >
                 <ColumnFilterInput
@@ -858,15 +869,13 @@ const SourceTargetAttributeMapping = () => {
                   placeholder="Search..."
                   onChange={(value) => updateColumnFilter('order', value)}
                 />
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.description,
                   width: MAPPING_COLUMN_MIN_WIDTH.description,
-                  px: 1,
-                  py: 0.45,
                 }}
               >
                 <ColumnFilterInput
@@ -874,15 +883,13 @@ const SourceTargetAttributeMapping = () => {
                   placeholder="Search..."
                   onChange={(value) => updateColumnFilter('description', value)}
                 />
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.status,
                   width: MAPPING_COLUMN_MIN_WIDTH.status,
-                  px: 1,
-                  py: 0.45,
                 }}
               >
                 <ColumnFilterSelect
@@ -890,20 +897,18 @@ const SourceTargetAttributeMapping = () => {
                   options={STATUS_FILTER_OPTIONS}
                   onChange={(value) => updateColumnFilter('status', value)}
                 />
-              </TableCell>
-              <TableCell
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive
                 sx={{
-                  ...headerCellSx,
+                  ...searchRowCellSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
                   width: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
-                  px: 1,
-                  py: 0.45,
                 }}
               />
-            </TableRow>
-          </TableHead>
-          <TableBody>
+            </AiaTableRowPrimitive>
+          </AiaTableHead>
+          <AiaTableBody>
             {paginatedMappings.map((row) => {
               const isSelected = selectedMappingIds.includes(row.id);
               const isProcessing =
@@ -917,7 +922,7 @@ const SourceTargetAttributeMapping = () => {
               const descriptionValue = resolveMappingDescription(row, sourceColumns, resolvedRule);
               const descriptionPlaceholder = 'Add description...';
               return (
-                <TableRow
+                <AiaTableRowPrimitive
                   key={row.id}
                   sx={MAPPING_TABLE_ROW_SX}
                 >
@@ -926,6 +931,7 @@ const SourceTargetAttributeMapping = () => {
                     onChange={() => toggleMappingSelection(row.id)}
                     width={MAPPING_COLUMN_MIN_WIDTH.checkbox}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.checkbox}
+                    checkboxSx={MAPPING_TABLE_CHECKBOX_SX}
                     sx={mappingFrozenCellSx(FROZEN_COLUMN_LEFT.checkbox)}
                   />
 
@@ -956,15 +962,75 @@ const SourceTargetAttributeMapping = () => {
                   <MappingSourceColumnsCell
                     value={row.sourceColumn}
                     options={sourceColumnOptions}
-                    disabled={!resolvedRule}
-                    displayAsPlainText={resolvedRule === 'Custom'}
+                    disabled={!resolvedRule && row.mappingMode !== "constant"}
+                    displayAsPlainText={resolvedRule === 'Custom' && row.mappingMode !== "constant"}
+                    mappingMode={row.mappingMode ?? "source"}
+                    constantValue={row.constantValue}
+                    onMappingModeChange={(mode) => {
+                      const isConstant = mode === "constant";
+                      updateMapping(row.id, {
+                        mappingMode: mode,
+                        constantValue: isConstant ? row.constantValue ?? "" : null,
+                        sourceColumn: isConstant ? null : row.sourceColumn,
+                        sourceColumns: isConstant ? [] : row.sourceColumns,
+                        sourceType: isConstant ? null : row.sourceType,
+                        expression: isConstant ? null : row.expression,
+                        rule: isConstant ? "Direct" : row.rule,
+                        status:
+                          isConstant && (row.constantValue ?? "").trim()
+                            ? "MAPPED"
+                            : !isConstant && (row.sourceColumns?.length || row.sourceColumn)
+                              ? "MAPPED"
+                              : "UNMAPPED",
+                        confidenceScore: null,
+                        confidenceReason: isConstant
+                          ? "A hard-coded value was assigned manually."
+                          : null,
+                        usedInferenceIds: [],
+                        usedRecommendationIds: [],
+                        usedLearningIds: [],
+                        description: row.descriptionEdited
+                          ? row.description
+                          : isConstant
+                            ? `Assign a hard-coded value to ${row.targetColumn}.`
+                            : null,
+                      });
+                    }}
+                    onConstantValueChange={(constantValue) => {
+                      updateMapping(row.id, {
+                        mappingMode: "constant",
+                        constantValue,
+                        status: constantValue.trim() ? "MAPPED" : "UNMAPPED",
+                        confidenceScore: null,
+                        confidenceReason: constantValue.trim()
+                          ? "A hard-coded value was assigned manually."
+                          : null,
+                        usedInferenceIds: [],
+                        usedRecommendationIds: [],
+                        usedLearningIds: [],
+                        description: row.descriptionEdited
+                          ? row.description
+                          : constantValue.trim()
+                            ? `Assign the hard-coded value ${constantValue.trim()} to ${row.targetColumn}.`
+                            : null,
+                      });
+                    }}
                     onChange={(nextValue) => {
                       const nextColumns = parseSourceColumns(nextValue);
                       const rule = resolveMappingRuleSelectValue(row.rule);
                       const updates: Partial<typeof row> = {
                         sourceColumn: nextValue.trim() || null,
                         sourceColumns: nextColumns,
+                        mappingMode: "source",
+                        constantValue: null,
                         status: nextColumns.length > 0 ? 'MAPPED' : 'UNMAPPED',
+                        confidenceScore: null,
+                        confidenceReason: nextColumns.length
+                          ? 'Source columns were edited manually after the AI suggestion.'
+                          : null,
+                        usedInferenceIds: [],
+                        usedRecommendationIds: [],
+                        usedLearningIds: [],
                         sourceType:
                           sourceColumnOptions.find(
                             (option) => option.value.toLowerCase() === nextColumns[0]?.toLowerCase(),
@@ -987,7 +1053,11 @@ const SourceTargetAttributeMapping = () => {
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
                     confidenceScore={row.confidenceScore}
                     confidenceReason={row.confidenceReason}
+                    businessMeaning={row.description ?? row.nlRule ?? null}
                     candidateSourceColumns={row.candidateSourceColumns}
+                    usedInferenceIds={row.usedInferenceIds}
+                    usedRecommendationIds={row.usedRecommendationIds}
+                    usedLearningIds={row.usedLearningIds}
                     unmatchedReason={row.unmatchedReason}
                     sx={scrollableBodyCellSx}
                   />
@@ -1018,6 +1088,7 @@ const SourceTargetAttributeMapping = () => {
                     onChange={(value) => updateMapping(row.id, { loadOrder: value })}
                     width={MAPPING_COLUMN_MIN_WIDTH.order}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.order}
+                    inputSx={mappingBodyInputSx}
                     sx={scrollableBodyCellSx}
                   />
 
@@ -1052,23 +1123,23 @@ const SourceTargetAttributeMapping = () => {
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.dataPreview}
                     sx={scrollableBodyCellSx}
                   />
-                </TableRow>
+                </AiaTableRowPrimitive>
               );
             })}
             {!paginatedMappings.length ? (
-              <TableRow>
-                <TableCell colSpan={10} sx={{ py: 4, textAlign: 'center' }}>
-                  <Typography sx={{ fontSize: '0.82rem', color: '#64748b' }}>
+              <AiaTableRowPrimitive>
+                <AiaTableCellPrimitive colSpan={10} sx={{ py: 4, textAlign: 'center' }}>
+                  <AiaText sx={{ fontSize: '0.82rem', color: '#64748b' }}>
                     No mapping rows match the current column filters.
-                  </Typography>
-                </TableCell>
-              </TableRow>
+                  </AiaText>
+                </AiaTableCellPrimitive>
+              </AiaTableRowPrimitive>
             ) : null}
-          </TableBody>
-        </Table>
-      </TableContainer>
+          </AiaTableBody>
+        </AiaTablePrimitive>
+      </AiaTableContainer>
 
-      <TablePagination
+      <AiaTablePagination
         component="div"
         count={filteredMappings.length}
         page={page}
@@ -1083,7 +1154,7 @@ const SourceTargetAttributeMapping = () => {
       />
 
       {mappingLoading && (
-        <Box
+        <AiaBox
           sx={{
             position: 'absolute',
             top: 12,
@@ -1102,7 +1173,7 @@ const SourceTargetAttributeMapping = () => {
             pointerEvents: 'none',
           }}
         >
-          <Box
+          <AiaBox
             sx={{
               width: 18,
               height: 18,
@@ -1114,7 +1185,7 @@ const SourceTargetAttributeMapping = () => {
               flexShrink: 0,
             }}
           >
-            <Box
+            <AiaBox
               component="span"
               sx={{
                 width: 10,
@@ -1130,13 +1201,13 @@ const SourceTargetAttributeMapping = () => {
                 },
               }}
             />
-          </Box>
-          <Typography sx={{ fontSize: '0.8rem', color: '#e2e8f0', fontWeight: 600 }}>
+          </AiaBox>
+          <AiaText sx={{ fontSize: '0.8rem', color: '#e2e8f0', fontWeight: 600 }}>
             {autoMapStatusMessage || 'Running auto-map...'}
-          </Typography>
-        </Box>
+          </AiaText>
+        </AiaBox>
       )}
-    </Box>
+    </AiaBox>
   );
 };
 

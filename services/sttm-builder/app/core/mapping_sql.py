@@ -4,13 +4,17 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from snowflake.snowpark import Session
+from sqlglot import exp, parse_one
 
 from app.core.exceptions import SnowflakeAgentError
+from app.core.config import Settings
 from app.core.snowflake_analyst import SnowflakeAnalystClient
 from app.schema.mapping_sql import (
+    MappingSqlCompileRequest,
+    MappingSqlCompileResponse,
     MappingSqlMappingItem,
     MappingSqlPreviewColumn,
     MappingSqlPreviewRequest,
@@ -18,7 +22,11 @@ from app.schema.mapping_sql import (
     MappingSqlPreviewRow,
     MappingSqlReviewRequest,
     MappingSqlReviewResponse,
+    MappingSqlParseRequest,
+    MappingSqlParseResponse,
 )
+from app.schema.sttm_builder import RelationGraphContext, RelationNode, RelationNodeKind
+from app.core.sql_parser import parse_sql_document
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +49,11 @@ class MappingSqlService:
         *,
         session: Session,
         analyst_client: SnowflakeAnalystClient,
+        settings: Settings | None = None,
     ) -> None:
         self._session = session
         self._analyst = analyst_client
+        self._settings = settings
 
     def review(self, body: MappingSqlReviewRequest) -> MappingSqlReviewResponse:
         preview_sql = self._normalize_sql(body.preview_sql)
@@ -75,12 +85,14 @@ class MappingSqlService:
         )
         review_agent = "CORTEX_ANALYST"
         optimized = False
+        review_kind: Literal["none", "optimization", "repair"] = "none"
 
-        if body.semantic_view_name:
+        if body.semantic_view_name or body.semantic_model_yaml:
             try:
                 analyst_response = self._analyst.ask(
                     question=self._build_review_prompt(body, preview_sql, validation_error=validation_error),
                     semantic_view=body.semantic_view_name,
+                    semantic_model_yaml=body.semantic_model_yaml,
                 )
                 if analyst_response.text and not self._is_unhelpful_review_summary(analyst_response.text):
                     review_summary = analyst_response.text.strip()
@@ -97,6 +109,7 @@ class MappingSqlService:
                             candidate_sql,
                         )
                         optimized = self._normalize_sql(candidate_sql) != preview_sql or not syntax_valid
+                        review_kind = "repair" if validation_error else "optimization"
                         syntax_valid = True
                         execution_ready = True
                         if validation_error:
@@ -135,6 +148,7 @@ class MappingSqlService:
                     repaired_preview_sql,
                 )
                 optimized = True
+                review_kind = "repair"
                 syntax_valid = True
                 execution_ready = True
                 review_agent = "SNOWFLAKE_EXECUTOR"
@@ -151,12 +165,19 @@ class MappingSqlService:
             syntax_valid = False
             execution_ready = False
 
+        repair_options = self._build_repair_options(
+            validation_error=validation_error,
+            has_suggested_sql=optimized_preview_sql is not None,
+        )
+
         return MappingSqlReviewResponse(
             valid=syntax_valid,
             review_agent=review_agent,
             syntax_valid=syntax_valid,
             execution_ready=execution_ready,
             review_summary=review_summary,
+            validation_error=validation_error,
+            review_kind=review_kind,
             optimized=optimized,
             requires_approval=optimized and optimized_preview_sql is not None,
             original_preview_sql=preview_sql,
@@ -165,7 +186,709 @@ class MappingSqlService:
             optimized_generated_sql=optimized_generated_sql,
             semantic_view_name=body.semantic_view_name,
             warnings=warnings,
+            repair_options=repair_options,
         )
+
+    def compile(self, body: MappingSqlCompileRequest) -> MappingSqlCompileResponse:
+        """Compile the UI/agent relation graph into a single query namespace."""
+        # Linked precedent is evidence for agent mapping decisions only. Never
+        # replace the current relation graph with a prior mapping's stored SQL;
+        # the compiler must prove the current mapping by compiling its current
+        # nodes, joins, bindings, derived SQL, and attribute expressions.
+        graph = body.relation_graph
+        nodes = {node.relation_id: node for node in graph.nodes}
+        if not nodes:
+            raise ValueError("The relation graph has no source nodes.")
+        if len(nodes) != len(graph.nodes):
+            raise ValueError("Relation IDs must be unique.")
+
+        aliases: dict[str, str] = {}
+        alias_to_id: dict[str, str] = {}
+        for node in graph.nodes:
+            alias = self._safe_sql_identifier(node.alias, label="relation alias")
+            alias_key = alias.upper()
+            if alias_key in alias_to_id:
+                raise ValueError(f"Duplicate relation alias: {alias}")
+            aliases[node.relation_id] = alias
+            alias_to_id[alias_key] = node.relation_id
+
+        bindings = {item.binding_id: item for item in graph.value_bindings}
+        # Agents naturally refer to a placeholder by its contract value
+        # (for example "$TransactionFirmID"), while the UI persists a stable
+        # binding_id (for example "canonical-TransactionFirmID"). Both identify
+        # the same binding. Accept the value as an alias only when it is unique;
+        # ambiguous values still fail closed below.
+        bindings_by_value: dict[str, Any] = {}
+        ambiguous_binding_values: set[str] = set()
+        for binding in graph.value_bindings:
+            value = str(binding.value or "").strip()
+            if not value:
+                continue
+            if value in bindings_by_value and bindings_by_value[value].binding_id != binding.binding_id:
+                ambiguous_binding_values.add(value)
+            else:
+                bindings_by_value[value] = binding
+        for value in ambiguous_binding_values:
+            bindings_by_value.pop(value, None)
+        for value, binding in bindings_by_value.items():
+            bindings.setdefault(value, binding)
+        resolved_placeholders = self._resolved_placeholder_sql(graph)
+        unresolved_placeholders: set[str] = set()
+        required_relation_ids: set[str] = set()
+        select_items: list[str] = []
+        target_columns: list[str] = []
+
+        for mapping in body.mappings:
+            if str(mapping.status or "MAPPED").upper() not in {"MAPPED", "COMPLETE", "ACCEPTED"}:
+                raise ValueError(f"Target {mapping.target_column} is not mapped.")
+            target = self._safe_sql_identifier(mapping.target_column, label="target column")
+            dependencies = mapping.source_dependencies or mapping.source_columns
+            for dependency in dependencies:
+                relation_id = self._resolve_dependency_relation(dependency, nodes, alias_to_id)
+                if relation_id is None:
+                    raise ValueError(f"Undefined relation or alias in dependency: {dependency}")
+                required_relation_ids.add(relation_id)
+
+            for binding_id in mapping.value_binding_ids:
+                binding = bindings.get(binding_id)
+                if binding is None:
+                    raise ValueError(f"Undefined Value binding: {binding_id}")
+                if binding.is_placeholder and binding.resolution_status.lower() != "resolved":
+                    unresolved_placeholders.add(binding.value)
+
+            if mapping.mapping_mode == "constant":
+                placeholder = str(mapping.constant_value or "").strip()
+                if self._is_placeholder(placeholder) and placeholder in resolved_placeholders:
+                    expression = resolved_placeholders[placeholder]
+                else:
+                    expression = self._compile_constant(mapping.constant_value, mapping.target_type)
+                    if self._is_placeholder(mapping.constant_value):
+                        unresolved_placeholders.add(placeholder)
+            else:
+                expression = (mapping.expression or "").strip()
+                if expression:
+                    self._reject_query_level_expression(expression, target=mapping.target_column)
+                elif dependencies:
+                    expression = dependencies[0]
+                else:
+                    raise ValueError(f"Target {mapping.target_column} has no source or Value dependency.")
+            expression = self._substitute_placeholders(expression, resolved_placeholders)
+            expression = self._normalize_expression_namespace(expression, nodes, aliases)
+            self._validate_expression_aliases(expression, alias_to_id, nodes)
+            select_items.append(f"  {expression} AS {target}")
+            target_columns.append(target)
+
+        driving_id = body.driving_relation_id
+        if driving_id and driving_id not in nodes:
+            raise ValueError(f"Driving relation does not exist: {driving_id}")
+        if not driving_id:
+            driving_id = next(iter(required_relation_ids), graph.nodes[0].relation_id)
+        required_relation_ids.add(driving_id)
+
+        edges = [
+            edge for edge in graph.edges
+            if edge.left_relation_id in required_relation_ids or edge.right_relation_id in required_relation_ids
+        ]
+        connected_ids, ordered_edges = self._connected_join_plan(driving_id, required_relation_ids, edges)
+        disconnected = required_relation_ids - connected_ids
+        if disconnected:
+            disconnected_labels = []
+            for relation_id in sorted(disconnected):
+                node = nodes[relation_id]
+                label = (
+                    node.table.qualified_name
+                    if node.table is not None
+                    else node.physical_view_name
+                    or node.relation_id
+                )
+                disconnected_labels.append(label)
+            raise ValueError(
+                "Required relations are disconnected from the driving relation: "
+                + ", ".join(disconnected_labels)
+                + ". Add validated relation edges from the driving graph to these relations, "
+                "or remap the affected targets to outputs already produced by a connected derived source."
+            )
+
+        cte_nodes = self._ordered_cte_nodes(graph.nodes, required_relation_ids)
+        cte_lines: list[str] = []
+        for node in cte_nodes:
+            if not body.self_contained_derived and node.physical_view_name:
+                continue
+            if not node.sql_text:
+                if node.physical_view_name:
+                    continue
+                raise ValueError(f"Derived relation {node.relation_id} has no saved SQL or physical view.")
+            inner_sql = self._normalize_sql(node.sql_text).rstrip(";")
+            if not inner_sql:
+                raise ValueError(f"Derived relation {node.relation_id} has empty saved SQL.")
+            cte_lines.append(f"{aliases[node.relation_id]} AS (\n{inner_sql}\n)")
+
+        from_lines = [f"FROM {self._relation_sql(nodes[driving_id], aliases, body.self_contained_derived)}"]
+        joined = {driving_id}
+        for edge in ordered_edges:
+            left_joined = edge.left_relation_id in joined
+            attach_id = edge.right_relation_id if left_joined else edge.left_relation_id
+            join_type = self._normalize_join_type(edge.join_type)
+            predicates: list[str] = []
+            for condition in edge.conditions:
+                left_alias = aliases[edge.left_relation_id]
+                right_alias = aliases[edge.right_relation_id]
+                left_column = self._safe_sql_identifier(condition.left_column, label="join column")
+                right_column = self._safe_sql_identifier(condition.right_column, label="join column")
+                operator = condition.operator.strip().upper()
+                if operator not in {"=", "!=", "<>", "<", "<=", ">", ">="}:
+                    raise ValueError(f"Unsupported join operator: {condition.operator}")
+                predicates.append(f"{left_alias}.{left_column} {operator} {right_alias}.{right_column}")
+            if edge.additional_predicate:
+                self._reject_query_level_expression(edge.additional_predicate, target="join predicate")
+                predicates.append(f"({edge.additional_predicate.strip()})")
+            if not predicates:
+                raise ValueError(f"Join edge {edge.edge_id} has no conditions.")
+            from_lines.append(
+                f"{join_type} JOIN {self._relation_sql(nodes[attach_id], aliases, body.self_contained_derived)}\n"
+                f"  ON " + "\n  AND ".join(predicates)
+            )
+            joined.add(attach_id)
+
+        for expression in (
+            body.where_predicates
+            + body.group_by_expressions
+            + body.qualify_predicates
+            + body.order_by_expressions
+        ):
+            self._reject_query_level_expression(expression, target="query-shaping expression")
+
+        query_lines: list[str] = []
+        if cte_lines:
+            query_lines.extend(["WITH", ",\n".join(cte_lines)])
+        query_lines.extend(["SELECT", ",\n".join(select_items), *from_lines])
+        if body.where_predicates:
+            query_lines.extend(["WHERE", "  " + "\n  AND ".join(body.where_predicates)])
+        if body.group_by_expressions:
+            query_lines.extend(["GROUP BY", "  " + ",\n  ".join(body.group_by_expressions)])
+        if body.qualify_predicates:
+            query_lines.extend(["QUALIFY", "  " + "\n  AND ".join(body.qualify_predicates)])
+        if body.order_by_expressions:
+            query_lines.extend(["ORDER BY", "  " + ",\n  ".join(body.order_by_expressions)])
+        preview_sql = "\n".join(query_lines)
+        generated_sql = preview_sql
+        if body.target_table:
+            target_name = body.target_table.qualified_name
+            generated_sql = (
+                f"INSERT INTO {target_name} (\n  "
+                + ",\n  ".join(target_columns)
+                + f"\n)\n{preview_sql};"
+            )
+
+        ready = not unresolved_placeholders
+        warnings: list[str] = []
+        if unresolved_placeholders:
+            warnings.append("Resolve project-specific Value placeholders before execution.")
+            if not body.allow_unresolved_placeholders:
+                ready = False
+        if body.validate_with_explain and ready:
+            self._compile_preview_sql(preview_sql)
+
+        return MappingSqlCompileResponse(
+            valid=True,
+            ready=ready,
+            preview_sql=preview_sql,
+            generated_sql=generated_sql,
+            relation_aliases=aliases,
+            required_relation_ids=sorted(required_relation_ids),
+            unresolved_placeholders=sorted(unresolved_placeholders),
+            warnings=warnings,
+        )
+
+    def _compile_accepted_precedent(
+        self,
+        body: MappingSqlCompileRequest,
+    ) -> MappingSqlCompileResponse:
+        """Restore validated query shaping when every target accepted one exact precedent."""
+        precedent_id = str(body.accepted_precedent_sttm_id or "").strip()
+        if not precedent_id:
+            raise ValueError("Accepted precedent mapping ID is empty.")
+        if not body.mappings or any(
+            str(mapping.precedent_decision or "").lower() != "accept_precedent"
+            or str(mapping.precedent_mapping_id or "") != precedent_id
+            for mapping in body.mappings
+        ):
+            raise ValueError(
+                "Precedent query shaping requires every compiled target to accept the same precedent."
+            )
+        if self._settings is None:
+            raise ValueError("Precedent query shaping is unavailable without metadata settings.")
+        table = self._settings.qualify_table_name("TBL_STTM")
+        rows = self._session.sql(
+            f"""
+            SELECT RAW_MAPPING_SQL, STATUS
+            FROM {table}
+            WHERE TO_VARCHAR(STTM_ID) = ?
+              AND UPPER(COALESCE(STATUS, '')) IN ('COMPLETE', 'PUBLISHED')
+              AND COALESCE(RUNTIME_SUPPRESSED, FALSE) = FALSE
+            LIMIT 1
+            """,
+            params=[precedent_id],
+        ).collect()
+        if not rows:
+            raise ValueError(f"Accepted precedent {precedent_id} is not available or complete.")
+        row = rows[0].as_dict() if hasattr(rows[0], "as_dict") else dict(rows[0])
+        raw_sql = str(row.get("RAW_MAPPING_SQL") or "")
+        if not raw_sql.strip():
+            raise ValueError(f"Accepted precedent {precedent_id} has no stored SQL.")
+        parsed = parse_sql_document(raw_sql)
+        expected_targets = {mapping.target_column.upper() for mapping in body.mappings}
+        precedent_targets = {item.target_alias.upper() for item in parsed.column_mappings}
+        if expected_targets != precedent_targets:
+            missing = sorted(expected_targets - precedent_targets)
+            extra = sorted(precedent_targets - expected_targets)
+            raise ValueError(
+                "Accepted precedent target contract differs from the current mapping: "
+                f"missing={missing}, extra={extra}"
+            )
+        query_match = re.search(
+            r"(?im)^WITH\s+[A-Za-z_][\w$]*\s+AS\s*\(",
+            raw_sql,
+        )
+        if query_match is None:
+            raise ValueError(f"Accepted precedent {precedent_id} has no query body.")
+        preview_sql = raw_sql[query_match.start():].strip()
+        resolved_placeholders = self._resolved_placeholder_sql(body.relation_graph)
+        preview_sql = self._substitute_placeholders(preview_sql, resolved_placeholders)
+        preview_sql = self._qualify_precedent_physical_tables(
+            preview_sql,
+            body.relation_graph,
+        )
+        unresolved = sorted(set(re.findall(r"\$[A-Za-z_][\w$]*", preview_sql)))
+        target_columns = [
+            self._safe_sql_identifier(mapping.target_column, label="target column")
+            for mapping in body.mappings
+        ]
+        generated_sql = preview_sql
+        if body.target_table:
+            generated_sql = (
+                f"INSERT INTO {body.target_table.qualified_name} (\n  "
+                + ",\n  ".join(target_columns)
+                + f"\n)\n{preview_sql.rstrip(';')};"
+            )
+        ready = not unresolved
+        warnings = [
+            f"Restored complete query shaping from accepted precedent {precedent_id}."
+        ]
+        if unresolved:
+            warnings.append("Resolve project-specific Value placeholders before execution.")
+        if body.validate_with_explain and ready:
+            self._compile_preview_sql(preview_sql)
+        return MappingSqlCompileResponse(
+            valid=True,
+            ready=ready,
+            preview_sql=preview_sql,
+            generated_sql=generated_sql,
+            relation_aliases=dict(parsed.table_aliases),
+            required_relation_ids=list(parsed.source_tables),
+            unresolved_placeholders=unresolved,
+            warnings=warnings,
+        )
+
+    @staticmethod
+    def _safe_sql_identifier(value: str, *, label: str) -> str:
+        token = str(value or "").strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", token):
+            raise ValueError(f"Invalid {label}: {value}")
+        return token
+
+    @staticmethod
+    def _is_placeholder(value: str | None) -> bool:
+        return bool(re.fullmatch(r"\$[A-Za-z_][A-Za-z0-9_]*", str(value or "").strip()))
+
+    @classmethod
+    def _resolved_placeholder_sql(cls, graph: RelationGraphContext) -> dict[str, str]:
+        """Return explicitly resolved Value contracts as safe SQL expressions."""
+        resolved: dict[str, str] = {}
+        for binding in graph.value_bindings:
+            placeholder = str(binding.value or "").strip()
+            if not binding.is_placeholder or not cls._is_placeholder(placeholder):
+                continue
+            if str(binding.resolution_status or "").lower() != "resolved":
+                continue
+            if binding.resolved_value is None:
+                continue
+            resolved[placeholder] = cls._compile_constant(
+                binding.resolved_value,
+                binding.data_type,
+            )
+        return resolved
+
+    @staticmethod
+    def _substitute_placeholders(sql: str, resolved: dict[str, str]) -> str:
+        result = sql
+        for placeholder in sorted(resolved, key=len, reverse=True):
+            result = re.sub(
+                rf"(?<![A-Za-z0-9_$]){re.escape(placeholder)}(?![A-Za-z0-9_$])",
+                lambda _match, replacement=resolved[placeholder]: replacement,
+                result,
+            )
+        return result
+
+    @staticmethod
+    def _qualify_precedent_physical_tables(
+        sql: str,
+        graph: RelationGraphContext,
+    ) -> str:
+        """Make imported query bodies independent of the compiler session schema."""
+        result = sql
+        physical_nodes = [
+            node
+            for node in graph.nodes
+            if node.kind == RelationNodeKind.PHYSICAL_TABLE and node.table is not None
+        ]
+        for node in sorted(
+            physical_nodes,
+            key=lambda item: len(str(item.table.table if item.table else "")),
+            reverse=True,
+        ):
+            assert node.table is not None
+            table_name = node.table.table
+            qualified = node.table.qualified_name
+            result = re.sub(
+                rf"(?i)(\b(?:FROM|JOIN)\s+)(?![A-Za-z0-9_$]+\.){re.escape(table_name)}(?=\s|$)",
+                lambda match, replacement=qualified: match.group(1) + replacement,
+                result,
+            )
+        return result
+
+    @classmethod
+    def _compile_constant(cls, value: str | None, target_type: str | None) -> str:
+        token = str(value or "").strip()
+        if not token or token.upper() == "NULL":
+            return "NULL"
+        if cls._is_placeholder(token):
+            return token
+        data_type = str(target_type or "").upper()
+        if re.match(r"^(NUMBER|DECIMAL|NUMERIC|INT|INTEGER|BIGINT|FLOAT|DOUBLE)", data_type) and re.fullmatch(r"[-+]?(?:\d+\.?\d*|\.\d+)", token):
+            return token
+        if re.match(r"^(BOOLEAN|BOOL)", data_type) and token.upper() in {"TRUE", "FALSE"}:
+            return token.upper()
+        return "'" + token.replace("'", "''") + "'"
+
+    @staticmethod
+    def _reject_query_level_expression(expression: str, *, target: str) -> None:
+        scrubbed = re.sub(r"'(?:''|[^'])*'", "''", expression)
+        if re.search(r"(?is)(?:^|[;\s])(SELECT|WITH|FROM|JOIN|WHERE|QUALIFY|GROUP\s+BY|HAVING|ORDER\s+BY)(?:\s|$)", scrubbed):
+            raise ValueError(f"Query-level SQL is not allowed inside {target}.")
+        if ";" in scrubbed:
+            raise ValueError(f"Statement separators are not allowed inside {target}.")
+
+    @staticmethod
+    def _resolve_dependency_relation(
+        dependency: str,
+        nodes: dict[str, RelationNode],
+        alias_to_id: dict[str, str],
+    ) -> str | None:
+        qualifier, separator, _ = str(dependency).strip().rpartition(".")
+        if not separator:
+            return None
+        if qualifier.upper() in alias_to_id:
+            return alias_to_id[qualifier.upper()]
+        if qualifier in nodes:
+            return qualifier
+        qualifier_upper = qualifier.upper()
+        for relation_id, node in nodes.items():
+            if node.table and node.table.qualified_name.upper() == qualifier_upper:
+                return relation_id
+            if node.physical_view_name and node.physical_view_name.upper() == qualifier_upper:
+                return relation_id
+        return None
+
+    @staticmethod
+    def _normalize_expression_namespace(
+        expression: str,
+        nodes: dict[str, RelationNode],
+        aliases: dict[str, str],
+    ) -> str:
+        normalized = expression
+        replacements: list[tuple[str, str]] = []
+        for relation_id, node in nodes.items():
+            alias = aliases[relation_id]
+            replacements.append((relation_id, alias))
+            if node.table:
+                replacements.append((node.table.qualified_name, alias))
+            if node.physical_view_name:
+                replacements.append((node.physical_view_name, alias))
+        for source, alias in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
+            normalized = re.sub(
+                rf"(?i)(?<![A-Za-z0-9_$]){re.escape(source)}\.",
+                f"{alias}.",
+                normalized,
+            )
+        return normalized
+
+    @staticmethod
+    def _validate_expression_aliases(
+        expression: str,
+        alias_to_id: dict[str, str],
+        nodes: dict[str, RelationNode],
+    ) -> None:
+        scrubbed = re.sub(r"'(?:''|[^'])*'", "''", expression)
+        known = set(alias_to_id)
+        known.update(node.relation_id.upper() for node in nodes.values())
+        qualified_columns = re.findall(
+            r"(?<![$\w])([A-Za-z_][A-Za-z0-9_$]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_$]*)",
+            scrubbed,
+        )
+        for qualifier, _column in qualified_columns:
+            if qualifier.upper() not in known:
+                raise ValueError(f"Undefined SQL alias in mapping expression: {qualifier}")
+        for qualifier, column in qualified_columns:
+            relation_id = alias_to_id.get(qualifier.upper())
+            if relation_id is None:
+                continue
+            node = nodes[relation_id]
+            available = MappingSqlService._relation_output_columns(node)
+            if not available:
+                if node.kind in {RelationNodeKind.DERIVED_SOURCE, RelationNodeKind.CTE}:
+                    raise ValueError(
+                        f"Derived relation {node.relation_id} has no validated output-column contract."
+                    )
+                continue
+            if column.upper() not in available:
+                raise ValueError(
+                    f"Column {column} is not produced by relation {node.relation_id}. "
+                    f"Available columns: {', '.join(sorted(available))}"
+                )
+
+    @staticmethod
+    def _relation_output_columns(node: RelationNode) -> set[str]:
+        declared = {
+            str(item.get("name") or item.get("column_name") or "").strip().upper()
+            for item in node.output_columns
+            if isinstance(item, dict)
+            and str(item.get("name") or item.get("column_name") or "").strip()
+        }
+        if declared:
+            return declared
+        if not node.sql_text:
+            return set()
+        try:
+            statement = parse_one(node.sql_text, read="snowflake")
+        except Exception:
+            return set()
+        select = statement if isinstance(statement, exp.Select) else statement.find(exp.Select)
+        if select is None:
+            return set()
+        return {
+            str(item.alias_or_name or "").strip().upper()
+            for item in select.expressions
+            if not isinstance(item, exp.Star) and str(item.alias_or_name or "").strip()
+        }
+
+    @staticmethod
+    def _normalize_join_type(value: str) -> str:
+        token = " ".join(str(value or "INNER").upper().split())
+        allowed = {"INNER", "LEFT", "LEFT OUTER", "RIGHT", "RIGHT OUTER", "FULL", "FULL OUTER"}
+        if token not in allowed:
+            raise ValueError(f"Unsupported join type: {value}")
+        return token
+
+    @staticmethod
+    def _connected_join_plan(driving_id: str, required_ids: set[str], edges: list[Any]) -> tuple[set[str], list[Any]]:
+        connected = {driving_id}
+        ordered: list[Any] = []
+        pending = list(edges)
+        progressed = True
+        while progressed and required_ids - connected:
+            progressed = False
+            for edge in list(pending):
+                left_in = edge.left_relation_id in connected
+                right_in = edge.right_relation_id in connected
+                if left_in == right_in:
+                    continue
+                ordered.append(edge)
+                connected.add(edge.right_relation_id if left_in else edge.left_relation_id)
+                pending.remove(edge)
+                progressed = True
+        return connected, ordered
+
+    @staticmethod
+    def _ordered_cte_nodes(nodes: list[RelationNode], required_ids: set[str]) -> list[RelationNode]:
+        derived_nodes = {
+            node.relation_id: node for node in nodes
+            if node.kind in {RelationNodeKind.DERIVED_SOURCE, RelationNodeKind.CTE}
+        }
+        needed_ids = {node_id for node_id in required_ids if node_id in derived_nodes}
+
+        def include_parents(node_id: str) -> None:
+            node = derived_nodes.get(node_id)
+            if node is None:
+                return
+            for parent_id in node.parent_relation_ids:
+                if parent_id in derived_nodes and parent_id not in needed_ids:
+                    needed_ids.add(parent_id)
+                    include_parents(parent_id)
+
+        for node_id in list(needed_ids):
+            include_parents(node_id)
+        needed = {node_id: derived_nodes[node_id] for node_id in needed_ids}
+        ordered: list[RelationNode] = []
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node_id: str) -> None:
+            if node_id in visited:
+                return
+            if node_id in visiting:
+                raise ValueError(f"Circular derived-source dependency involving {node_id}.")
+            visiting.add(node_id)
+            node = needed[node_id]
+            for parent_id in node.parent_relation_ids:
+                if parent_id in needed:
+                    visit(parent_id)
+            visiting.remove(node_id)
+            visited.add(node_id)
+            ordered.append(node)
+
+        for node_id in needed:
+            visit(node_id)
+        return ordered
+
+    @staticmethod
+    def _relation_sql(node: RelationNode, aliases: dict[str, str], self_contained: bool) -> str:
+        alias = aliases[node.relation_id]
+        if node.kind == RelationNodeKind.PHYSICAL_TABLE:
+            if not node.table:
+                raise ValueError(f"Physical relation {node.relation_id} has no table reference.")
+            return f"{node.table.qualified_name} AS {alias}"
+        if not self_contained and node.physical_view_name:
+            return f"{node.physical_view_name} AS {alias}"
+        return alias
+
+    def parse(self, body: MappingSqlParseRequest) -> MappingSqlParseResponse:
+        parsed = parse_sql_document(body.sql)
+        known = {table.qualified_name.upper(): table for table in body.known_tables}
+        cte_names = {item.name.upper() for item in parsed.ctes}
+        unresolved: list[str] = []
+        ambiguous: dict[str, list[str]] = {}
+
+        def resolve(name: str | None) -> str | None:
+            if not name:
+                return None
+            upper = name.upper()
+            if upper in cte_names:
+                return name
+            if upper in known:
+                return known[upper].qualified_name
+            candidates = [fqn for fqn in known if fqn == upper or fqn.endswith(f".{upper}")]
+            if len(candidates) == 1:
+                return known[candidates[0]].qualified_name
+            if len(candidates) > 1:
+                ambiguous[name] = sorted(candidates)
+            elif name.count(".") < 2:
+                unresolved.append(name)
+            return name
+
+        source_tables = [resolve(name) or name for name in parsed.source_tables]
+        target_table = resolve(parsed.target_table)
+        if target_table is None:
+            current_target = body.current_workspace.get("target_table")
+            if isinstance(current_target, str) and current_target.strip():
+                target_table = current_target
+        joins = []
+        for item in parsed.join_patterns:
+            join = item.to_dict()
+            join["left_table"] = resolve(item.left_table) or item.left_table
+            join["right_table"] = resolve(item.right_table) or item.right_table
+            joins.append(join)
+        mapping_rows = []
+        for mapping in parsed.column_mappings:
+            item = mapping.to_dict()
+            source_table = None
+            if mapping.source_table:
+                source_table = parsed.table_aliases.get(mapping.source_table.upper())
+                source_table = source_table or resolve(mapping.source_table)
+            item["source_table"] = source_table
+            item["target_column"] = mapping.target_alias or mapping.source_column
+            resolved_columns: list[str] = []
+            for source_column in mapping.source_columns:
+                qualifier, separator, column_name = source_column.rpartition(".")
+                if separator:
+                    resolved_table = parsed.table_aliases.get(qualifier.upper())
+                    resolved_table = resolved_table or resolve(qualifier)
+                    resolved_columns.append(
+                        ".".join(part for part in (resolved_table, column_name) if part)
+                    )
+                else:
+                    resolved_columns.append(source_column)
+            if not resolved_columns and mapping.mapping_mode == "source" and mapping.source_column:
+                resolved_columns = [
+                    ".".join(
+                        part
+                        for part in (item.get("source_table"), mapping.source_column)
+                        if part
+                    )
+                ]
+            item["source_columns"] = resolved_columns
+            item["mapping_mode"] = mapping.mapping_mode
+            item["constant_value"] = mapping.constant_value
+            item["expression"] = mapping.transformation
+            item["rule"] = (
+                "Value"
+                if mapping.mapping_mode == "constant"
+                else ("Custom" if mapping.transformation else "Direct")
+            )
+            item["status"] = "MAPPED"
+            mapping_rows.append(item)
+        filters = [
+            rule.to_dict()
+            for rule in parsed.business_rules
+            if rule.rule_type in {"where_filter", "qualify_filter", "grouping", "sorting"}
+        ]
+        workspace = {
+            "source_tables": source_tables,
+            "target_table": target_table,
+            "mapping_rows": mapping_rows,
+            "relationships": joins,
+            "filters": filters,
+            "ctes": [item.to_dict() for item in parsed.ctes],
+            "derived_sources": [
+                item.to_dict() for item in parsed.ctes if item.is_derived_source
+            ],
+            "business_rules": [item.to_dict() for item in parsed.business_rules],
+            "transformations": parsed.transformations,
+            "sql": body.sql,
+        }
+        diff = self._workspace_diff(body.current_workspace, workspace)
+        warnings = list(parsed.parse_warnings)
+        if ambiguous:
+            warnings.append("Resolve ambiguous table references before applying SQL changes.")
+        if unresolved:
+            warnings.append("Resolve unqualified table references before applying SQL changes.")
+        return MappingSqlParseResponse(
+            valid=not ambiguous and not unresolved and bool(source_tables or target_table),
+            parsed_workspace=workspace,
+            diff=diff,
+            warnings=warnings,
+            unresolved_references=sorted(set(unresolved)),
+            ambiguous_references=ambiguous,
+        )
+
+    @staticmethod
+    def _workspace_diff(
+        current: dict[str, Any],
+        parsed: dict[str, Any],
+    ) -> dict[str, list[Any]]:
+        diff: dict[str, list[Any]] = {}
+        for key in ("source_tables", "mapping_rows", "relationships", "filters", "ctes"):
+            before = current.get(key) if isinstance(current.get(key), list) else []
+            after = parsed.get(key) if isinstance(parsed.get(key), list) else []
+            before_tokens = {json.dumps(item, sort_keys=True, default=str) for item in before}
+            after_tokens = {json.dumps(item, sort_keys=True, default=str) for item in after}
+            diff[f"{key}_added"] = [json.loads(item) for item in sorted(after_tokens - before_tokens)]
+            diff[f"{key}_removed"] = [json.loads(item) for item in sorted(before_tokens - after_tokens)]
+        if current.get("target_table") != parsed.get("target_table"):
+            diff["target_table_changed"] = [
+                {"before": current.get("target_table"), "after": parsed.get("target_table")}
+            ]
+        return diff
 
     def preview(self, body: MappingSqlPreviewRequest) -> MappingSqlPreviewResponse:
         preview_sql = self._normalize_sql(body.approved_preview_sql or body.preview_sql)
@@ -349,6 +1072,86 @@ class MappingSqlService:
         return collapsed[:600]
 
     @staticmethod
+    def _build_repair_options(
+        *,
+        validation_error: str | None,
+        has_suggested_sql: bool,
+    ) -> list[dict[str, str]]:
+        """Turn validation failures into safe UI actions without inventing SQL."""
+        if not validation_error:
+            return []
+
+        options: list[dict[str, str]] = []
+        if has_suggested_sql:
+            options.append(
+                {
+                    "code": "apply_suggested_sql",
+                    "title": "Review the suggested SQL repair",
+                    "description": (
+                        "Compare the validated repair with the current SQL, then explicitly apply it."
+                    ),
+                    "action": "review_suggested_sql",
+                }
+            )
+
+        variable_match = re.search(
+            r"SESSION\s+VARIABLE\s+['\"]?(\$?[A-Z0-9_]+)",
+            validation_error,
+            flags=re.IGNORECASE,
+        )
+        if variable_match:
+            identifier = variable_match.group(1)
+            if not identifier.startswith("$"):
+                identifier = f"${identifier}"
+            options.append(
+                {
+                    "code": "resolve_value_binding",
+                    "title": f"Resolve the Value binding {identifier}",
+                    "description": (
+                        "Snowflake is treating this placeholder as a session variable. Open the "
+                        "mapping row and bind the project-specific Value (or configure the session "
+                        "variable used for validation), then validate again."
+                    ),
+                    "action": "open_mapping",
+                    "identifier": identifier,
+                }
+            )
+
+        identifier_match = re.search(
+            r"(?:INVALID\s+IDENTIFIER|IDENTIFIER)\s+['\"]([^'\"]+)['\"]",
+            validation_error,
+            flags=re.IGNORECASE,
+        )
+        if identifier_match:
+            identifier = identifier_match.group(1)
+            options.append(
+                {
+                    "code": "verify_source_contract",
+                    "title": f"Verify source output {identifier}",
+                    "description": (
+                        "Confirm that the selected physical or derived source exposes this column "
+                        "and that its relation alias is joined into the current graph. Update the "
+                        "source contract or mapping dependency, then validate again."
+                    ),
+                    "action": "open_mapping",
+                    "identifier": identifier,
+                }
+            )
+
+        options.append(
+            {
+                "code": "edit_sql",
+                "title": "Edit and re-parse the generated SQL",
+                "description": (
+                    "Use Edit SQL to make a reviewed correction. The workspace parser will show "
+                    "the mapping, relationship, filter, and derived-source changes before applying them."
+                ),
+                "action": "edit_sql",
+            }
+        )
+        return options
+
+    @staticmethod
     def _is_unhelpful_review_summary(text: str) -> bool:
         normalized = text.strip().lower()
         return normalized.startswith("i'm sorry") or "this question is asking for" in normalized
@@ -370,6 +1173,27 @@ class MappingSqlService:
             for item in body.relationships
             if item.conditions
         ]
+        relation_lines: list[str] = []
+        derived_sql_sections: list[str] = []
+        if body.relation_graph is not None:
+            for node in body.relation_graph.nodes:
+                output_names = [
+                    str(item.get("name") or item.get("column_name") or "").strip()
+                    for item in node.output_columns
+                    if isinstance(item, dict)
+                    and str(item.get("name") or item.get("column_name") or "").strip()
+                ]
+                relation_lines.append(
+                    f"- id={node.relation_id}; alias={node.alias}; kind={node.kind.value}; "
+                    f"outputs={output_names or ['<contract missing>']}"
+                )
+                if node.kind in {RelationNodeKind.DERIVED_SOURCE, RelationNodeKind.CTE} and node.sql_text:
+                    derived_sql_sections.extend(
+                        [
+                            f"Saved SQL for derived relation {node.relation_id} (read-only evidence):",
+                            self._normalize_sql(node.sql_text)[:12000],
+                        ]
+                    )
         mapping_lines = []
         for mapping in body.mappings:
             if (mapping.status or "").upper() != "MAPPED":
@@ -379,6 +1203,8 @@ class MappingSqlService:
                 source_columns = [part.strip() for part in mapping.source_column.split(",") if part.strip()]
             mapping_lines.append(
                 f"- {mapping.target_column}: sources={source_columns or ['<none>']}, "
+                f"mode={mapping.mapping_mode}, "
+                f"constant={mapping.constant_value if mapping.mapping_mode == 'constant' else '<none>'}, "
                 f"rule={mapping.rule or 'Direct'}, expression={mapping.expression or '<none>'}"
             )
 
@@ -390,6 +1216,9 @@ class MappingSqlService:
             *(mapping_lines or ["- None"]),
             "Current relationships:",
             *(relationship_lines or ["- None"]),
+            "Unified relation graph and validated output contracts:",
+            *(relation_lines or ["- None"]),
+            *derived_sql_sections,
             "Baseline SELECT SQL to improve or repair if needed:",
             preview_sql,
             "",
@@ -408,7 +1237,9 @@ class MappingSqlService:
             "3. Preserve the target aliases exactly as written in the baseline SQL.",
             "4. Respect the listed relationships and source tables; do not introduce unrelated tables.",
             "5. Fix aggregation, grouping, casting, join, or expression issues if required.",
-            "6. Do not return INSERT statements, explanations inside the SQL, markdown fences, or DDL.",
+            "6. Never reference a derived column that is absent from that relation's output contract.",
+            "7. If a required business field cannot be produced from the current graph, do not invent a column; explain that no safe repair is possible.",
+            "8. Do not return INSERT statements, explanations inside the SQL, markdown fences, or DDL.",
         ]
         return "\n".join(prompt_lines)
 

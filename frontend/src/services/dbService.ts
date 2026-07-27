@@ -11,21 +11,32 @@ import type {
   DbtConversionResponse,
   MappingSqlPreviewRequest,
   MappingSqlPreviewResponse,
+  MappingSqlCompileRequest,
+  MappingSqlCompileResponse,
+  MappingSqlParseRequest,
+  MappingSqlParseResponse,
   MappingSqlReviewRequest,
   MappingSqlReviewResponse,
+  TestCaseGenerationRequest,
+  TestCaseGenerationResponse,
   WorkbookExportRequest,
 } from "@/types/api-contract";
 import {
+  buildMockDbtConversion,
+  buildMockMappingSqlPreview,
+  buildMockMappingSqlReview,
   buildMockSemanticContextRefresh,
   buildMockValidateDerivedSource,
+  buildMockWorkbookBlob,
   getMockAttributes,
   getMockRelationships,
   listMockDerivedSources,
   mockDatabases,
   mockSchemasByDatabase,
+  mockStreamDbtConversion,
   mockTablesBySchema,
   saveMockDerivedSource,
-} from "./mock/dbMockData";
+} from "@/data/mock";
 import { mockDelay, throwMockError, useMockDb } from "./mock/mockConfig";
 import { extractSseChunk } from "./streaming/sse";
 
@@ -103,6 +114,13 @@ type DerivedSourcePayload = {
   }>;
   filters?: unknown[];
   selected_columns_by_table?: Record<string, string[]>;
+  purpose?: string | null;
+  business_description?: string | null;
+  output_columns?: Array<Record<string, unknown>>;
+  column_semantics?: Array<Record<string, unknown>>;
+  grain?: string | null;
+  keys?: string[];
+  generated_by_request_id?: string | null;
 };
 
 type DerivedSourcePreviewColumn = {
@@ -114,6 +132,7 @@ type DerivedSourcePreviewColumn = {
 type DerivedSourceValidateResult = {
   valid: boolean;
   message: string;
+  sql_text?: string | null;
   preview_columns: DerivedSourcePreviewColumn[];
   preview_rows: Array<{ values: Record<string, unknown> }>;
 };
@@ -127,6 +146,10 @@ type DerivedSourceRecord = DerivedSourcePayload & {
   semantic_view_name?: string | null;
   semantic_level?: string | null;
   upstream_hash?: string | null;
+  source_dependency_hash?: string | null;
+  physical_view_name?: string | null;
+  semantic_projection?: Record<string, unknown>;
+  semantic_quality?: "complete" | "incomplete" | string;
   created_by?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
@@ -159,6 +182,7 @@ type DbtStreamTelemetry = {
 };
 
 type SemanticLevel =
+  | "FULL_REGISTRY"  // Recommended default
   | "L0_RELATIONSHIP"
   | "L1_CONTEXT"
   | "L2_ANALYST_READY"
@@ -180,14 +204,142 @@ type SemanticContextBundleResponse = {
   requested_level: SemanticLevel;
   achieved_level: SemanticLevel;
   semantic_view_name?: string | null;
+  semantic_model_yaml?: string | null;
   status: "ready" | "refreshed" | "promoted" | "partial" | "failed";
   promoted?: boolean;
   cache_hit?: boolean;
+  cache_status?: string;
+  cache_age_ms?: number | null;
+  registry_version?: string | null;
+  raw_assets?: Array<Record<string, unknown>>;
+  composed_yaml?: string | null;
+  derived_semantics?: Array<Record<string, unknown>>;
+  excluded_relationships?: Array<Record<string, unknown>>;
+  composition_diagnostics?: Array<Record<string, unknown>>;
+  stage_timings_ms?: Record<string, number>;
   summary: Record<string, unknown>;
   lineage?: Array<Record<string, unknown>>;
   semantic_context?: Array<Record<string, unknown>>;
   datahub_context?: Record<string, unknown> | null;
 };
+
+const TABLE_METADATA_CACHE_TTL_MS = 10 * 60 * 1000;
+
+type TimedCacheEntry<T> = {
+  data: T;
+  expiresAt: number;
+  schemaHash: string;
+};
+
+const attributeCache = new Map<string, TimedCacheEntry<TableAttributes[]>>();
+const attributeRequests = new Map<string, Promise<TableAttributes[]>>();
+const relationshipCache = new Map<string, TimedCacheEntry<RelationshipItem[]>>();
+const relationshipRequests = new Map<string, Promise<RelationshipItem[]>>();
+const metadataCache = new Map<string, TimedCacheEntry<unknown>>();
+const metadataRequests = new Map<string, Promise<unknown>>();
+const semanticBundleCache = new Map<string, TimedCacheEntry<SemanticContextBundleResponse>>();
+const semanticBundleRequests = new Map<string, Promise<SemanticContextBundleResponse>>();
+
+function stableKey(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableKey).sort().join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, item]) => `${key}:${stableKey(item)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function cachedMetadata<T>(key: string, loader: () => Promise<T>): Promise<T> {
+  const cached = metadataCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached.data as T;
+  const pending = metadataRequests.get(key);
+  if (pending) return pending as Promise<T>;
+  const request = loader()
+    .then((data) => {
+      metadataCache.set(key, {
+        data,
+        expiresAt: Date.now() + TABLE_METADATA_CACHE_TTL_MS,
+        schemaHash: key,
+      });
+      return data;
+    })
+    .finally(() => metadataRequests.delete(key));
+  metadataRequests.set(key, request);
+  return request;
+}
+
+function tableSetKey(tables: string[]): string {
+  return [...new Set(tables.map((table) => table.trim().toUpperCase()).filter(Boolean))]
+    .sort()
+    .join("|");
+}
+
+function relationshipTableSetKey(tables: TableRef[]): string {
+  return tableSetKey(tables.map((table) => `${table.database}.${table.schema}.${table.table}`));
+}
+
+function metadataSchemaHash(attributes: TableAttributes[]): string {
+  return attributes
+    .map((item) =>
+      `${item.table.database}.${item.table.schema}.${item.table.table}:` +
+      item.columns
+        .map((column) => `${column.ordinal_position ?? ""}:${column.column_name}:${column.data_type}`)
+        .join(","),
+    )
+    .sort()
+    .join("|");
+}
+
+function buildMockTestCaseGeneration(
+  payload: TestCaseGenerationRequest,
+): TestCaseGenerationResponse {
+  const documents = (payload.mappings ?? []).map((mapping, index) => ({
+    test_case_id: `MOCK-TC-${String(index + 1).padStart(3, "0")}`,
+    group: mapping.rule?.toLowerCase().includes("direct")
+      ? "Null Checks"
+      : "Transformation Rules",
+    target_attribute: mapping.target_column,
+    source_columns:
+      mapping.source_columns?.join(", ") ||
+      mapping.source_column ||
+      mapping.constant_value ||
+      "Value binding",
+    mapping_rule: mapping.expression || mapping.rule || "Direct",
+    test_case_description: `Mock validation for ${mapping.target_column}.`,
+    test_type: "Positive",
+    sample_source_input: "mock input",
+    expected_target_value: "mock expected value",
+    confidence: "High",
+  }));
+  const groups = new Map<string, string[]>();
+  documents.forEach((document) => {
+    groups.set(document.group, [
+      ...(groups.get(document.group) ?? []),
+      document.target_attribute,
+    ]);
+  });
+  return {
+    status: "completed",
+    domain_name: payload.domain_name ?? null,
+    target_layer: payload.target_layer ?? null,
+    materialization: payload.materialization ?? null,
+    target_model: payload.target_table.table,
+    target_table: `${payload.target_table.database}.${payload.target_table.schema}.${payload.target_table.table}`,
+    test_groups: [...groups.entries()].map(([group, target_columns]) => ({
+      group,
+      target_columns,
+    })),
+    seed_files: [],
+    test_case_document: documents,
+    agent_name: "MOCK_TEST_CASE_GENERATION_AGENT",
+    retrieved_inference_ids: [],
+    retrieved_recommendation_ids: [],
+    used_inference_ids: [],
+    used_recommendation_ids: [],
+  };
+}
 
 export const dbService = {
   getExplorerData: async (): Promise<DatabaseItem[]> => {
@@ -196,9 +348,11 @@ export const dbService = {
       return mockDelay(mockDatabases);
     }
 
-    return postEnvelopeData<DatabaseItem[]>(
-      API_ROUTES.tableSelection.databases,
-      buildApiEnvelope("table_selection.list_databases", {}),
+    return cachedMetadata("databases", () =>
+      postEnvelopeData<DatabaseItem[]>(
+        API_ROUTES.tableSelection.databases,
+        buildApiEnvelope("table_selection.list_databases", {}),
+      ),
     );
   },
 
@@ -208,10 +362,10 @@ export const dbService = {
       return mockDelay(mockSchemasByDatabase[database] ?? []);
     }
 
-    return postEnvelopeData<SchemaItem[]>(
+    return cachedMetadata(`schemas:${database.toUpperCase()}`, () => postEnvelopeData<SchemaItem[]>(
       API_ROUTES.tableSelection.schemas,
       buildApiEnvelope("table_selection.list_schemas", { database }, { database }),
-    );
+    ));
   },
 
   getSchemaTables: async (database: string, schema: string): Promise<TableItem[]> => {
@@ -220,9 +374,13 @@ export const dbService = {
       return mockDelay(mockTablesBySchema[`${database}.${schema}`] ?? []);
     }
 
-    return postEnvelopeData<TableItem[]>(
-      API_ROUTES.tableSelection.tables,
-      buildApiEnvelope("table_selection.list_tables", { database, schema }, { database, schema }),
+    return cachedMetadata(
+      `tables:${database.toUpperCase()}.${schema.toUpperCase()}`,
+      () => postEnvelopeData<TableItem[]>(
+        API_ROUTES.tableSelection.tables,
+        buildApiEnvelope("table_selection.list_tables", { database, schema }, { database, schema }),
+        { timeout: 120000, skipGlobalError: true },
+      ),
     );
   },
 
@@ -232,10 +390,27 @@ export const dbService = {
       return mockDelay(getMockAttributes(tables));
     }
 
-    return postEnvelopeData<TableAttributes[]>(
+    const key = tableSetKey(tables);
+    const cached = attributeCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
+    const pending = attributeRequests.get(key);
+    if (pending) return pending;
+    const request = postEnvelopeData<TableAttributes[]>(
       API_ROUTES.tableSelection.attributes,
       buildApiEnvelope("table_selection.list_attributes", { tables }, { tables }),
-    );
+      { timeout: 120000, skipGlobalError: true },
+    )
+      .then((data) => {
+        attributeCache.set(key, {
+          data,
+          expiresAt: Date.now() + TABLE_METADATA_CACHE_TTL_MS,
+          schemaHash: metadataSchemaHash(data),
+        });
+        return data;
+      })
+      .finally(() => attributeRequests.delete(key));
+    attributeRequests.set(key, request);
+    return request;
   },
 
   getTableRelationships: async (
@@ -246,10 +421,27 @@ export const dbService = {
       return mockDelay(getMockRelationships(tables));
     }
 
-    return postEnvelopeData<RelationshipItem[]>(
+    const key = relationshipTableSetKey(tables);
+    const cached = relationshipCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.data;
+    const pending = relationshipRequests.get(key);
+    if (pending) return pending;
+    const request = postEnvelopeData<RelationshipItem[]>(
       API_ROUTES.tableSelection.relationships,
       buildApiEnvelope("table_selection.list_relationships", { tables }, { tables }),
-    );
+      { timeout: 120000, skipGlobalError: true },
+    )
+      .then((data) => {
+        relationshipCache.set(key, {
+          data,
+          expiresAt: Date.now() + TABLE_METADATA_CACHE_TTL_MS,
+          schemaHash: key,
+        });
+        return data;
+      })
+      .finally(() => relationshipRequests.delete(key));
+    relationshipRequests.set(key, request);
+    return request;
   },
 
   listDerivedSources: async (): Promise<DerivedSourceRecord[]> => {
@@ -258,7 +450,9 @@ export const dbService = {
       return mockDelay(listMockDerivedSources() as DerivedSourceRecord[]);
     }
 
-    return getApiData<DerivedSourceRecord[]>(API_ROUTES.derivedSources.list);
+    return cachedMetadata("derived-sources", () =>
+      getApiData<DerivedSourceRecord[]>(API_ROUTES.derivedSources.list),
+    );
   },
 
   validatePreProcessExpression: async (
@@ -281,6 +475,7 @@ export const dbService = {
         relationships: payload.relationships ?? [],
         selected_columns_by_table: payload.selected_columns_by_table ?? {},
       }),
+      { timeout: 120000, skipGlobalError: true },
     );
   },
 
@@ -290,7 +485,7 @@ export const dbService = {
       return mockDelay(saveMockDerivedSource(payload) as DerivedSourceRecord);
     }
 
-    return postEnvelopeData<DerivedSourceRecord>(
+    const result = await postEnvelopeData<DerivedSourceRecord>(
       API_ROUTES.derivedSources.save,
       buildApiEnvelope("derived_source.save", payload, {
         source_tables: payload.source_tables,
@@ -298,7 +493,11 @@ export const dbService = {
         relationships: payload.relationships ?? [],
         selected_columns_by_table: payload.selected_columns_by_table ?? {},
       }),
+      { timeout: 180000, skipGlobalError: true },
     );
+    metadataCache.delete("derived-sources");
+    semanticBundleCache.clear();
+    return result;
   },
 
   refreshSemanticContext: async (
@@ -309,16 +508,64 @@ export const dbService = {
       return mockDelay(buildMockSemanticContextRefresh(payload) as SemanticContextBundleResponse);
     }
 
-    return postEnvelopeData<SemanticContextBundleResponse>(
+    const normalizedPayload = { ...payload, requested_level: "FULL_REGISTRY" as const };
+    const key = stableKey(normalizedPayload);
+    if (!payload.force) {
+      const cached = semanticBundleCache.get(key);
+      if (cached && cached.expiresAt > Date.now()) return cached.data;
+      const pending = semanticBundleRequests.get(key);
+      if (pending) return pending;
+    }
+    const request = postEnvelopeData<SemanticContextBundleResponse>(
       API_ROUTES.semanticContext.refresh,
-      buildApiEnvelope("semantic_context.refresh", payload),
-      { timeout: 120000 },
+      buildApiEnvelope("semantic_context.refresh", normalizedPayload),
+      { timeout: 120000, skipGlobalError: true },
+    )
+      .then((data) => {
+        semanticBundleCache.set(key, {
+          data,
+          expiresAt: Date.now() + TABLE_METADATA_CACHE_TTL_MS,
+          schemaHash: data.registry_version ?? data.bundle_hash,
+        });
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem(
+            "sttm.activeSemanticContext",
+            JSON.stringify({
+              bundle_id: data.bundle_id,
+              bundle_hash: data.bundle_hash,
+              registry_version: data.registry_version ?? null,
+              cache_status: data.cache_status ?? "miss",
+            }),
+          );
+        }
+        return data;
+      })
+      .finally(() => semanticBundleRequests.delete(key));
+    semanticBundleRequests.set(key, request);
+    return request;
+  },
+
+  compileMappingSql: async (
+    payload: MappingSqlCompileRequest,
+  ): Promise<MappingSqlCompileResponse> => {
+    return postEnvelopeData<MappingSqlCompileResponse>(
+      "/v1/workbench/mapping-sql/compile",
+      buildApiEnvelope("mapping_sql.compile", payload, {
+        target_table: payload.target_table ?? null,
+        relation_graph: payload.relation_graph,
+      }),
+      { timeout: 120000, skipGlobalError: true },
     );
   },
 
   reviewMappingSql: async (
     payload: MappingSqlReviewRequest,
   ): Promise<MappingSqlReviewResponse> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(buildMockMappingSqlReview(payload));
+    }
+
     return postEnvelopeData<MappingSqlReviewResponse>(
       "/v1/workbench/mapping-sql/review",
       buildApiEnvelope("mapping_sql.review", payload, {
@@ -333,9 +580,24 @@ export const dbService = {
     );
   },
 
+  parseMappingSql: async (
+    payload: MappingSqlParseRequest,
+  ): Promise<MappingSqlParseResponse> => {
+    return postEnvelopeData<MappingSqlParseResponse>(
+      "/v1/workbench/mapping-sql/parse",
+      buildApiEnvelope("mapping_sql.parse", payload),
+      { timeout: 120000 },
+    );
+  },
+
   previewMappingSql: async (
     payload: MappingSqlPreviewRequest,
   ): Promise<MappingSqlPreviewResponse> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(buildMockMappingSqlPreview(payload));
+    }
+
     return postEnvelopeData<MappingSqlPreviewResponse>(
       "/v1/workbench/mapping-sql/preview",
       buildApiEnvelope("mapping_sql.preview", payload, {
@@ -353,9 +615,16 @@ export const dbService = {
   generateDbtConversion: async (
     payload: DbtConversionRequest,
   ): Promise<DbtConversionResponse> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(buildMockDbtConversion(payload));
+    }
+
     return postEnvelopeData<DbtConversionResponse>(
       "/v1/workbench/dbt-conversion",
       buildApiEnvelope("dbt_conversion.generate", payload, {
+        project_id: payload.project_id ?? null,
+        sttm_id: payload.sttm_id ?? null,
         target_table: payload.target_table,
         source_tables: payload.source_tables,
         driving_table: payload.driving_table ?? null,
@@ -364,6 +633,27 @@ export const dbService = {
         semantic_view_name: payload.semantic_view_name ?? null,
       }),
       { timeout: 300000 },
+    );
+  },
+
+  generateTestCases: async (
+    payload: TestCaseGenerationRequest,
+  ): Promise<TestCaseGenerationResponse> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(buildMockTestCaseGeneration(payload));
+    }
+
+    return postEnvelopeData<TestCaseGenerationResponse>(
+      API_ROUTES.testCases.generate,
+      buildApiEnvelope("test_cases.generate", payload, {
+        project_id: payload.project_id ?? null,
+        sttm_id: payload.sttm_id ?? null,
+        target_table: payload.target_table,
+        source_tables: payload.source_tables,
+        relationships: payload.relationships ?? [],
+      }),
+      { timeout: 420000 },
     );
   },
 
@@ -377,6 +667,15 @@ export const dbService = {
     | { event: "final"; data: Record<string, unknown> }
     | { event: "error"; data: { message?: string; code?: string } }
   > {
+    if (useMockDb) {
+      throwMockError();
+      if (signal?.aborted) {
+        return;
+      }
+      yield* mockStreamDbtConversion(payload);
+      return;
+    }
+
     const url = `${resolveApiBaseUrl()}/v1/workbench/dbt-conversion/stream`;
     telemetry?.onEvent?.({
       type: "fetch_begin",
@@ -388,6 +687,8 @@ export const dbService = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(
         buildApiEnvelope("dbt_conversion.generate", payload, {
+          project_id: payload.project_id ?? null,
+          sttm_id: payload.sttm_id ?? null,
           target_table: payload.target_table,
           source_tables: payload.source_tables,
           driving_table: payload.driving_table ?? null,
@@ -488,6 +789,11 @@ export const dbService = {
   exportSttmWorkbook: async (
     payload: WorkbookExportRequest,
   ): Promise<Blob> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(buildMockWorkbookBlob(payload));
+    }
+
     try {
       const response = await api.post(
         "/v1/workbench/exports/sttm-excel",

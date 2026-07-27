@@ -1,7 +1,9 @@
 "use client";
+import { AiaBox, AiaPaper } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { Box, Paper, Typography } from "@mui/material";
 import type { ReactNode } from "react";
+import { SECONDARY_TEXT_SX } from '@/config/typography-tokens';
 
 type StatCardProps = {
   icon: ReactNode;
@@ -11,12 +13,12 @@ type StatCardProps = {
 
 export default function StatCard({ icon, label, value }: StatCardProps) {
   return (
-    <Paper
+    <AiaPaper
       elevation={0}
       className="rounded-[20px] border border-[#EEF2F7] bg-[#FAFBFC] px-5 py-4"
     >
-      <Box className="flex items-center justify-between gap-3">
-        <Typography
+      <AiaBox className="flex items-center justify-between gap-3">
+        <AiaText
           sx={{
             fontSize: "48px",
             fontWeight: 600,
@@ -25,9 +27,9 @@ export default function StatCard({ icon, label, value }: StatCardProps) {
           }}
         >
           {value}
-        </Typography>
+        </AiaText>
 
-        <Box
+        <AiaBox
           sx={{
             display: "flex",
             alignItems: "center",
@@ -41,19 +43,12 @@ export default function StatCard({ icon, label, value }: StatCardProps) {
           }}
         >
           {icon}
-        </Box>
-      </Box>
+        </AiaBox>
+      </AiaBox>
 
-      <Typography
-        sx={{
-          mt: 3,
-          fontSize: "14px",
-          fontWeight: 500,
-          color: "#4B5563",
-        }}
-      >
+      <AiaText sx={{ ...SECONDARY_TEXT_SX, mt: 3, fontWeight: 500 }}>
         {label}
-      </Typography>
-    </Paper>
+      </AiaText>
+    </AiaPaper>
   );
 }

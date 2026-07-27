@@ -16,7 +16,7 @@ const AiaRadio = ({ checked, checkHandler }: AiaRadioProps) => {
       onClick={(event: MouseEvent<HTMLButtonElement>) => event.stopPropagation()}
       sx={{
         color: '#cbd5e1',
-        '&.Mui-checked': { color: '#ffffff' },
+        '&.Mui-checked': { color: 'var(--aia-primary-bg-text-color)' },
         p: 0.5,
       }}
     />

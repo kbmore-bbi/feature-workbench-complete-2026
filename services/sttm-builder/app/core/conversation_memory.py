@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
+import gzip
+import hashlib
+import os
+import tempfile
 import uuid
+from functools import wraps
+from threading import RLock
 from typing import Any
 
 from snowflake.snowpark import Session
@@ -21,9 +28,31 @@ from app.schema.conversation import (
     MappingIntent,
 )
 
+logger = logging.getLogger(__name__)
+
+_artifact_write_lock = RLock()
+
+
+def _serialize_artifact_writes(function):
+    """Coalesce same-process artifact writes around the durable hash lookup.
+
+    Snowflake's primary-key declarations are informational, so the durable
+    content-hash lookup remains the source of truth. Serializing the short
+    lookup/stage/insert section prevents concurrent requests in one replica
+    from racing between the lookup and insert.
+    """
+
+    @wraps(function)
+    def wrapped(*args, **kwargs):
+        with _artifact_write_lock:
+            return function(*args, **kwargs)
+
+    return wrapped
+
 
 class ConversationMemoryService:
     _ensured_storage_keys: set[str] = set()
+    _search_preview_unavailable_services: set[str] = set()
 
     def __init__(self, session: Session, settings: Settings) -> None:
         self._session = session
@@ -132,6 +161,31 @@ class ConversationMemoryService:
         return self._qualified_name(self._settings.snowflake_fir_model_scores_table)
 
     @property
+    def _fir_templates_table(self) -> str:
+        return self._qualified_name(self._settings.snowflake_fir_templates_table)
+
+    @property
+    def _workspace_snapshots_table(self) -> str:
+        return self._qualified_name(self._settings.snowflake_workspace_snapshots_table)
+
+    @property
+    def _agent_artifacts_table(self) -> str:
+        return self._qualified_name(self._settings.snowflake_agent_artifacts_table)
+
+    @property
+    def _conversation_segments_table(self) -> str:
+        return self._qualified_name(self._settings.snowflake_conversation_segments_table)
+
+    @property
+    def _agent_artifact_stage(self) -> str:
+        name = self._settings.qualify_metadata_object_name(
+            self._settings.snowflake_agent_artifact_stage
+        )
+        return "@" + ".".join(
+            self._quote_identifier(part.strip()) for part in name.split(".")
+        )
+
+    @property
     def _search_service_name(self) -> str:
         return self._settings.qualify_metadata_object_name(self._settings.snowflake_rag_search_service)
 
@@ -166,9 +220,20 @@ class ConversationMemoryService:
                 self._settings.snowflake_mapping_intents_table,
                 self._settings.snowflake_semantic_learnings_table,
                 self._settings.snowflake_fir_model_scores_table,
+                self._settings.snowflake_fir_templates_table,
+                self._settings.snowflake_workspace_snapshots_table,
+                self._settings.snowflake_agent_artifacts_table,
+                self._settings.snowflake_conversation_segments_table,
             )
         )
         if storage_key in self._ensured_storage_keys:
+            return
+        if self._settings.uses_custom_oauth and self._settings.spcs_execute_as_caller_enabled:
+            logger.info(
+                "Skipping conversation-memory DDL bootstrap at request time for "
+                "custom OAuth + restricted caller-rights runtime."
+            )
+            self._ensured_storage_keys.add(storage_key)
             return
         statements = [
             f"""
@@ -202,6 +267,12 @@ class ConversationMemoryService:
                 ENTITY_TYPE STRING,
                 ENTITY_ID STRING,
                 SELECTION_CONTEXT VARIANT,
+                CONTEXT_KEY STRING,
+                QUESTION_ID STRING,
+                INFERENCE_ID STRING,
+                AGENT_RECOMMENDATION_ID STRING,
+                SNAPSHOT_ID STRING,
+                CORRECTION_PAYLOAD VARIANT,
                 USER_ID STRING,
                 CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
             )
@@ -365,6 +436,9 @@ class ConversationMemoryService:
                 ENTITY_TYPE STRING,
                 ENTITY_IDS VARIANT,
                 EVENT_PAYLOAD VARIANT,
+                CONTEXT_KEY STRING,
+                SNAPSHOT_ID STRING,
+                MILESTONE STRING,
                 CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
             )
             """,
@@ -436,28 +510,136 @@ class ConversationMemoryService:
                 CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
             )
             """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._fir_templates_table} (
+                TEMPLATE_ID STRING,
+                TEMPLATE_TYPE STRING,
+                SOURCE_EVENT_TYPE STRING,
+                ENTITY_TYPE STRING,
+                NAME STRING,
+                DESCRIPTION STRING,
+                EXTRACTION_SCHEMA VARIANT,
+                PROMPT_GUIDANCE STRING,
+                RECOMMENDATION_RULES VARIANT,
+                STATUS STRING DEFAULT 'active',
+                VERSION STRING DEFAULT '1.0',
+                CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+                UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._workspace_snapshots_table} (
+                SNAPSHOT_ID STRING,
+                SESSION_ID STRING,
+                THREAD_ID STRING,
+                CONTEXT_VERSION STRING DEFAULT '2.0',
+                CONTEXT_HASH STRING,
+                CONTEXT_KEY STRING,
+                ACTION STRING,
+                MILESTONE STRING,
+                PAGE STRING,
+                SURFACE STRING,
+                PROJECT_ID STRING,
+                STTM_ID STRING,
+                SEMANTIC_BUNDLE_ID STRING,
+                SEMANTIC_BUNDLE_HASH STRING,
+                MAPPING_VERSION STRING,
+                SNAPSHOT_PAYLOAD VARIANT,
+                RAW_MAPPING_SQL TEXT,
+                PARSED_MAPPING_MODEL VARIANT,
+                RUNTIME_SUPPRESSED BOOLEAN DEFAULT FALSE,
+                USER_ID STRING,
+                CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._agent_artifacts_table} (
+                ARTIFACT_ID STRING,
+                REQUEST_ID STRING,
+                SESSION_ID STRING,
+                THREAD_ID STRING,
+                AGENT_NAME STRING,
+                ARTIFACT_TYPE STRING,
+                ARTIFACT_STATUS STRING DEFAULT 'draft',
+                ENTITY_TYPE STRING,
+                ENTITY_IDS VARIANT,
+                CONTEXT_KEY STRING,
+                SNAPSHOT_ID STRING,
+                SEMANTIC_BUNDLE_ID STRING,
+                SEMANTIC_BUNDLE_HASH STRING,
+                RETRIEVED_INFERENCE_IDS VARIANT,
+                RETRIEVED_RECOMMENDATION_IDS VARIANT,
+                USED_INFERENCE_IDS VARIANT,
+                USED_RECOMMENDATION_IDS VARIANT,
+                PAYLOAD VARIANT,
+                SUMMARY STRING,
+                CREATED_BY STRING,
+                LOGICAL_CONVERSATION_ID STRING,
+                THREAD_SEGMENT NUMBER,
+                PROJECT_ID STRING,
+                MAPPING_ID STRING,
+                MIME_TYPE STRING,
+                CONTENT_HASH STRING,
+                STAGE_PATH STRING,
+                ORIGINAL_SIZE_BYTES NUMBER,
+                COMPRESSED_SIZE_BYTES NUMBER,
+                SOURCE_ARTIFACT_IDS VARIANT,
+                ACCESS_FINGERPRINT STRING,
+                SEARCH_KEYWORDS VARIANT,
+                RETENTION_UNTIL TIMESTAMP_NTZ,
+                CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+                UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._conversation_segments_table} (
+                SEGMENT_ID STRING,
+                LOGICAL_CONVERSATION_ID STRING,
+                PHYSICAL_THREAD_ID STRING,
+                SEGMENT_NUMBER NUMBER,
+                PREVIOUS_SEGMENT_ID STRING,
+                NEXT_SEGMENT_ID STRING,
+                ROLLOVER_REASON STRING,
+                ESTIMATED_CONTEXT_TOKENS NUMBER DEFAULT 0,
+                TURN_COUNT NUMBER DEFAULT 0,
+                CHECKPOINT_ARTIFACT_ID STRING,
+                SEMANTIC_BUNDLE_HASH STRING,
+                LEARNING_CONTEXT_HASH STRING,
+                STATUS STRING DEFAULT 'ACTIVE',
+                USER_ID STRING,
+                CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+                UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+                CLOSED_AT TIMESTAMP_NTZ
+            )
+            """,
         ]
         for statement in statements:
             self._session.sql(statement).collect()
+        # CREATE TABLE IF NOT EXISTS does not evolve tables created by an
+        # earlier release. Keep local/non-caller-rights runtimes compatible
+        # with the additive artifact and logical-conversation contracts.
+        artifact_columns = (
+            ("LOGICAL_CONVERSATION_ID", "STRING"),
+            ("THREAD_SEGMENT", "NUMBER"),
+            ("PROJECT_ID", "STRING"),
+            ("MAPPING_ID", "STRING"),
+            ("MIME_TYPE", "STRING"),
+            ("CONTENT_HASH", "STRING"),
+            ("STAGE_PATH", "STRING"),
+            ("ORIGINAL_SIZE_BYTES", "NUMBER"),
+            ("COMPRESSED_SIZE_BYTES", "NUMBER"),
+            ("SOURCE_ARTIFACT_IDS", "VARIANT"),
+            ("ACCESS_FINGERPRINT", "STRING"),
+            ("SEARCH_KEYWORDS", "VARIANT"),
+            ("RETENTION_UNTIL", "TIMESTAMP_NTZ"),
+            ("UPDATED_AT", "TIMESTAMP_NTZ"),
+        )
+        for column_name, column_type in artifact_columns:
+            self._session.sql(
+                f"ALTER TABLE {self._agent_artifacts_table} "
+                f"ADD COLUMN IF NOT EXISTS {column_name} {column_type}"
+            ).collect()
         self._ensured_storage_keys.add(storage_key)
-        for statement in (
-            f"ALTER TABLE {self._feedback_table} ADD COLUMN IF NOT EXISTS SIGNAL_ID STRING",
-            f"ALTER TABLE {self._feedback_table} ADD COLUMN IF NOT EXISTS FEEDBACK_TYPE STRING",
-            f"ALTER TABLE {self._feedback_table} ADD COLUMN IF NOT EXISTS OPTION_SELECTED STRING",
-            f"ALTER TABLE {self._feedback_table} ADD COLUMN IF NOT EXISTS ENTITY_TYPE STRING",
-            f"ALTER TABLE {self._feedback_table} ADD COLUMN IF NOT EXISTS ENTITY_ID STRING",
-            f"ALTER TABLE {self._feedback_table} ADD COLUMN IF NOT EXISTS SELECTION_CONTEXT VARIANT",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS SIGNAL_ID STRING",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS RECOMMENDATION_TYPE STRING",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS ENTITY_TYPE STRING",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS ENTITY_IDS VARIANT",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS CONFIDENCE FLOAT",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS ATTRIBUTES VARIANT",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS REVIEW_RATING NUMBER",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS REVIEW_COMMENT STRING",
-            f"ALTER TABLE {self._recommendations_table} ADD COLUMN IF NOT EXISTS REVIEW_STATUS STRING",
-        ):
-            self._session.sql(statement).collect()
 
     def record_turn(
         self,
@@ -497,6 +679,196 @@ class ConversationMemoryService:
         ).collect()
         return turn_id
 
+    def load_recent_turns(
+        self,
+        logical_conversation_id: str,
+        *,
+        limit: int,
+        user_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Return durable recent turns in chronological order."""
+
+        self.ensure_storage_exists()
+        user_predicate = (
+            f"AND COALESCE(USER_ID, '') = {self._quote_literal(user_id)}"
+            if user_id
+            else ""
+        )
+        rows = self._session.sql(
+            f"""
+            SELECT ROLE, MESSAGE, REQUEST_ID, TRACE_ID, CREATED_AT
+            FROM {self._turns_table}
+            WHERE CONVERSATION_ID = {self._quote_literal(logical_conversation_id)}
+              {user_predicate}
+            ORDER BY CREATED_AT DESC
+            LIMIT {max(1, int(limit))}
+            """
+        ).collect()
+        normalized: list[dict[str, Any]] = []
+        for row in reversed(rows):
+            data = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+            normalized.append(
+                {
+                    "role": str(data.get("ROLE") or data.get("role") or "user").lower(),
+                    "content": str(data.get("MESSAGE") or data.get("message") or ""),
+                    "request_id": data.get("REQUEST_ID") or data.get("request_id"),
+                    "trace_id": data.get("TRACE_ID") or data.get("trace_id"),
+                }
+            )
+        return normalized
+
+    def load_active_conversation_segment(
+        self,
+        logical_conversation_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        self.ensure_storage_exists()
+        user_predicate = (
+            f"AND COALESCE(USER_ID, '') = {self._quote_literal(user_id)}"
+            if user_id
+            else ""
+        )
+        rows = self._session.sql(
+            f"""
+            SELECT *
+            FROM {self._conversation_segments_table}
+            WHERE LOGICAL_CONVERSATION_ID =
+                {self._quote_literal(logical_conversation_id)}
+              AND STATUS = 'ACTIVE'
+              {user_predicate}
+            ORDER BY SEGMENT_NUMBER DESC
+            LIMIT 1
+            """
+        ).collect()
+        if not rows:
+            return None
+        row = rows[0]
+        return row.as_dict() if hasattr(row, "as_dict") else dict(row)
+
+    def load_conversation_segment_by_thread(
+        self,
+        physical_thread_id: str,
+        *,
+        user_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Resolve a legacy physical thread handle to its logical conversation."""
+
+        self.ensure_storage_exists()
+        user_predicate = (
+            f"AND COALESCE(USER_ID, '') = {self._quote_literal(user_id)}"
+            if user_id
+            else ""
+        )
+        rows = self._session.sql(
+            f"""
+            SELECT *
+            FROM {self._conversation_segments_table}
+            WHERE PHYSICAL_THREAD_ID = {self._quote_literal(physical_thread_id)}
+              {user_predicate}
+            ORDER BY SEGMENT_NUMBER DESC
+            LIMIT 1
+            """
+        ).collect()
+        if not rows:
+            return None
+        row = rows[0]
+        return row.as_dict() if hasattr(row, "as_dict") else dict(row)
+
+    def create_conversation_segment(
+        self,
+        *,
+        logical_conversation_id: str,
+        physical_thread_id: str | None,
+        segment_number: int,
+        previous_segment_id: str | None,
+        rollover_reason: str | None,
+        checkpoint_artifact_id: str | None,
+        semantic_bundle_hash: str | None,
+        learning_context_hash: str | None,
+        user_id: str | None,
+    ) -> str:
+        self.ensure_storage_exists()
+        segment_id = f"segment_{uuid.uuid4().hex[:20]}"
+        self._session.sql(
+            f"""
+            INSERT INTO {self._conversation_segments_table} (
+                SEGMENT_ID, LOGICAL_CONVERSATION_ID, PHYSICAL_THREAD_ID,
+                SEGMENT_NUMBER, PREVIOUS_SEGMENT_ID, ROLLOVER_REASON,
+                CHECKPOINT_ARTIFACT_ID, ESTIMATED_CONTEXT_TOKENS, TURN_COUNT,
+                SEMANTIC_BUNDLE_HASH, LEARNING_CONTEXT_HASH, STATUS, USER_ID
+            )
+            SELECT
+                {self._quote_literal(segment_id)},
+                {self._quote_literal(logical_conversation_id)},
+                {self._quote_literal(physical_thread_id or "")},
+                {max(1, int(segment_number))},
+                {self._quote_literal(previous_segment_id or "")},
+                {self._quote_literal(rollover_reason or "")},
+                {self._quote_literal(checkpoint_artifact_id or "")},
+                0,
+                0,
+                {self._quote_literal(semantic_bundle_hash or "")},
+                {self._quote_literal(learning_context_hash or "")},
+                'ACTIVE',
+                {self._quote_literal(user_id or "")}
+            """
+        ).collect()
+        return segment_id
+
+    def close_conversation_segment(
+        self,
+        segment_id: str,
+        *,
+        rollover_reason: str,
+        next_segment_id: str | None = None,
+    ) -> None:
+        self.ensure_storage_exists()
+        self._session.sql(
+            f"""
+            UPDATE {self._conversation_segments_table}
+            SET STATUS = 'CLOSED',
+                ROLLOVER_REASON = {self._quote_literal(rollover_reason)},
+                NEXT_SEGMENT_ID = {self._quote_literal(next_segment_id or "")},
+                CLOSED_AT = CURRENT_TIMESTAMP()
+            WHERE SEGMENT_ID = {self._quote_literal(segment_id)}
+            """
+        ).collect()
+
+    def bind_conversation_thread(
+        self,
+        segment_id: str,
+        physical_thread_id: str,
+    ) -> None:
+        self.ensure_storage_exists()
+        self._session.sql(
+            f"""
+            UPDATE {self._conversation_segments_table}
+            SET PHYSICAL_THREAD_ID = {self._quote_literal(physical_thread_id)},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE SEGMENT_ID = {self._quote_literal(segment_id)}
+            """
+        ).collect()
+
+    def note_conversation_segment_usage(
+        self,
+        segment_id: str,
+        *,
+        added_tokens: int,
+        added_turns: int = 1,
+    ) -> None:
+        self.ensure_storage_exists()
+        self._session.sql(
+            f"""
+            UPDATE {self._conversation_segments_table}
+            SET ESTIMATED_CONTEXT_TOKENS =
+                    COALESCE(ESTIMATED_CONTEXT_TOKENS, 0) + {max(0, int(added_tokens))},
+                TURN_COUNT = COALESCE(TURN_COUNT, 0) + {max(0, int(added_turns))},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE SEGMENT_ID = {self._quote_literal(segment_id)}
+            """
+        ).collect()
+
     def record_feedback(
         self,
         *,
@@ -513,6 +885,8 @@ class ConversationMemoryService:
                 FEEDBACK_ID, REQUEST_ID, TARGET_REQUEST_ID, CONVERSATION_ID, SIGNAL_ID,
                 FEEDBACK_TYPE, CATEGORY, OPTION_SELECTED, RATING, COMMENT, ENTITY_TYPE,
                 ENTITY_ID, SELECTION_CONTEXT, USER_ID
+                , CONTEXT_KEY, QUESTION_ID, INFERENCE_ID, AGENT_RECOMMENDATION_ID,
+                  SNAPSHOT_ID, CORRECTION_PAYLOAD
             )
             SELECT
                 {self._quote_literal(feedback_id)},
@@ -528,10 +902,95 @@ class ConversationMemoryService:
                 {self._quote_literal(feedback.entity_type or "")},
                 {self._quote_literal(feedback.entity_id or "")},
                 PARSE_JSON({self._json_literal(feedback.selection_context or {})}),
-                {self._quote_literal(user_id or "")}
+                {self._quote_literal(user_id or "")},
+                {self._quote_literal(feedback.context_key or "")},
+                {self._quote_literal(feedback.question_id or "")},
+                {self._quote_literal(feedback.inference_id or "")},
+                {self._quote_literal(feedback.agent_recommendation_id or "")},
+                {self._quote_literal(feedback.snapshot_id or "")},
+                PARSE_JSON({self._json_literal(feedback.correction_payload or {})})
             """
         ).collect()
         return feedback_id
+
+    def record_fir_recommendation_outcome(
+        self,
+        *,
+        recommendation_id: str,
+        outcome_type: str,
+        context_key: str | None = None,
+        snapshot_id: str | None = None,
+        request_id: str | None = None,
+        artifact_id: str | None = None,
+        user_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> str:
+        outcome_id = f"outcome_{uuid.uuid4().hex[:20]}"
+        table = self._qualified_name("TBL_FIR_RECOMMENDATION_OUTCOMES")
+        self._session.sql(f"""
+            INSERT INTO {table} (
+                OUTCOME_ID, AGENT_RECOMMENDATION_ID, CONTEXT_KEY, SNAPSHOT_ID,
+                REQUEST_ID, ARTIFACT_ID, USER_ID, OUTCOME_TYPE, OUTCOME_PAYLOAD
+            ) SELECT
+                {self._quote_literal(outcome_id)},
+                {self._quote_literal(recommendation_id)},
+                {self._quote_literal(context_key or "")},
+                {self._quote_literal(snapshot_id or "")},
+                {self._quote_literal(request_id or "")},
+                {self._quote_literal(artifact_id or "")},
+                {self._quote_literal(user_id or "")},
+                {self._quote_literal(outcome_type)},
+                PARSE_JSON({self._json_literal(payload or {})})
+        """).collect()
+        if outcome_type in {"used", "accepted", "corrected", "rejected", "validated", "published"}:
+            recommendation_table = self._qualified_name("TBL_FIR_AGENT_RECOMMENDATIONS")
+            success_increment = 1 if outcome_type in {"accepted", "validated", "published"} else 0
+            self._session.sql(f"""
+                UPDATE {recommendation_table}
+                SET USAGE_COUNT = COALESCE(USAGE_COUNT, 0) + 1,
+                    SUCCESS_COUNT = COALESCE(SUCCESS_COUNT, 0) + {success_increment},
+                    LAST_USED_AT = CURRENT_TIMESTAMP(),
+                    UPDATED_AT = CURRENT_TIMESTAMP(),
+                    STATUS = IFF({self._quote_literal(outcome_type)} IN ('rejected', 'corrected'), 'suppressed', STATUS)
+                WHERE AGENT_RECOMMENDATION_ID = {self._quote_literal(recommendation_id)}
+            """).collect()
+        return outcome_id
+
+    def record_fir_recommendation_outcomes_batch(
+        self,
+        outcomes: list[dict[str, Any]],
+    ) -> list[str]:
+        """Record background recommendation impressions in one Snowflake statement."""
+        if not outcomes:
+            return []
+        table = self._qualified_name("TBL_FIR_RECOMMENDATION_OUTCOMES")
+        outcome_ids: list[str] = []
+        rows: list[str] = []
+        for outcome in outcomes:
+            outcome_id = f"outcome_{uuid.uuid4().hex[:20]}"
+            outcome_ids.append(outcome_id)
+            rows.append(
+                "SELECT "
+                f"{self._quote_literal(outcome_id)}, "
+                f"{self._quote_literal(str(outcome.get('recommendation_id') or ''))}, "
+                f"{self._quote_literal(str(outcome.get('context_key') or ''))}, "
+                f"{self._quote_literal(str(outcome.get('snapshot_id') or ''))}, "
+                f"{self._quote_literal(str(outcome.get('request_id') or ''))}, "
+                f"{self._quote_literal(str(outcome.get('artifact_id') or ''))}, "
+                f"{self._quote_literal(str(outcome.get('user_id') or ''))}, "
+                "'shown', "
+                f"PARSE_JSON({self._json_literal(outcome.get('payload') or {})})"
+            )
+        self._session.sql(
+            f"""
+            INSERT INTO {table} (
+                OUTCOME_ID, AGENT_RECOMMENDATION_ID, CONTEXT_KEY, SNAPSHOT_ID,
+                REQUEST_ID, ARTIFACT_ID, USER_ID, OUTCOME_TYPE, OUTCOME_PAYLOAD
+            )
+            {" UNION ALL ".join(rows)}
+            """
+        ).collect()
+        return outcome_ids
 
     def record_recommendation(
         self,
@@ -695,6 +1154,9 @@ class ConversationMemoryService:
         entity_type: str | None,
         entity_ids: list[str] | None,
         event_payload: dict[str, Any] | None,
+        context_key: str | None = None,
+        snapshot_id: str | None = None,
+        milestone: str | None = None,
     ) -> str:
         self.ensure_storage_exists()
         event_id = f"event_{uuid.uuid4().hex[:20]}"
@@ -702,7 +1164,7 @@ class ConversationMemoryService:
             f"""
             INSERT INTO {self._fir_events_table} (
                 EVENT_ID, EVENT_TYPE, USER_ID, SESSION_ID, REQUEST_ID, PAGE, SURFACE,
-                ENTITY_TYPE, ENTITY_IDS, EVENT_PAYLOAD
+                ENTITY_TYPE, ENTITY_IDS, EVENT_PAYLOAD, CONTEXT_KEY, SNAPSHOT_ID, MILESTONE
             )
             SELECT
                 {self._quote_literal(event_id)},
@@ -714,10 +1176,164 @@ class ConversationMemoryService:
                 {self._quote_literal(surface or "")},
                 {self._quote_literal(entity_type or "")},
                 PARSE_JSON({self._json_literal(entity_ids or [])}),
-                PARSE_JSON({self._json_literal(event_payload or {})})
+                PARSE_JSON({self._json_literal(event_payload or {})}),
+                {self._quote_literal(context_key or "")},
+                {self._quote_literal(snapshot_id or "")},
+                {self._quote_literal(milestone or "")}
             """
         ).collect()
         return event_id
+
+    def process_fir_event_with_templates(
+        self,
+        *,
+        event_type: str,
+        event_payload: dict[str, Any],
+        context: dict[str, Any],
+        user_id: str | None = None,
+        request_id: str | None = None,
+        conversation_id: str | None = None,
+        llm_client: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Process a FIR event using template-driven extraction.
+
+        This method:
+        1. Loads active templates matching the event type
+        2. For each template:
+           - Extracts required and derived fields
+           - Optionally runs LLM extraction for semantic fields
+           - Generates an inference record
+           - Applies recommendation rules
+        3. Stores the generated inferences
+        4. Returns the list of processed results
+
+        Args:
+            event_type: The type of event (e.g., 'mapping.accept', 'conversation.feedback')
+            event_payload: The event data
+            context: Context data (project_id, sttm_id, etc.)
+            user_id: Optional user identifier
+            request_id: Optional request identifier
+            conversation_id: Optional conversation identifier
+            llm_client: Optional LLM client for semantic extraction
+
+        Returns:
+            List of processing results with inference_id and any errors
+        """
+        from app.core.fir_template_engine import FIRTemplateEngine
+
+        engine = FIRTemplateEngine(self._session, llm_client)
+        templates = engine.load_templates(event_type)
+
+        if not templates:
+            logger.debug("No active templates found for event type: %s", event_type)
+            return []
+
+        results = []
+        for template in templates:
+            try:
+                extraction = engine.extract_inference(event_payload, context, template)
+                inference = engine.generate_inference_record(extraction, template)
+
+                inference_id = self.record_inference(
+                    inference_key=inference.inference_key,
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    source=f"template:{template.template_id}",
+                    inference_type=inference.inference_type,
+                    summary=inference.summary,
+                    confidence=inference.confidence,
+                    entity_type=inference.entity_type,
+                    entity_ids=list(inference.entity_ids.values()) if inference.entity_ids else None,
+                    attributes={
+                        **inference.attributes,
+                        "template_id": template.template_id,
+                        "template_version": template.version,
+                        "tags": inference.tags,
+                    },
+                    status="active",
+                    user_id=user_id,
+                )
+
+                actions = engine.apply_recommendation_rules(extraction, inference, template)
+                for action in actions:
+                    self._execute_recommendation_action(action, context, user_id)
+
+                engine.build_rag_document(extraction, inference, template)
+
+                results.append({
+                    "template_id": template.template_id,
+                    "inference_id": inference_id,
+                    "inference_type": inference.inference_type,
+                    "confidence": inference.confidence,
+                    "errors": extraction.errors,
+                    "actions_applied": len(actions),
+                })
+
+            except Exception as e:
+                logger.exception("Failed to process template %s for event %s", template.template_id, event_type)
+                results.append({
+                    "template_id": template.template_id,
+                    "inference_id": None,
+                    "error": str(e),
+                })
+
+        return results
+
+    def _execute_recommendation_action(
+        self,
+        action: dict[str, Any],
+        context: dict[str, Any],
+        user_id: str | None,
+    ) -> None:
+        """Execute a recommendation action generated by a template rule.
+
+        Actions are queued for async processing or executed inline based on type.
+        """
+        action_type = action.get("action_type")
+        params = action.get("params", {})
+
+        if action_type == "create_semantic_learning":
+            self.upsert_semantic_learning(
+                learning_key=f"learning_{uuid.uuid4().hex[:16]}",
+                learning_type=params.get("learning_type", "template_generated"),
+                summary=params.get("detail", "Auto-generated from template"),
+                confidence=params.get("confidence", 0.7),
+                entity_type=params.get("entity_type"),
+                entity_ids=params.get("entity_ids"),
+                attributes=params,
+                status="active",
+                user_id=user_id,
+            )
+        elif action_type == "create_global_semantic_learning":
+            self.upsert_semantic_learning(
+                learning_key=f"global_learning_{uuid.uuid4().hex[:16]}",
+                learning_type=params.get("learning_type", "global_pattern"),
+                summary=params.get("detail", "Global pattern from template"),
+                confidence=params.get("confidence", 0.8),
+                entity_type="global",
+                entity_ids=None,
+                attributes={**params, "scope": "global"},
+                status="active",
+                user_id=user_id,
+            )
+        elif action_type == "boost_similar_patterns":
+            logger.info(
+                "Boosting pattern %s by %s",
+                params.get("pattern_key"),
+                params.get("boost_amount", 0.1),
+            )
+        elif action_type == "penalize_pattern":
+            logger.info(
+                "Penalizing pattern %s by %s",
+                params.get("pattern_key"),
+                params.get("penalty_amount", 0.1),
+            )
+        elif action_type == "reinforce_pattern":
+            logger.info("Reinforcing pattern with boost %s", params.get("boost_confidence", 0.05))
+        elif action_type == "update_routing_hints":
+            logger.info("Updating routing hints: %s", params)
+        else:
+            logger.debug("Unhandled recommendation action type: %s", action_type)
 
     def upsert_feature_snapshot(
         self,
@@ -783,6 +1399,370 @@ class ConversationMemoryService:
         return {
             "features": self._coerce_json_object(row.get("FEATURES")),
             "model_targets": self._coerce_json_object(row.get("MODEL_TARGETS")),
+        }
+
+    def upsert_fir_template(
+        self,
+        *,
+        template_type: str,
+        source_event_type: str,
+        entity_type: str | None,
+        name: str,
+        extraction_schema: dict[str, Any],
+        prompt_guidance: str | None = None,
+        recommendation_rules: dict[str, Any] | None = None,
+        description: str | None = None,
+        version: str = "1.0",
+        status: str = "active",
+    ) -> str:
+        self.ensure_storage_exists()
+        template_key = "|".join([template_type, source_event_type, entity_type or "", name, version])
+        template_id = f"template_{uuid.uuid5(uuid.NAMESPACE_DNS, template_key).hex[:20]}"
+        self._session.sql(
+            f"""
+            MERGE INTO {self._fir_templates_table} AS target
+            USING (
+                SELECT
+                    {self._quote_literal(template_id)} AS TEMPLATE_ID,
+                    {self._quote_literal(template_type)} AS TEMPLATE_TYPE,
+                    {self._quote_literal(source_event_type)} AS SOURCE_EVENT_TYPE,
+                    {self._quote_literal(entity_type or "")} AS ENTITY_TYPE,
+                    {self._quote_literal(name)} AS NAME,
+                    {self._quote_literal(description or "")} AS DESCRIPTION,
+                    PARSE_JSON({self._json_literal(extraction_schema)}) AS EXTRACTION_SCHEMA,
+                    {self._quote_literal(prompt_guidance or "")} AS PROMPT_GUIDANCE,
+                    PARSE_JSON({self._json_literal(recommendation_rules or {})}) AS RECOMMENDATION_RULES,
+                    {self._quote_literal(status)} AS STATUS,
+                    {self._quote_literal(version)} AS VERSION
+            ) AS source
+            ON target.TEMPLATE_ID = source.TEMPLATE_ID
+            WHEN MATCHED THEN UPDATE SET
+                TEMPLATE_TYPE = source.TEMPLATE_TYPE,
+                SOURCE_EVENT_TYPE = source.SOURCE_EVENT_TYPE,
+                ENTITY_TYPE = source.ENTITY_TYPE,
+                NAME = source.NAME,
+                DESCRIPTION = source.DESCRIPTION,
+                EXTRACTION_SCHEMA = source.EXTRACTION_SCHEMA,
+                PROMPT_GUIDANCE = source.PROMPT_GUIDANCE,
+                RECOMMENDATION_RULES = source.RECOMMENDATION_RULES,
+                STATUS = source.STATUS,
+                VERSION = source.VERSION,
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHEN NOT MATCHED THEN INSERT (
+                TEMPLATE_ID, TEMPLATE_TYPE, SOURCE_EVENT_TYPE, ENTITY_TYPE, NAME, DESCRIPTION,
+                EXTRACTION_SCHEMA, PROMPT_GUIDANCE, RECOMMENDATION_RULES, STATUS, VERSION
+            ) VALUES (
+                source.TEMPLATE_ID, source.TEMPLATE_TYPE, source.SOURCE_EVENT_TYPE, source.ENTITY_TYPE, source.NAME, source.DESCRIPTION,
+                source.EXTRACTION_SCHEMA, source.PROMPT_GUIDANCE, source.RECOMMENDATION_RULES, source.STATUS, source.VERSION
+            )
+            """
+        ).collect()
+        return template_id
+
+    def save_workspace_snapshot(
+        self,
+        *,
+        session_id: str | None,
+        thread_id: str | None,
+        context_hash: str,
+        snapshot_payload: dict[str, Any],
+        context_version: str = "2.0",
+        context_key: str | None = None,
+        action: str | None = None,
+        milestone: str | None = None,
+        page: str | None = None,
+        surface: str | None = None,
+        project_id: str | None = None,
+        sttm_id: str | None = None,
+        semantic_bundle_id: str | None = None,
+        semantic_bundle_hash: str | None = None,
+        mapping_version: str | None = None,
+        user_id: str | None = None,
+    ) -> str:
+        self.ensure_storage_exists()
+        snapshot_id = f"snapshot_{uuid.uuid4().hex[:20]}"
+        self._session.sql(
+            f"""
+            INSERT INTO {self._workspace_snapshots_table} (
+                SNAPSHOT_ID, SESSION_ID, THREAD_ID, CONTEXT_VERSION, CONTEXT_HASH,
+                CONTEXT_KEY, ACTION, MILESTONE, PAGE, SURFACE,
+                PROJECT_ID, STTM_ID, SEMANTIC_BUNDLE_ID, SEMANTIC_BUNDLE_HASH, MAPPING_VERSION,
+                SNAPSHOT_PAYLOAD, RAW_MAPPING_SQL, PARSED_MAPPING_MODEL,
+                RUNTIME_SUPPRESSED, USER_ID
+            )
+            SELECT
+                {self._quote_literal(snapshot_id)},
+                {self._quote_literal(session_id or "")},
+                {self._quote_literal(thread_id or "")},
+                {self._quote_literal(context_version or "2.0")},
+                {self._quote_literal(context_hash)},
+                {self._quote_literal(context_key or "")},
+                {self._quote_literal(action or "")},
+                {self._quote_literal(milestone or "")},
+                {self._quote_literal(page or "")},
+                {self._quote_literal(surface or "")},
+                {self._quote_literal(project_id or "")},
+                {self._quote_literal(sttm_id or "")},
+                {self._quote_literal(semantic_bundle_id or "")},
+                {self._quote_literal(semantic_bundle_hash or "")},
+                {self._quote_literal(mapping_version or "")},
+                PARSE_JSON({self._json_literal(snapshot_payload)}),
+                {self._quote_literal(str(snapshot_payload.get('raw_mapping_sql') or snapshot_payload.get('mapping_sql') or ''))},
+                PARSE_JSON({self._json_literal(snapshot_payload.get('parsed_mapping_model') or {})}),
+                FALSE,
+                {self._quote_literal(user_id or "")}
+            """
+        ).collect()
+        return snapshot_id
+
+    @_serialize_artifact_writes
+    def record_agent_artifact(
+        self,
+        *,
+        request_id: str | None,
+        session_id: str | None,
+        thread_id: str | None,
+        agent_name: str,
+        artifact_type: str,
+        payload: dict[str, Any],
+        artifact_status: str = "draft",
+        entity_type: str | None = None,
+        entity_ids: list[str] | None = None,
+        semantic_bundle_id: str | None = None,
+        semantic_bundle_hash: str | None = None,
+        summary: str | None = None,
+        created_by: str | None = None,
+        context_key: str | None = None,
+        snapshot_id: str | None = None,
+        retrieved_inference_ids: list[str] | None = None,
+        retrieved_recommendation_ids: list[str] | None = None,
+        used_inference_ids: list[str] | None = None,
+        used_recommendation_ids: list[str] | None = None,
+        logical_conversation_id: str | None = None,
+        thread_segment: int | None = None,
+        project_id: str | None = None,
+        mapping_id: str | None = None,
+        mime_type: str = "application/json",
+        source_artifact_ids: list[str] | None = None,
+        access_fingerprint: str | None = None,
+        keywords: list[str] | None = None,
+    ) -> str:
+        self.ensure_storage_exists()
+        normalized_payload = self._normalize_json_value(payload)
+        serialized = json.dumps(
+            normalized_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+            allow_nan=False,
+        ).encode("utf-8")
+        content_hash = hashlib.sha256(serialized).hexdigest()
+        owner_scope = access_fingerprint or created_by or ""
+        existing = self._session.sql(
+            f"""
+            SELECT ARTIFACT_ID
+            FROM {self._agent_artifacts_table}
+            WHERE CONTENT_HASH = {self._quote_literal(content_hash)}
+              AND COALESCE(ACCESS_FINGERPRINT, '') =
+                  {self._quote_literal(owner_scope)}
+            ORDER BY CREATED_AT DESC
+            LIMIT 1
+            """
+        ).collect()
+        if existing:
+            row = existing[0]
+            data = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+            return str(data.get("ARTIFACT_ID") or data.get("artifact_id"))
+
+        artifact_id = f"artifact_{uuid.uuid4().hex[:20]}"
+        stage_path = ""
+        compressed_size = len(serialized)
+        stored_payload: dict[str, Any] = normalized_payload
+        inline_limit = max(0, int(self._settings.agent_inline_artifact_limit_bytes))
+        if len(serialized) > inline_limit:
+            relative_path = (
+                f"sha256/{content_hash[:2]}/{content_hash}.json.gz"
+            )
+            local_path = ""
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="wb",
+                    suffix=".json.gz",
+                    delete=False,
+                ) as handle:
+                    local_path = handle.name
+                    with gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
+                        compressed.write(serialized)
+                compressed_size = os.path.getsize(local_path)
+                destination = (
+                    f"{self._agent_artifact_stage}/sha256/{content_hash[:2]}"
+                )
+                self._session.file.put(
+                    f"file://{local_path}",
+                    destination,
+                    auto_compress=False,
+                    overwrite=False,
+                )
+                stage_path = f"{destination}/{content_hash}.json.gz"
+                stored_payload = {
+                    "artifact_ref": artifact_id,
+                    "content_hash": content_hash,
+                    "stage_path": stage_path,
+                    "mime_type": mime_type,
+                    "original_size": len(serialized),
+                    "compressed_size": compressed_size,
+                }
+            finally:
+                if local_path:
+                    try:
+                        os.unlink(local_path)
+                    except OSError:
+                        logger.debug("Failed to remove temporary artifact file %s", local_path)
+
+        self._session.sql(
+            f"""
+            INSERT INTO {self._agent_artifacts_table} (
+                ARTIFACT_ID, REQUEST_ID, SESSION_ID, THREAD_ID, AGENT_NAME, ARTIFACT_TYPE,
+                ARTIFACT_STATUS, ENTITY_TYPE, ENTITY_IDS, CONTEXT_KEY, SNAPSHOT_ID,
+                SEMANTIC_BUNDLE_ID, SEMANTIC_BUNDLE_HASH, RETRIEVED_INFERENCE_IDS,
+                RETRIEVED_RECOMMENDATION_IDS, USED_INFERENCE_IDS, USED_RECOMMENDATION_IDS,
+                PAYLOAD, SUMMARY, CREATED_BY, LOGICAL_CONVERSATION_ID, THREAD_SEGMENT,
+                PROJECT_ID, MAPPING_ID, MIME_TYPE, CONTENT_HASH, STAGE_PATH,
+                ORIGINAL_SIZE_BYTES, COMPRESSED_SIZE_BYTES, SOURCE_ARTIFACT_IDS,
+                ACCESS_FINGERPRINT, SEARCH_KEYWORDS, RETENTION_UNTIL
+            )
+            SELECT
+                {self._quote_literal(artifact_id)},
+                {self._quote_literal(request_id or "")},
+                {self._quote_literal(session_id or "")},
+                {self._quote_literal(thread_id or "")},
+                {self._quote_literal(agent_name)},
+                {self._quote_literal(artifact_type)},
+                {self._quote_literal(artifact_status)},
+                {self._quote_literal(entity_type or "")},
+                PARSE_JSON({self._json_literal(entity_ids or [])}),
+                {self._quote_literal(context_key or "")},
+                {self._quote_literal(snapshot_id or "")},
+                {self._quote_literal(semantic_bundle_id or "")},
+                {self._quote_literal(semantic_bundle_hash or "")},
+                PARSE_JSON({self._json_literal(retrieved_inference_ids or [])}),
+                PARSE_JSON({self._json_literal(retrieved_recommendation_ids or [])}),
+                PARSE_JSON({self._json_literal(used_inference_ids or [])}),
+                PARSE_JSON({self._json_literal(used_recommendation_ids or [])}),
+                PARSE_JSON({self._json_literal(stored_payload)}),
+                {self._quote_literal(summary or "")},
+                {self._quote_literal(created_by or "")},
+                {self._quote_literal(logical_conversation_id or "")},
+                {int(thread_segment or 0)},
+                {self._quote_literal(project_id or "")},
+                {self._quote_literal(mapping_id or "")},
+                {self._quote_literal(mime_type)},
+                {self._quote_literal(content_hash)},
+                {self._quote_literal(stage_path)},
+                {len(serialized)},
+                {compressed_size},
+                PARSE_JSON({self._json_literal(source_artifact_ids or [])}),
+                {self._quote_literal(owner_scope)},
+                PARSE_JSON({self._json_literal(keywords or [])}),
+                DATEADD(
+                    day,
+                    {max(1, int(self._settings.agent_artifact_draft_retention_days))},
+                    CURRENT_TIMESTAMP()
+                )
+            """
+        ).collect()
+        return artifact_id
+
+    def get_agent_artifact(
+        self,
+        artifact_id: str,
+        *,
+        access_fingerprint: str,
+        section: str | None = None,
+        start: int | None = None,
+        end: int | None = None,
+    ) -> dict[str, Any]:
+        """Hydrate an authorized artifact, optionally returning one bounded section.
+
+        The access fingerprint is deliberately mandatory.  Stage paths are never
+        treated as authorization: metadata ownership is checked before any file is
+        downloaded.
+        """
+
+        self.ensure_storage_exists()
+        rows = self._session.sql(
+            f"""
+            SELECT ARTIFACT_ID, ARTIFACT_TYPE, MIME_TYPE, CONTENT_HASH, PAYLOAD,
+                   SUMMARY, STAGE_PATH, ORIGINAL_SIZE_BYTES, COMPRESSED_SIZE_BYTES,
+                   PROJECT_ID, MAPPING_ID, LOGICAL_CONVERSATION_ID, THREAD_SEGMENT,
+                   SOURCE_ARTIFACT_IDS, SEARCH_KEYWORDS, CREATED_AT, UPDATED_AT
+            FROM {self._agent_artifacts_table}
+            WHERE ARTIFACT_ID = {self._quote_literal(artifact_id)}
+              AND COALESCE(ACCESS_FINGERPRINT, '') =
+                  {self._quote_literal(access_fingerprint)}
+            LIMIT 1
+            """
+        ).collect()
+        if not rows:
+            raise SnowflakeQueryError(
+                "Artifact was not found or is not authorized for this workspace."
+            )
+        row = rows[0]
+        metadata = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+        payload = metadata.get("PAYLOAD") or metadata.get("payload") or {}
+        stage_path = str(metadata.get("STAGE_PATH") or metadata.get("stage_path") or "")
+        if stage_path:
+            with tempfile.TemporaryDirectory(prefix="sttm-artifact-") as directory:
+                self._session.file.get(stage_path, directory)
+                candidates = [
+                    os.path.join(directory, name)
+                    for name in os.listdir(directory)
+                    if name.endswith(".json.gz")
+                ]
+                if len(candidates) != 1:
+                    raise SnowflakeQueryError(
+                        f"Artifact content for '{artifact_id}' could not be hydrated."
+                    )
+                with gzip.open(candidates[0], "rb") as handle:
+                    payload = json.loads(handle.read().decode("utf-8"))
+
+        selected: Any = payload
+        if section:
+            if not isinstance(selected, dict) or section not in selected:
+                raise SnowflakeQueryError(
+                    f"Artifact '{artifact_id}' does not contain section '{section}'."
+                )
+            selected = selected[section]
+        if start is not None or end is not None:
+            lower = max(0, int(start or 0))
+            upper = None if end is None else max(lower, int(end))
+            if isinstance(selected, (str, list)):
+                selected = selected[lower:upper]
+            else:
+                raise SnowflakeQueryError(
+                    "Artifact range hydration is supported only for text and arrays."
+                )
+        return {
+            "artifact_id": artifact_id,
+            "artifact_type": metadata.get("ARTIFACT_TYPE")
+            or metadata.get("artifact_type"),
+            "mime_type": metadata.get("MIME_TYPE") or metadata.get("mime_type"),
+            "content_hash": metadata.get("CONTENT_HASH")
+            or metadata.get("content_hash"),
+            "summary": metadata.get("SUMMARY") or metadata.get("summary"),
+            "payload": selected,
+            "project_id": metadata.get("PROJECT_ID") or metadata.get("project_id"),
+            "mapping_id": metadata.get("MAPPING_ID") or metadata.get("mapping_id"),
+            "logical_conversation_id": metadata.get("LOGICAL_CONVERSATION_ID")
+            or metadata.get("logical_conversation_id"),
+            "thread_segment": metadata.get("THREAD_SEGMENT")
+            or metadata.get("thread_segment"),
+            "source_artifact_ids": metadata.get("SOURCE_ARTIFACT_IDS")
+            or metadata.get("source_artifact_ids")
+            or [],
+            "keywords": metadata.get("SEARCH_KEYWORDS")
+            or metadata.get("search_keywords")
+            or [],
         }
 
     def upsert_mapping_intent(
@@ -1258,7 +2238,7 @@ class ConversationMemoryService:
         if user_id:
             predicates.append(f"COALESCE(USER_ID, '') = {self._quote_literal(user_id)}")
         if not include_resolved:
-            predicates.append("STATUS NOT IN ('responded', 'dismissed')")
+            predicates.append("STATUS = 'new'")
         where_clause = f"WHERE {' AND '.join(predicates)}" if predicates else ""
         rows = self._session.sql(
             f"""
@@ -1273,37 +2253,43 @@ class ConversationMemoryService:
             """
         ).collect()
         signals: list[AssistantSignal] = []
+        valid_layers = {"feedback", "inference", "recommendation", "notification"}
         for row in rows:
-            data = row.as_dict()
-            attributes = self._coerce_json_object(data.get("ATTRIBUTES"))
-            options = self._coerce_string_list(data.get("OPTIONS"))
-            entity_ids = self._coerce_string_list(data.get("ENTITY_IDS"))
-            signals.append(
-                AssistantSignal(
-                    signal_id=str(data.get("SIGNAL_ID") or ""),
-                    signal_type=AssistantSignalType(str(data.get("SIGNAL_TYPE") or "feedback")),
-                    layer=str(data.get("LAYER") or "feedback"),
-                    status=AssistantSignalStatus(str(data.get("STATUS") or "new")),
-                    source=str(data.get("SOURCE") or "rule_engine"),
-                    title=str(data.get("TITLE") or ""),
-                    message=str(data.get("MESSAGE") or ""),
-                    options=options,
-                    allow_free_text=bool(data.get("ALLOW_FREE_TEXT")),
-                    requires_response=bool(data.get("REQUIRES_RESPONSE")),
-                    confidence=float(data["CONFIDENCE"]) if data.get("CONFIDENCE") is not None else None,
-                    entity_type=str(data.get("ENTITY_TYPE") or "") or None,
-                    entity_ids=entity_ids,
-                    inference_id=str(data.get("INFERENCE_ID") or "") or None,
-                    recommendation_id=(
-                        str(attributes.get("recommendation_id") or "") or None
-                        if isinstance(attributes, dict)
-                        else None
-                    ),
-                    attributes=attributes if isinstance(attributes, dict) else {},
-                    created_at=str(data.get("CREATED_AT") or "") or None,
-                    updated_at=str(data.get("UPDATED_AT") or "") or None,
+            try:
+                data = row.as_dict()
+                attributes = self._coerce_json_object(data.get("ATTRIBUTES"))
+                options = self._coerce_string_list(data.get("OPTIONS"))
+                entity_ids = self._coerce_string_list(data.get("ENTITY_IDS"))
+                raw_layer = str(data.get("LAYER") or "recommendation")
+                layer = raw_layer if raw_layer in valid_layers else "recommendation"
+                signals.append(
+                    AssistantSignal(
+                        signal_id=str(data.get("SIGNAL_ID") or ""),
+                        signal_type=AssistantSignalType(str(data.get("SIGNAL_TYPE") or "feedback")),
+                        layer=layer,
+                        status=AssistantSignalStatus(str(data.get("STATUS") or "new")),
+                        source=str(data.get("SOURCE") or "rule_engine"),
+                        title=str(data.get("TITLE") or ""),
+                        message=str(data.get("MESSAGE") or ""),
+                        options=options,
+                        allow_free_text=bool(data.get("ALLOW_FREE_TEXT")),
+                        requires_response=bool(data.get("REQUIRES_RESPONSE")),
+                        confidence=float(data["CONFIDENCE"]) if data.get("CONFIDENCE") is not None else None,
+                        entity_type=str(data.get("ENTITY_TYPE") or "") or None,
+                        entity_ids=entity_ids,
+                        inference_id=str(data.get("INFERENCE_ID") or "") or None,
+                        recommendation_id=(
+                            str(attributes.get("recommendation_id") or "") or None
+                            if isinstance(attributes, dict)
+                            else None
+                        ),
+                        attributes=attributes if isinstance(attributes, dict) else {},
+                        created_at=str(data.get("CREATED_AT") or "") or None,
+                        updated_at=str(data.get("UPDATED_AT") or "") or None,
+                    )
                 )
-            )
+            except Exception:
+                continue
         return signals
 
     @staticmethod
@@ -1608,6 +2594,202 @@ class ConversationMemoryService:
             )
         return hits
 
+    def index_mapping_rows(
+        self,
+        sttm_id: str,
+        rows: list[dict[str, Any]],
+        project_id: str | None = None,
+        sttm_name: str | None = None,
+    ) -> int:
+        """Index accepted mapping rows for RAG retrieval.
+
+        This enables Cortex Search to find similar mappings based on
+        target column names, source columns, and transformation logic.
+
+        Args:
+            sttm_id: The STTM identifier
+            rows: List of mapping row dictionaries
+            project_id: Optional project identifier
+            sttm_name: Optional STTM name for display
+
+        Returns:
+            Number of rows indexed
+        """
+        self.ensure_storage_exists()
+        indexed = 0
+
+        for row in rows:
+            target_column = row.get("target_column", "")
+            source_columns = row.get("source_columns", [])
+            if not target_column:
+                continue
+
+            doc_id = f"mapping:{sttm_id}:{target_column}"
+            source_list = ", ".join(source_columns) if isinstance(source_columns, list) else str(source_columns)
+            preprocessing_rule = row.get("preprocessing_rule", "Direct")
+            preprocessing_nl = row.get("preprocessing_nl_rule", "")
+            confidence = row.get("confidence", 0.0)
+            description = row.get("description", "")
+
+            search_text = f"""Document folder: mappings
+Document type: mapping_row
+STTM ID: {sttm_id}
+STTM Name: {sttm_name or sttm_id}
+Project ID: {project_id or ''}
+Target column: {target_column}
+Source columns: {source_list}
+Preprocessing rule type: {row.get("preprocessing_rule_type", "Direct")}
+Preprocessing rule: {preprocessing_rule}
+Natural language rule: {preprocessing_nl}
+Confidence: {confidence}
+Description: {description}
+"""
+
+            self._session.sql(
+                f"""
+                MERGE INTO {self._rag_documents_table} AS target
+                USING (
+                    SELECT
+                        {self._quote_literal(doc_id)} AS DOC_ID,
+                        'mappings' AS DOC_FOLDER,
+                        'mapping_row' AS DOC_TYPE,
+                        {self._quote_literal(f"{sttm_id}:{target_column}")} AS ENTITY_ID,
+                        {self._quote_literal(f"Mapping: {source_list} -> {target_column}")} AS TITLE,
+                        {self._quote_literal(search_text)} AS SEARCH_TEXT,
+                        NULL AS SEMANTIC_BUNDLE_ID,
+                        NULL AS SEMANTIC_VIEW_NAME,
+                        NULL AS REQUEST_ID,
+                        NULL AS CONVERSATION_ID,
+                        NULL AS SOURCE_HASH,
+                        PARSE_JSON({self._json_literal({
+                            "sttm_id": sttm_id,
+                            "project_id": project_id,
+                            "target_column": target_column,
+                            "source_columns": source_columns,
+                            "preprocessing_rule_type": row.get("preprocessing_rule_type", "Direct"),
+                            "confidence": confidence,
+                        })}) AS ATTRIBUTES,
+                        CURRENT_TIMESTAMP() AS UPDATED_AT
+                ) AS source
+                ON target.DOC_ID = source.DOC_ID
+                WHEN MATCHED THEN UPDATE SET
+                    TITLE = source.TITLE,
+                    SEARCH_TEXT = source.SEARCH_TEXT,
+                    ATTRIBUTES = source.ATTRIBUTES,
+                    UPDATED_AT = source.UPDATED_AT
+                WHEN NOT MATCHED THEN INSERT (
+                    DOC_ID, DOC_FOLDER, DOC_TYPE, ENTITY_ID, TITLE, SEARCH_TEXT,
+                    SEMANTIC_BUNDLE_ID, SEMANTIC_VIEW_NAME, REQUEST_ID, CONVERSATION_ID,
+                    SOURCE_HASH, ATTRIBUTES, UPDATED_AT
+                ) VALUES (
+                    source.DOC_ID, source.DOC_FOLDER, source.DOC_TYPE, source.ENTITY_ID,
+                    source.TITLE, source.SEARCH_TEXT, source.SEMANTIC_BUNDLE_ID,
+                    source.SEMANTIC_VIEW_NAME, source.REQUEST_ID, source.CONVERSATION_ID,
+                    source.SOURCE_HASH, source.ATTRIBUTES, source.UPDATED_AT
+                )
+                """
+            ).collect()
+            indexed += 1
+
+        return indexed
+
+    def index_published_sttm(
+        self,
+        sttm_id: str,
+        version: int,
+        project_id: str | None = None,
+        sttm_name: str | None = None,
+        target_table: str | None = None,
+        source_tables: list[str] | None = None,
+        mapping_count: int = 0,
+        generated_sql: str | None = None,
+        business_purpose: str | None = None,
+    ) -> bool:
+        """Index published STTM content for RAG retrieval.
+
+        Args:
+            sttm_id: The STTM identifier
+            version: Published version number
+            project_id: Project identifier
+            sttm_name: STTM display name
+            target_table: Target table qualified name
+            source_tables: List of source table qualified names
+            mapping_count: Number of mappings
+            generated_sql: Generated SQL for the STTM
+            business_purpose: Business purpose description
+
+        Returns:
+            True if indexed successfully
+        """
+        self.ensure_storage_exists()
+
+        doc_id = f"published:{sttm_id}:v{version}"
+        source_list = ", ".join(source_tables or [])
+
+        search_text = f"""Document folder: published
+Document type: published_sttm
+STTM ID: {sttm_id}
+STTM Name: {sttm_name or sttm_id}
+Version: {version}
+Project ID: {project_id or ''}
+Target table: {target_table or ''}
+Source tables: {source_list}
+Mapping count: {mapping_count}
+Business purpose: {business_purpose or ''}
+Generated SQL: {(generated_sql or '')[:2000]}
+"""
+
+        try:
+            self._session.sql(
+                f"""
+                MERGE INTO {self._rag_documents_table} AS target
+                USING (
+                    SELECT
+                        {self._quote_literal(doc_id)} AS DOC_ID,
+                        'published' AS DOC_FOLDER,
+                        'published_sttm' AS DOC_TYPE,
+                        {self._quote_literal(sttm_id)} AS ENTITY_ID,
+                        {self._quote_literal(f"[Published] {sttm_name or sttm_id} v{version}")} AS TITLE,
+                        {self._quote_literal(search_text)} AS SEARCH_TEXT,
+                        NULL AS SEMANTIC_BUNDLE_ID,
+                        NULL AS SEMANTIC_VIEW_NAME,
+                        NULL AS REQUEST_ID,
+                        NULL AS CONVERSATION_ID,
+                        NULL AS SOURCE_HASH,
+                        PARSE_JSON({self._json_literal({
+                            "sttm_id": sttm_id,
+                            "version": version,
+                            "project_id": project_id,
+                            "target_table": target_table,
+                            "source_tables": source_tables,
+                            "mapping_count": mapping_count,
+                            "business_purpose": business_purpose,
+                        })}) AS ATTRIBUTES,
+                        CURRENT_TIMESTAMP() AS UPDATED_AT
+                ) AS source
+                ON target.DOC_ID = source.DOC_ID
+                WHEN MATCHED THEN UPDATE SET
+                    TITLE = source.TITLE,
+                    SEARCH_TEXT = source.SEARCH_TEXT,
+                    ATTRIBUTES = source.ATTRIBUTES,
+                    UPDATED_AT = source.UPDATED_AT
+                WHEN NOT MATCHED THEN INSERT (
+                    DOC_ID, DOC_FOLDER, DOC_TYPE, ENTITY_ID, TITLE, SEARCH_TEXT,
+                    SEMANTIC_BUNDLE_ID, SEMANTIC_VIEW_NAME, REQUEST_ID, CONVERSATION_ID,
+                    SOURCE_HASH, ATTRIBUTES, UPDATED_AT
+                ) VALUES (
+                    source.DOC_ID, source.DOC_FOLDER, source.DOC_TYPE, source.ENTITY_ID,
+                    source.TITLE, source.SEARCH_TEXT, source.SEMANTIC_BUNDLE_ID,
+                    source.SEMANTIC_VIEW_NAME, source.REQUEST_ID, source.CONVERSATION_ID,
+                    source.SOURCE_HASH, source.ATTRIBUTES, source.UPDATED_AT
+                )
+                """
+            ).collect()
+            return True
+        except Exception as exc:
+            logger.warning("Failed to index published STTM %s: %s", sttm_id, exc)
+            return False
+
     def sync_rag_documents(
         self,
         *,
@@ -1618,6 +2800,8 @@ class ConversationMemoryService:
         include_semantic_docs: bool = True,
         include_relationship_docs: bool = True,
         include_client_knowledge_docs: bool = True,
+        include_mapping_docs: bool = True,
+        include_published_docs: bool = True,
     ) -> int:
         self.ensure_storage_exists()
         folders: list[str] = []
@@ -1635,6 +2819,10 @@ class ConversationMemoryService:
             folders.append("recommendations")
         if include_client_knowledge_docs:
             folders.extend(["knowledge_notes", "historical_sql"])
+        if include_mapping_docs:
+            folders.append("mappings")
+        if include_published_docs:
+            folders.append("published")
         if folders:
             folder_sql = ", ".join(self._quote_literal(item) for item in folders)
             self._session.sql(
@@ -2068,6 +3256,10 @@ class ConversationMemoryService:
         semantic_bundle_id: str | None = None,
         semantic_view_name: str | None = None,
     ) -> list[ConversationSearchHit]:
+        search_service_name = self._search_service_name
+        if search_service_name in self._search_preview_unavailable_services:
+            return []
+
         payload = {
             "query": query,
             "columns": [
@@ -2085,12 +3277,20 @@ class ConversationMemoryService:
             rows = self._session.sql(
                 f"""
                 SELECT SNOWFLAKE.CORTEX.SEARCH_PREVIEW(
-                    {self._quote_literal(self._search_service_name)},
+                    {self._quote_literal(search_service_name)},
                     {self._json_literal(payload)}
                 ) AS RESULT
                 """
             ).collect()
         except Exception as exc:
+            message = str(exc)
+            if "Unknown user-defined function SNOWFLAKE.CORTEX.SEARCH_PREVIEW" in message:
+                self._search_preview_unavailable_services.add(search_service_name)
+                logger.warning(
+                    "Cortex Search preview is unavailable for %s; disabling FIR search preview for this service.",
+                    search_service_name,
+                )
+                return []
             raise SnowflakeQueryError(f"Failed to query Cortex Search service: {exc}") from exc
         if not rows:
             return []
@@ -2189,3 +3389,633 @@ class ConversationMemoryService:
     def _count_table(self, table_name: str) -> int:
         rows = self._session.sql(f"SELECT COUNT(*) AS ROW_COUNT FROM {table_name}").collect()
         return int(rows[0].as_dict().get("ROW_COUNT") or 0) if rows else 0
+
+    def find_fir_recommendations_for_context(
+        self,
+        *,
+        selected_tables: list[str],
+        target_table: str | None = None,
+        project_id: str | None = None,
+        sttm_id: str | None = None,
+        user_id: str | None = None,
+        recommendation_types: list[str] | None = None,
+        context_key: str | None = None,
+        source_set_hash: str | None = None,
+        derived_set_hash: str | None = None,
+        milestone: str | None = None,
+        scope_key: str | None = None,
+        scope_type: str | None = None,
+        schema_fqn: str | None = None,
+        candidate_tables: list[str] | None = None,
+        target_agent: str = "APP_USER_NOTIFICATION",
+        allow_search_fallback: bool = False,
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Query FIR agent recommendations matching the user's current workspace context.
+
+        Exact context identity is attempted first, followed by structured source,
+        target, derived-set, and milestone identity. No broad table-overlap match is used.
+        """
+        fir_table = self._settings.qualify_metadata_object_name("TBL_FIR_AGENT_RECOMMENDATIONS")
+        fir_360_table = self._settings.qualify_metadata_object_name("TBL_AGENT_FIR_360")
+        checkpoint_table = self._settings.qualify_metadata_object_name(
+            "TBL_FIR_CHECKPOINT_DEFINITIONS"
+        )
+        if (
+            not selected_tables
+            and not target_table
+            and not context_key
+            and not scope_key
+            and not schema_fqn
+            and not project_id
+        ):
+            return []
+
+        type_filter = ""
+        if recommendation_types:
+            type_literals = ", ".join(self._quote_literal(t) for t in recommendation_types)
+            type_filter = f"AND RECOMMENDATION_TYPE IN ({type_literals})"
+
+        identity_filter_parts: list[str] = []
+        if user_id:
+            identity_filter_parts.append(
+                "AND (COALESCE(r.USER_ID, '') = '' OR "
+                f"r.USER_ID = {self._quote_literal(user_id)})"
+            )
+        if project_id:
+            identity_filter_parts.append(
+                "AND (COALESCE(r.PROJECT_ID, '') = '' OR "
+                f"r.PROJECT_ID = {self._quote_literal(project_id)})"
+            )
+        if sttm_id:
+            identity_filter_parts.append(
+                "AND (COALESCE(r.STTM_ID, '') = '' OR "
+                f"r.STTM_ID = {self._quote_literal(sttm_id)})"
+            )
+        identity_filter = "\n".join(identity_filter_parts)
+
+        milestone_aliases = {
+            "project_created": ("project_created", "on_project_create"),
+            "project_opened": ("project_opened",),
+            "mapping_created": ("mapping_created", "on_mapping_create"),
+            "schema_browsed": ("schema_browsed",),
+            "selection_changed": ("selection_changed", "on_source_selection"),
+            "source_set_completed": ("source_set_completed",),
+            "target_selected": ("target_selected", "on_target_selection"),
+            "join_completed": ("join_completed", "on_join_creation"),
+            "derived_source_planning": (
+                "derived_source_planning",
+                "on_derived_source_create",
+            ),
+            "derived_source_selected": (
+                "derived_source_selected",
+                "on_derived_source_select",
+            ),
+            "derived_source_saved": ("derived_source_saved", "on_derived_source_save"),
+            "source_query_review": ("source_query_review",),
+            "mapping_ready": ("mapping_ready",),
+            "before_auto_map": ("before_auto_map", "on_mapping_start"),
+            "on_auto_map_review": ("on_auto_map_review",),
+            "on_transformation_review": (
+                "on_transformation_review",
+                "on_transform_request",
+            ),
+            "before_validation": ("before_validation",),
+            "after_validation": ("after_validation",),
+            "before_publish": ("before_publish",),
+            "sttm_published": ("sttm_published", "on_sttm_publish", "on_publish"),
+            "document_uploaded": ("document_uploaded", "on_document_upload"),
+            "analyst_answer_review": ("analyst_answer_review",),
+        }.get(str(milestone or "").strip().lower(), (str(milestone or "").strip(),))
+        milestone_aliases = tuple(value for value in milestone_aliases if value)
+        preferred_questions = {
+            "project_created": ("Q1", "Q4", "Q10"),
+            "project_opened": ("Q4", "Q10"),
+            "mapping_created": ("Q1", "Q4"),
+            "schema_browsed": ("Q1", "Q6"),
+            "selection_changed": ("Q1",),
+            "source_set_completed": ("Q6",),
+            "target_selected": ("Q1",),
+            "join_completed": ("Q6",),
+            "derived_source_planning": ("Q7",),
+            "derived_source_selected": ("Q7",),
+            "derived_source_saved": ("Q7",),
+            "source_query_review": ("Q6", "Q7"),
+            "mapping_ready": ("Q1", "Q2", "Q6", "Q7"),
+            "before_auto_map": ("Q1", "Q6"),
+            "on_auto_map_review": ("Q2",),
+            "on_transformation_review": ("Q7",),
+            "before_validation": ("Q2", "Q6", "Q7"),
+            "after_validation": ("Q2", "Q6", "Q7"),
+            "before_publish": ("Q3", "Q5", "Q6", "Q7", "Q4", "Q10"),
+            "sttm_published": ("Q8", "Q9"),
+            "document_uploaded": ("Q1", "Q2", "Q6", "Q7"),
+            "analyst_answer_review": ("Q9", "Q10"),
+        }.get(str(milestone or "").strip().lower(), ())
+        question_priority = "CASE WHEN QUESTION_ID IS NOT NULL THEN 10 ELSE 20 END"
+        if preferred_questions:
+            preferred_cases = " ".join(
+                f"WHEN QUESTION_ID = {self._quote_literal(question_id)} THEN {index}"
+                for index, question_id in enumerate(preferred_questions)
+            )
+            question_priority = (
+                f"CASE {preferred_cases} WHEN QUESTION_ID IS NOT NULL THEN 10 ELSE 20 END"
+            )
+        trigger_scope = ""
+        if milestone_aliases:
+            literals = ", ".join(self._quote_literal(value) for value in milestone_aliases)
+            trigger_scope = f"AND (MILESTONE IN ({literals}) OR TRIGGER_TYPE IN ({literals}))"
+
+        def _query(
+            match_predicate: str,
+            *,
+            scoped: bool = True,
+            match_priority_expression: str = "1",
+        ) -> list[Any]:
+            return self._session.sql(f"""
+                SELECT
+                    AGENT_RECOMMENDATION_ID,
+                    r.FIR_RECORD_ID,
+                    RECOMMENDATION_TYPE,
+                    RECOMMENDATION_PRIORITY,
+                    CONFIDENCE,
+                    DISPLAY_MESSAGE,
+                    DISPLAY_OPTIONS,
+                    ACTION_CONTRACT,
+                    NOTIFICATION_LAYER,
+                    APPLICABLE_PROJECTS,
+                    APPLICABLE_TABLES,
+                    APPLICABLE_COLUMNS,
+                    APPLICABLE_SCHEMAS,
+                    r.USER_ID,
+                    r.PROJECT_ID,
+                    r.STTM_ID,
+                    r.CHECKPOINT,
+                    SCOPE_TYPE,
+                    SCOPE_KEY,
+                    RECOMMENDATION_CATEGORY,
+                    GROUP_KEY,
+                    CONTENT_VERSION,
+                    EVIDENCE_SUMMARY,
+                    AGENT_NOTES,
+                    AGENT_PAYLOAD,
+                    f.FIR_INFERENCE_ID,
+                    CONTEXT_KEY,
+                    MILESTONE,
+                    QUESTION_ID,
+                    EVIDENCE_IDS,
+                    VALIDATION_STATUS,
+                    CREATED_AT,
+                    c.ELIGIBLE_GOALS AS CHECKPOINT_ELIGIBLE_GOALS,
+                    c.RECOMMENDATION_CATEGORIES AS CHECKPOINT_RECOMMENDATION_CATEGORIES,
+                    c.MAX_INLINE_ITEMS AS CHECKPOINT_MAX_INLINE_ITEMS,
+                    c.MAX_INTERRUPTIVE_QUESTIONS AS CHECKPOINT_MAX_INTERRUPTIVE_QUESTIONS,
+                    c.DISPLAY_SURFACES AS CHECKPOINT_DISPLAY_SURFACES,
+                    {match_priority_expression} AS MATCH_PRIORITY
+                FROM {fir_table} r
+                LEFT JOIN (
+                    SELECT FIR_RECORD_ID, MAX(INFERENCE_ID) AS FIR_INFERENCE_ID
+                    FROM {fir_360_table}
+                    GROUP BY FIR_RECORD_ID
+                ) f ON f.FIR_RECORD_ID = r.FIR_RECORD_ID
+                LEFT JOIN (
+                    SELECT CHECKPOINT_ID, ELIGIBLE_GOALS, RECOMMENDATION_CATEGORIES,
+                           MAX_INLINE_ITEMS, MAX_INTERRUPTIVE_QUESTIONS, DISPLAY_SURFACES
+                    FROM {checkpoint_table}
+                    WHERE STATUS = 'active'
+                ) c ON c.CHECKPOINT_ID = {self._quote_literal(str(milestone or "").strip().lower())}
+                WHERE r.STATUS = 'active'
+                  AND TARGET_AGENT = {self._quote_literal(target_agent)}
+                  {type_filter}
+                  {identity_filter}
+                  {match_predicate}
+                  {trigger_scope if scoped else ""}
+                QUALIFY MATCH_PRIORITY = MIN(MATCH_PRIORITY) OVER ()
+                ORDER BY MATCH_PRIORITY, {question_priority}, RECOMMENDATION_PRIORITY DESC,
+                         CONFIDENCE DESC, CREATED_AT DESC
+                LIMIT {max(1, limit)}
+            """).collect()
+
+        try:
+            rows = []
+            retrieval_mode = None
+            identity_matches: list[tuple[str, int, str]] = []
+            if context_key:
+                identity_matches.append(
+                    (
+                        f"CONTEXT_KEY = {self._quote_literal(context_key)}",
+                        1,
+                        "exact_context",
+                    )
+                )
+            if scope_key:
+                identity_matches.append(
+                    (
+                        f"SCOPE_KEY = {self._quote_literal(scope_key)} "
+                        f"AND COALESCE(SCOPE_TYPE, '') = {self._quote_literal(scope_type or '')}",
+                        2,
+                        "exact_scope",
+                    )
+                )
+            if source_set_hash:
+                source_identity = [
+                    f"SOURCE_SET_HASH = {self._quote_literal(source_set_hash)}",
+                ]
+                if target_table and target_table.strip():
+                    source_identity.append(
+                        f"TARGET_FQN = {self._quote_literal(target_table.strip().upper())}"
+                    )
+                if derived_set_hash:
+                    source_identity.append(
+                        f"DERIVED_SET_HASH = {self._quote_literal(derived_set_hash)}"
+                    )
+                identity_matches.append(
+                    (" AND ".join(source_identity), 3, "structured")
+                )
+            if schema_fqn:
+                identity_matches.append(
+                    (
+                        "("
+                        f"SCOPE_KEY = {self._quote_literal(scope_key or '')} "
+                        "OR ARRAY_CONTAINS("
+                        f"{self._quote_literal(schema_fqn.upper())}::VARIANT, "
+                        "APPLICABLE_SCHEMAS"
+                        "))",
+                        4,
+                        "structured",
+                    )
+                )
+            if (
+                project_id
+                and not context_key
+                and not scope_key
+                and not schema_fqn
+                and not source_set_hash
+            ):
+                identity_matches.append(
+                    (
+                        "(COALESCE(ARRAY_SIZE(APPLICABLE_PROJECTS), 0) = 0 "
+                        f"OR ARRAY_CONTAINS({self._quote_literal(project_id)}::VARIANT, APPLICABLE_PROJECTS))",
+                        5,
+                        "project",
+                    )
+                )
+
+            if identity_matches:
+                ranked_matches: list[tuple[str, int, str]] = [
+                    (
+                        f"({predicate} {trigger_scope})" if trigger_scope else predicate,
+                        priority,
+                        mode,
+                    )
+                    for predicate, priority, mode in identity_matches
+                ]
+                if (
+                    str(milestone or "").strip().lower() != "schema_browsed"
+                    and (selected_tables or target_table)
+                ):
+                    relevant_tables = sorted(
+                        {
+                            value.strip().upper()
+                            for value in [*selected_tables, target_table or ""]
+                            if value and value.strip()
+                        }
+                    )
+                    compatibility_parts = [
+                        "(" + " OR ".join(
+                            "ARRAY_CONTAINS("
+                            f"{self._quote_literal(value)}::VARIANT, APPLICABLE_TABLES)"
+                            for value in relevant_tables
+                        ) + ")"
+                    ]
+                    if project_id and project_id.strip():
+                        compatibility_parts.append(
+                            "(COALESCE(ARRAY_SIZE(APPLICABLE_PROJECTS), 0) = 0 OR "
+                            "ARRAY_CONTAINS("
+                            f"{self._quote_literal(project_id.strip())}::VARIANT, "
+                            "APPLICABLE_PROJECTS))"
+                        )
+                    ranked_matches.append(
+                        (
+                            " AND ".join(compatibility_parts),
+                            10,
+                            "compatible_knowledge",
+                        )
+                    )
+
+                predicates = [item[0] for item in ranked_matches]
+                priority_expression = "CASE " + " ".join(
+                    f"WHEN ({predicate}) THEN {priority}"
+                    for predicate, priority, _ in ranked_matches
+                ) + " ELSE 99 END"
+                rows = _query(
+                    "AND (" + " OR ".join(f"({item})" for item in predicates) + ")",
+                    scoped=False,
+                    match_priority_expression=priority_expression,
+                )
+                if rows:
+                    first = (
+                        rows[0].as_dict()
+                        if hasattr(rows[0], "as_dict")
+                        else rows[0]
+                    )
+                    match_priority = int(first.get("MATCH_PRIORITY") or 99)
+                    retrieval_mode = next(
+                        (
+                            mode
+                            for _, priority, mode in ranked_matches
+                            if priority == match_priority
+                        ),
+                        "structured",
+                    )
+            if (
+                not rows
+                and str(milestone or "").strip().lower() == "schema_browsed"
+                and candidate_tables
+            ):
+                candidate_predicates = [
+                    "ARRAY_CONTAINS("
+                    f"{self._quote_literal(value.strip().upper())}::VARIANT, "
+                    "APPLICABLE_TABLES)"
+                    for value in sorted(set(candidate_tables))
+                    if value and value.strip()
+                ]
+                if candidate_predicates:
+                    rows = _query(
+                        "AND (MILESTONE = 'selection_changed' "
+                        "OR TRIGGER_TYPE IN ('selection_changed', 'on_source_selection')) "
+                        "AND ("
+                        + " OR ".join(candidate_predicates)
+                        + ")",
+                        scoped=False,
+                    )
+                    if rows:
+                        retrieval_mode = "schema_candidate"
+            if not rows and allow_search_fallback:
+                search_query = " ".join(
+                    value
+                    for value in [
+                        *selected_tables,
+                        target_table or "",
+                        schema_fqn or "",
+                        milestone or "",
+                    ]
+                    if value
+                ).strip()
+                search_hits = self.search_fir_knowledge(
+                    query_text=search_query,
+                    checkpoint=milestone,
+                    target_agent=target_agent,
+                    target_fqn=target_table,
+                    project_id=project_id,
+                    limit=limit,
+                )
+                recommendation_ids = [
+                    str(item.get("knowledge_id") or "")
+                    for item in search_hits
+                    if item.get("knowledge_type") == "recommendation"
+                    and item.get("knowledge_id")
+                ]
+                if recommendation_ids:
+                    id_literals = ", ".join(
+                        self._quote_literal(value) for value in recommendation_ids
+                    )
+                    rows = _query(
+                        f"AND AGENT_RECOMMENDATION_ID IN ({id_literals})"
+                    )
+                    retrieval_mode = "similar_context"
+        except Exception:
+            logger.warning("find_fir_recommendations_for_context query failed", exc_info=True)
+            return []
+
+        results: list[dict[str, Any]] = []
+
+        def _parse_variant(value: Any, default: Any) -> Any:
+            if value is None:
+                return default
+            if isinstance(value, str):
+                try:
+                    return json.loads(value)
+                except (json.JSONDecodeError, TypeError):
+                    return default
+            return value
+
+        for row in rows:
+            data = row.as_dict() if hasattr(row, "as_dict") else row
+            options = data.get("DISPLAY_OPTIONS")
+            if isinstance(options, str):
+                try:
+                    options = json.loads(options)
+                except (json.JSONDecodeError, TypeError):
+                    options = None
+            action_contract = _parse_variant(data.get("ACTION_CONTRACT"), [])
+
+            applicable_projects = data.get("APPLICABLE_PROJECTS")
+            if isinstance(applicable_projects, str):
+                try:
+                    applicable_projects = json.loads(applicable_projects)
+                except (json.JSONDecodeError, TypeError):
+                    applicable_projects = None
+
+            applicable_tables = data.get("APPLICABLE_TABLES")
+            if isinstance(applicable_tables, str):
+                try:
+                    applicable_tables = json.loads(applicable_tables)
+                except (json.JSONDecodeError, TypeError):
+                    applicable_tables = None
+            applicable_schemas = _parse_variant(data.get("APPLICABLE_SCHEMAS"), [])
+
+            raw_display = data.get("DISPLAY_MESSAGE")
+            if not raw_display or str(raw_display).strip().lower() == "none":
+                raw_display = None
+
+            # Extract user-facing summary from AGENT_PAYLOAD
+            agent_payload = data.get("AGENT_PAYLOAD")
+            payload_summary = None
+            payload_context = None
+            if isinstance(agent_payload, str):
+                try:
+                    agent_payload = json.loads(agent_payload)
+                except (json.JSONDecodeError, TypeError):
+                    agent_payload = None
+            if isinstance(agent_payload, dict):
+                payload_summary = (
+                    agent_payload.get("inference_summary")
+                    or agent_payload.get("key_finding")
+                    or agent_payload.get("notification_message")
+                )
+                payload_context = agent_payload.get("usage_context") or agent_payload.get("critical_constraint")
+
+            display_message = raw_display or payload_summary or ""
+            if isinstance(display_message, str) and display_message.strip().lower() == "none":
+                display_message = ""
+
+            results.append({
+                "recommendation_id": data.get("AGENT_RECOMMENDATION_ID"),
+                "fir_record_id": data.get("FIR_RECORD_ID"),
+                "fir_inference_id": data.get("FIR_INFERENCE_ID"),
+                "recommendation_type": data.get("RECOMMENDATION_TYPE"),
+                "recommendation_priority": data.get("RECOMMENDATION_PRIORITY"),
+                "confidence": data.get("CONFIDENCE"),
+                "display_message": display_message,
+                "display_context": payload_context or "",
+                "display_options": options,
+                "action_contract": action_contract,
+                "notification_layer": data.get("NOTIFICATION_LAYER"),
+                "applicable_projects": applicable_projects,
+                "applicable_tables": applicable_tables,
+                "applicable_schemas": applicable_schemas,
+                "user_id": data.get("USER_ID"),
+                "project_id": data.get("PROJECT_ID"),
+                "sttm_id": data.get("STTM_ID"),
+                "scope_type": data.get("SCOPE_TYPE"),
+                "scope_key": data.get("SCOPE_KEY"),
+                "recommendation_category": data.get("RECOMMENDATION_CATEGORY"),
+                "group_key": data.get("GROUP_KEY"),
+                "content_version": data.get("CONTENT_VERSION") or 1,
+                "evidence_summary": data.get("EVIDENCE_SUMMARY"),
+                "agent_payload": agent_payload if isinstance(agent_payload, dict) else {},
+                "context_key": data.get("CONTEXT_KEY"),
+                "milestone": (
+                    milestone
+                    if retrieval_mode in {"schema_candidate", "compatible_knowledge"}
+                    else data.get("MILESTONE")
+                ),
+                "question_id": data.get("QUESTION_ID"),
+                "evidence_ids": _parse_variant(data.get("EVIDENCE_IDS"), []),
+                "validation_status": data.get("VALIDATION_STATUS"),
+                "checkpoint_definition": {
+                    "eligible_goals": _parse_variant(
+                        data.get("CHECKPOINT_ELIGIBLE_GOALS"), []
+                    ),
+                    "recommendation_categories": _parse_variant(
+                        data.get("CHECKPOINT_RECOMMENDATION_CATEGORIES"), []
+                    ),
+                    "max_inline_items": int(
+                        data.get("CHECKPOINT_MAX_INLINE_ITEMS") or 5
+                    ),
+                    "max_interruptive_questions": int(
+                        data.get("CHECKPOINT_MAX_INTERRUPTIVE_QUESTIONS") or 1
+                    ),
+                    "display_surfaces": _parse_variant(
+                        data.get("CHECKPOINT_DISPLAY_SURFACES"), []
+                    ),
+                },
+                "retrieval_mode": retrieval_mode or "structured",
+                "created_at": data.get("CREATED_AT"),
+            })
+
+        if project_id and project_id.strip():
+            results = [
+                r for r in results
+                if not r.get("applicable_projects")
+                or project_id.strip() in (r.get("applicable_projects") or [])
+            ]
+
+        return results
+
+    def search_fir_knowledge(
+        self,
+        *,
+        query_text: str,
+        checkpoint: str | None = None,
+        target_agent: str | None = None,
+        target_fqn: str | None = None,
+        project_id: str | None = None,
+        domain: str | None = None,
+        mapping_lifecycle: str | None = None,
+        grain: str | None = None,
+        semantic_role: str | None = None,
+        derived_source_present: bool | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        """Search validated FIR knowledge after deterministic retrieval misses."""
+        if not query_text.strip():
+            return []
+        service = self._settings.qualify_metadata_object_name("CSS_FIR_KNOWLEDGE")
+        escaped_query = query_text.replace("'", "''")
+        try:
+            rows = self._session.sql(
+                f"""
+                SELECT *
+                FROM TABLE(
+                    {service}!SEARCH(
+                        query => '{escaped_query}',
+                        columns => ['SEARCH_TEXT'],
+                        limit => {max(1, min(limit * 4, 50))}
+                    )
+                )
+                """
+            ).collect()
+        except Exception:
+            logger.debug("CSS_FIR_KNOWLEDGE search failed", exc_info=True)
+            return []
+
+        compatible: list[dict[str, Any]] = []
+        for row in rows:
+            data = row.as_dict() if hasattr(row, "as_dict") else dict(row)
+            row_checkpoint = str(data.get("CHECKPOINT") or "").strip().lower()
+            row_agent = str(data.get("TARGET_AGENT") or "").strip().upper()
+            row_target = str(data.get("TARGET_FQN") or "").strip().upper()
+            row_project = str(data.get("PROJECT_ID") or "").strip()
+            row_domain = str(data.get("DOMAIN") or "").strip().lower()
+            row_lifecycle = str(data.get("MAPPING_LIFECYCLE") or "").strip().lower()
+            row_grain = str(data.get("GRAIN") or "").strip().lower()
+            row_role = str(data.get("SEMANTIC_ROLE") or "").strip().lower()
+            row_derived = data.get("DERIVED_SOURCE_PRESENT")
+            if checkpoint and row_checkpoint and row_checkpoint != checkpoint.strip().lower():
+                continue
+            if target_agent and row_agent and row_agent != target_agent.strip().upper():
+                continue
+            if target_fqn and row_target and row_target != target_fqn.strip().upper():
+                continue
+            if project_id and row_project and row_project != project_id.strip():
+                continue
+            if domain and row_domain and row_domain != domain.strip().lower():
+                continue
+            if (
+                mapping_lifecycle
+                and row_lifecycle
+                and row_lifecycle != mapping_lifecycle.strip().lower()
+            ):
+                continue
+            if grain and row_grain and row_grain != grain.strip().lower():
+                continue
+            if semantic_role and row_role and row_role != semantic_role.strip().lower():
+                continue
+            if (
+                derived_source_present is not None
+                and row_derived is not None
+                and bool(row_derived) != derived_source_present
+            ):
+                continue
+            if str(data.get("VALIDATION_STATUS") or "").lower() in {
+                "rejected",
+                "contradicted",
+            }:
+                continue
+            if str(data.get("CONTRADICTION_STATUS") or "").lower() in {
+                "rejected",
+                "contradicted",
+                "suppressed",
+            }:
+                continue
+            compatible.append(
+                {
+                    "knowledge_id": data.get("KNOWLEDGE_ID"),
+                    "knowledge_type": str(data.get("KNOWLEDGE_TYPE") or "").lower(),
+                    "confidence": min(float(data.get("CONFIDENCE") or 0.5) * 0.9, 0.85),
+                    "checkpoint": data.get("CHECKPOINT"),
+                    "target_fqn": data.get("TARGET_FQN"),
+                    "project_id": data.get("PROJECT_ID"),
+                    "domain": data.get("DOMAIN"),
+                    "mapping_lifecycle": data.get("MAPPING_LIFECYCLE"),
+                    "grain": data.get("GRAIN"),
+                    "semantic_role": data.get("SEMANTIC_ROLE"),
+                    "derived_source_present": data.get("DERIVED_SOURCE_PRESENT"),
+                    "search_text": data.get("SEARCH_TEXT"),
+                }
+            )
+            if len(compatible) >= limit:
+                break
+        return compatible

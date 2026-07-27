@@ -1,11 +1,16 @@
 'use client';
+import { AiaBadge, AiaBox, AiaFab, AiaIconButton, AiaPaper, AiaPopover } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import React, { useRef, useState } from 'react';
 import { AutoAwesomeRoundedIcon, CloseRoundedIcon, SmartToyIcon } from '@/utils/icons';
-import { Badge, Box, Fab, IconButton, Paper, Popover, Typography } from '@mui/material';
+
 import AIAgentPanel from '@/features/ai-agent/ai-agent-panel';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 
 const FAB_EDGE_OFFSET = 60;
+const AI_ASSISTANT_BUTTON_RADIUS = '4px';
+const AI_ASSISTANT_COLLAPSED_SIZE = 65;
 
 const AI_ASSISTANT_FAB_SHADOW =
     '0 0 0 1px rgba(255, 255, 255, 0.14), 0 4px 16px rgba(0, 0, 0, 0.45), 0 0 24px rgba(255, 255, 255, 0.1)';
@@ -42,7 +47,10 @@ export default function AIAgentPopover() {
     const { assistantSignals, assistantUnreadCount, respondToAssistantSignal, relationships } = useSttmBuilderContext();
     const previewSignal =
         assistantSignals.find(
-            (item) => item.status === 'new' && !shouldSuppressSignalForCurrentState(item, relationships.length),
+            (item) =>
+                item.source !== 'conversation_agent' &&
+                item.status === 'new' &&
+                !shouldSuppressSignalForCurrentState(item, relationships.length),
         ) ?? null;
 
     const handleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
@@ -59,8 +67,8 @@ export default function AIAgentPopover() {
 
     return (
         <>
-            {previewSignal ? (
-                <Paper
+            {previewSignal && !open ? (
+                <AiaPaper
                     elevation={6}
                     onClick={() => fabRef.current?.click()}
                     sx={{
@@ -78,20 +86,20 @@ export default function AIAgentPopover() {
                         cursor: 'pointer',
                     }}
                 >
-                    <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 0.5 }}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, minWidth: 0 }}>
-                            <Badge
+                    <AiaBox sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 0.5 }}>
+                        <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 1, flex: 1, minWidth: 0 }}>
+                            <AiaBadge
                                 color="error"
                                 variant="dot"
                                 invisible={assistantUnreadCount === 0}
                             >
                                 <SmartToyIcon sx={{ fontSize: 18, color: '#b91c1c' }} />
-                            </Badge>
-                            <Typography sx={{ fontSize: 12, fontWeight: 800, color: '#7f1d1d' }}>
+                            </AiaBadge>
+                            <AiaText sx={{ fontSize: 12, fontWeight: 800, color: '#7f1d1d' }}>
                                 AI assistant notification
-                            </Typography>
-                        </Box>
-                        <IconButton
+                            </AiaText>
+                        </AiaBox>
+                        <AiaIconButton
                             size="small"
                             onClick={(event) => {
                                 event.stopPropagation();
@@ -100,12 +108,12 @@ export default function AIAgentPopover() {
                             sx={{ mt: -0.5, mr: -0.5, color: '#991b1b' }}
                         >
                             <CloseRoundedIcon sx={{ fontSize: 16 }} />
-                        </IconButton>
-                    </Box>
-                    <Typography sx={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
+                        </AiaIconButton>
+                    </AiaBox>
+                    <AiaText sx={{ fontSize: 13, fontWeight: 700, color: '#0f172a' }}>
                         {previewSignal.title}
-                    </Typography>
-                    <Typography
+                    </AiaText>
+                    <AiaText
                         sx={{
                             mt: 0.5,
                             fontSize: 12,
@@ -116,38 +124,42 @@ export default function AIAgentPopover() {
                         }}
                     >
                         {previewSignal.message}
-                    </Typography>
-                </Paper>
+                    </AiaText>
+                </AiaPaper>
             ) : null}
-            <Fab
+            <AiaFab
                 ref={fabRef}
+                data-tour={TOUR_TARGETS.sttmAiAssistant}
                 color="primary"
                 aria-label="AI Assistant"
                 aria-describedby={id}
                 onClick={handleClick}
                 sx={{
-                    borderRadius: '999px',
+                    borderRadius: AI_ASSISTANT_BUTTON_RADIUS,
+                    '&.MuiFab-root': {
+                        borderRadius: AI_ASSISTANT_BUTTON_RADIUS,
+                    },
                     position: 'fixed',
                     bottom: FAB_EDGE_OFFSET,
                     right: FAB_EDGE_OFFSET,
-                    width: 56,
-                    height: 56,
-                    minWidth: 56,
-                    minHeight: 56,
-                    maxHeight: 56,
+                    width: AI_ASSISTANT_COLLAPSED_SIZE,
+                    height: AI_ASSISTANT_COLLAPSED_SIZE,
+                    minWidth: AI_ASSISTANT_COLLAPSED_SIZE,
+                    minHeight: AI_ASSISTANT_COLLAPSED_SIZE,
+                    maxHeight: AI_ASSISTANT_COLLAPSED_SIZE,
                     px: 1.75,
                     display: 'inline-flex',
                     alignItems: 'center',
                     justifyContent: 'center',
                     gap: 0,
                     overflow: 'hidden',
-                    bgcolor: 'var(--aia-secondary-button-color)',
-                    color: '#ffffff',
+                    bgcolor: 'var(--aia-button-color)',
+                    color: 'var(--aia-button-text-color)',
                     boxShadow: AI_ASSISTANT_FAB_SHADOW,
                     transition:
                         'width 220ms ease, min-width 220ms ease, height 220ms ease, min-height 220ms ease, max-height 220ms ease, padding 220ms ease, gap 220ms ease, box-shadow 220ms ease',
                     '&:hover': {
-                        bgcolor: 'var(--aia-secondary-button-colorHover)',
+                        bgcolor: 'var(--aia-button-hover-color)',
                         ...FAB_EXPANDED_SX,
                         gap: 1,
                         '& .ai-assistant-icon': {
@@ -173,7 +185,7 @@ export default function AIAgentPopover() {
                     } : {}),
                 }}
             >
-                <Badge
+                <AiaBadge
                     color="error"
                     badgeContent={assistantUnreadCount > 0 ? 1 : null}
                     anchorOrigin={{ vertical: 'top', horizontal: 'left' }}
@@ -187,8 +199,8 @@ export default function AIAgentPopover() {
                             transition: 'font-size 220ms ease',
                         }}
                     />
-                </Badge>
-                <Typography
+                </AiaBadge>
+                <AiaText
                     className="ai-assistant-label"
                     component="span"
                     sx={{
@@ -203,10 +215,10 @@ export default function AIAgentPopover() {
                     }}
                 >
                     AI Assistant
-                </Typography>
-            </Fab>
+                </AiaText>
+            </AiaFab>
 
-            <Popover
+            <AiaPopover
                 id={id}
                 open={open}
                 anchorEl={anchorEl}
@@ -238,7 +250,7 @@ export default function AIAgentPopover() {
                     expanded={expanded}
                     onToggleExpanded={() => setExpanded((prev) => !prev)}
                 />
-            </Popover>
+            </AiaPopover>
         </>
     );
 }

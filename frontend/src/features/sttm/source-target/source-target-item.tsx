@@ -1,11 +1,12 @@
 'use client';
+import { AiaText } from '@/components/ui/aia-text';
 import { useState } from 'react';
-import Card from '@mui/material/Card';
-import Box from '@mui/material/Box';
-import Typography from '@mui/material/Typography';
-import IconButton from '@mui/material/IconButton';
-import Menu from '@mui/material/Menu';
-import MenuItem from '@mui/material/MenuItem';
+import { AiaCard } from '@/components/ui';
+import { AiaBox } from '@/components/ui';
+
+import { AiaIconButton } from '@/components/ui';
+import { AiaMenu } from '@/components/ui';
+import { AiaMenuItem } from '@/components/ui';
 import { CheckIcon, MoreVertIcon, TableChartOutlinedIcon } from '@/utils/icons';
 
 
@@ -14,19 +15,26 @@ import { AiaCheckbox } from '@/components/ui/aia-checkbox';
 import { AiaRadio } from '@/components/ui/aia-radio';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import { AiaChip } from '@/components/ui/aia-chip';
+import { BODY_SX, SECONDARY_TEXT_SX, TYPOGRAPHY_TOKENS } from '@/config/typography-tokens';
 
 function tagChipPalette(tag: string, isSelected: boolean) {
   if (isSelected) {
-    return { bg: 'rgba(255,255,255,0.14)', color: '#ffffff' };
+    return {
+      bg: 'rgba(255,255,255,0.14)',
+      color: '#ffffff',
+      border: 'rgba(255,255,255,0.28)',
+    };
   }
   const t = String(tag).toLowerCase();
-  if (t.includes('staging')) return { bg: '#f3e8ff', color: '#7c3aed' };
-  if (t.includes('sales')) return { bg: '#dbeafe', color: '#1d4ed8' };
-  if (t.includes('core')) return { bg: '#f3f4f6', color: '#4b5563' };
-  if (t.includes('transaction')) return { bg: '#ffedd5', color: '#c2410c' };
-  if (t.includes('master')) return { bg: '#e0e7ff', color: '#4338ca' };
-  if (t.includes('billing') || t.includes('finance')) return { bg: '#ecfdf5', color: '#047857' };
-  return { bg: '#f1f5f9', color: '#475569' };
+  if (t.includes('staging')) return { bg: '#f3e8ff', color: '#7c3aed', border: '#e9d5ff' };
+  if (t.includes('sales')) return { bg: '#dbeafe', color: '#1d4ed8', border: '#bfdbfe' };
+  if (t.includes('core')) return { bg: '#f3f4f6', color: '#4b5563', border: '#e5e7eb' };
+  if (t.includes('transaction')) return { bg: '#ffedd5', color: '#c2410c', border: '#fed7aa' };
+  if (t.includes('master')) return { bg: '#e0e7ff', color: '#4338ca', border: '#c7d2fe' };
+  if (t.includes('billing') || t.includes('finance')) {
+    return { bg: '#ecfdf5', color: '#047857', border: '#bbf7d0' };
+  }
+  return { bg: '#f1f5f9', color: '#475569', border: '#e2e8f0' };
 }
 
 export default function SourceTargetItem({ type = 'source', item, selectHandler }: any) {
@@ -57,9 +65,19 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
   const isDrivingTable = type === 'source' && drivingTableId === item.tableId;
 
   const metaLeft = type === 'source' ? sourceInfo : targetInfo;
+  const itemQualifiedName = String(item.qualifiedName ?? item.tableId ?? "").trim();
+  const qualifiedNameParts = itemQualifiedName.split(".").filter(Boolean);
+  const itemDatabaseName = qualifiedNameParts.length >= 3 ? qualifiedNameParts[0] : "";
+  const itemSchemaName = qualifiedNameParts.length >= 3 ? qualifiedNameParts[1] : "";
+  // Saved mappings restore selected tables before the schema browser is opened.
+  // In that state sourceInfo/targetInfo is intentionally empty, while the table's
+  // own qualifiedName remains authoritative. Per-item metadata also matters for
+  // mappings whose selected relations span more than one database or schema.
+  const databaseName = itemDatabaseName || metaLeft?.dbName || "—";
+  const schemaName = itemSchemaName || metaLeft?.schemaName || "—";
   return (
     <>
-      <Card
+      <AiaCard
         variant="outlined"
         onClick={() => selectHandler(item.tableId)}
         sx={{
@@ -71,15 +89,15 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
           gap: 1,
           cursor: 'pointer',
           borderRadius: '10px',
-          borderColor: isSelected ? '#0b1220' : '#e5e7eb',
-          backgroundColor: isSelected ? '#1e293b' : '#ffffff',
-          color: isSelected ? '#ffffff' : '#111827',
+          borderColor: isSelected ? 'var(--aia-primary-bg-color)' : '#e5e7eb',
+          backgroundColor: isSelected ? 'var(--aia-primary-bg-color)' : '#ffffff',
+          color: isSelected ? 'var(--aia-primary-bg-text-color)' : '#111827',
           transition: '120ms ease',
-          boxShadow: isSelected ? '0 6px 18px rgba(15,23,42,0.18)' : 'none',
+          boxShadow: 'none',
           '&:hover': {
-            borderColor: isSelected ? '#0f172a' : '#cbd5e1',
-            backgroundColor: isSelected ? '#1e293b' : '#f8fafc',
-            boxShadow: isSelected ? '0 6px 18px rgba(15,23,42,0.18)' : '0 4px 12px rgba(15,23,42,0.06)',
+            borderColor: isSelected ? 'var(--aia-primary-bg-hover-color)' : '#cbd5e1',
+            backgroundColor: isSelected ? 'var(--aia-primary-bg-hover-color)' : '#f8fafc',
+            boxShadow: isSelected ? 'none' : '0 4px 12px rgba(15,23,42,0.06)',
           }
         }}
       >
@@ -88,8 +106,8 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
           <AiaCheckbox
             checked={isSelected}
             checkHandler={() => selectHandler(item.tableId)}
-            uncheckedColor={isSelected ? '#ffffff' : '#111827'}
-            checkedColor={isSelected ? '#ffffff' : '#111827'}
+            uncheckedColor={isSelected ? 'var(--aia-primary-bg-text-color)' : '#111827'}
+            checkedColor={isSelected ? 'var(--aia-primary-bg-text-color)' : '#111827'}
           />
         ) : (
           <AiaRadio
@@ -99,88 +117,98 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
         )}
 
         <TableChartOutlinedIcon
-          sx={{ color: isSelected ? '#cbd5e1' : '#9ca3af', fontSize: 20, flexShrink: 0 }}
+          sx={{
+            color: isSelected ? 'var(--aia-primary-bg-text-color)' : '#9ca3af',
+            opacity: isSelected ? 0.85 : 1,
+            fontSize: 20,
+            flexShrink: 0,
+          }}
         />
 
-        <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
-            <Typography
-              variant="subtitle2"
+        <AiaBox sx={{ flexGrow: 1, minWidth: 0 }}>
+          <AiaBox sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, minWidth: 0 }}>
+            <AiaText
               sx={{
-                fontWeight: 700,
-                lineHeight: 1.2,
-                color: isSelected ? '#ffffff' : '#111827',
-                whiteSpace: 'nowrap',
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
+                ...BODY_SX,
+                color: isSelected ? 'var(--aia-primary-bg-text-color)' : TYPOGRAPHY_TOKENS.body.color,
+                whiteSpace: 'normal',
+                overflowWrap: 'anywhere',
+                lineHeight: 1.35,
               }}
             >
               {item.tableName}
-            </Typography>
-            <AiaChip
-              label={tag}
-              size="small"
-              rounded={false}
-              customBackgroundColor={chipColors.bg}
-              customColor={chipColors.color}
-              sx={{
-                height: 20,
-                fontSize: 10,
-                fontWeight: 700,
-                border: "none",
-                "& .MuiChip-label": { px: 0.75, py: 0 },
-              }}
-            />
+            </AiaText>
+
             {isDrivingTable && (
               <AiaChip
-                label="DRIVING"
+                label="Driving"
                 size="small"
-                rounded={false}
+                color="warning"
                 customBackgroundColor={isSelected ? "rgba(250,204,21,0.2)" : "#fef08a"}
                 customColor={isSelected ? "#fde047" : "#854d0e"}
+                customBorderColor={isSelected ? "rgba(250,204,21,0.45)" : "#fde047"}
                 sx={{
-                  height: 20,
+                  height: 22,
                   fontSize: 10,
                   fontWeight: 700,
-                  border: "none",
                   "& .MuiChip-label": { px: 0.75, py: 0 },
                 }}
               />
             )}
-          </Box>
-          <Typography
-            variant="caption"
-            sx={{ color: isSelected ? 'rgba(226,232,240,0.9)' : 'text.secondary' }}
+          </AiaBox>
+          <AiaText
+            sx={{
+              ...SECONDARY_TEXT_SX,
+              color: isSelected
+                ? 'color-mix(in srgb, var(--aia-primary-bg-text-color) 88%, transparent)'
+                : TYPOGRAPHY_TOKENS.secondaryText.color,
+              whiteSpace: 'normal',
+              overflowWrap: 'anywhere',
+            }}
           >
-            {metaLeft?.schemaName || "—"} · {metaLeft?.dbName || "—"}
-          </Typography>
-        </Box>
+            {schemaName} · {databaseName}
+          </AiaText>
+        </AiaBox>
 
-        <Box sx={{ textAlign: 'right', minWidth: 72 }}>
-          <Typography
-            variant="caption"
-            sx={{ display: 'block', fontWeight: 800, color: isSelected ? '#ffffff' : '#111827' }}
+        <AiaBox sx={{ textAlign: 'right', minWidth: 72 }}>
+          <AiaText
+            sx={{
+              ...SECONDARY_TEXT_SX,
+              display: 'block',
+              color: isSelected
+                ? 'var(--aia-primary-bg-text-color)'
+                : TYPOGRAPHY_TOKENS.secondaryText.color,
+            }}
           >
             {item.rows ?? '—'}
-          </Typography>
-          <Typography
-            variant="caption"
-            sx={{ display: 'block', color: isSelected ? 'rgba(226,232,240,0.9)' : 'text.secondary' }}
+          </AiaText>
+          <AiaText
+            sx={{
+              ...SECONDARY_TEXT_SX,
+              display: 'block',
+              color: isSelected
+                ? 'color-mix(in srgb, var(--aia-primary-bg-text-color) 88%, transparent)'
+                : TYPOGRAPHY_TOKENS.secondaryText.color,
+            }}
           >
             {item.columns ?? '—'} cols
-          </Typography>
-        </Box>
+          </AiaText>
+        </AiaBox>
 
         {type === 'source' && (
-          <Box sx={{ ml: 0.5 }} onClick={(e) => e.stopPropagation()}>
-            <IconButton
+          <AiaBox sx={{ ml: 0.5 }} onClick={(e) => e.stopPropagation()}>
+            <AiaIconButton
               size="small"
               onClick={handleMenuClick}
-              sx={{ color: isSelected ? 'rgba(255,255,255,0.7)' : 'text.secondary' }}
+              sx={{
+                color: isSelected
+                  ? 'color-mix(in srgb, var(--aia-primary-bg-text-color) 70%, transparent)'
+                  : 'text.secondary',
+              }}
             >
               <MoreVertIcon fontSize="small" />
-            </IconButton>
-            <Menu
+            </AiaIconButton>
+            <AiaMenu
               anchorEl={anchorEl}
               open={open}
               onClose={handleMenuClose}
@@ -197,7 +225,7 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
               transformOrigin={{ horizontal: 'right', vertical: 'top' }}
               anchorOrigin={{ horizontal: 'right', vertical: 'bottom' }}
             >
-              <MenuItem
+              <AiaMenuItem
                 onClick={handleMakeDrivingTable}
                 disabled={!isSelected}
                 sx={{
@@ -212,11 +240,11 @@ export default function SourceTargetItem({ type = 'source', item, selectHandler 
               >
                 Mark as driving table
                 {isDrivingTable && <CheckIcon fontSize="small" sx={{ ml: 2, color: 'primary.main' }} />}
-              </MenuItem>
-            </Menu>
-          </Box>
+              </AiaMenuItem>
+            </AiaMenu>
+          </AiaBox>
         )}
-      </Card>
+      </AiaCard>
 
     </>
 

@@ -1,13 +1,16 @@
 'use client';
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { Box, Typography } from '@mui/material';
 import { FiberManualRecordIcon } from '@/utils/icons';
 import { SqlEditorActions } from './sql-editor-actions';
 import type { SqlEditorActionsProps } from './sql-editor-actions';
+import type { ReactNode } from 'react';
 
 type SqlEditorToolbarProps = {
   title?: string;
   subtitle?: string;
+  toolbarActions?: ReactNode;
   value: string;
   readOnly?: boolean;
   showCopy?: boolean;
@@ -24,6 +27,7 @@ type SqlEditorToolbarProps = {
 export function SqlEditorToolbar({
   title = 'SQL Preview',
   subtitle,
+  toolbarActions,
   value,
   readOnly = false,
   showCopy = false,
@@ -37,7 +41,7 @@ export function SqlEditorToolbar({
   onCopyFeedback,
 }: SqlEditorToolbarProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         px: 3,
         py: 2,
@@ -49,29 +53,32 @@ export function SqlEditorToolbar({
         flexShrink: 0,
       }}
     >
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+      <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
         <FiberManualRecordIcon sx={{ fontSize: 10, color: '#22c55e' }} />
-        <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#fff' }}>
+        <AiaText sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#fff' }}>
           {title}
-        </Typography>
+        </AiaText>
         {subtitle ? (
-          <Typography sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>{subtitle}</Typography>
+          <AiaText sx={{ fontSize: '0.72rem', color: '#9ca3af' }}>{subtitle}</AiaText>
         ) : null}
-      </Box>
+      </AiaBox>
 
-      <SqlEditorActions
-        value={value}
-        readOnly={readOnly}
-        showCopy={showCopy}
-        showUpload={showUpload}
-        copyFeedback={copyFeedback}
-        onCopy={onCopy}
-        onUpload={onUpload}
-        onUploadError={onUploadError}
-        onCopySuccess={onCopySuccess}
-        onCopyError={onCopyError}
-        onCopyFeedback={onCopyFeedback}
-      />
-    </Box>
+      <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 0.75, minWidth: 0 }}>
+        {toolbarActions}
+        <SqlEditorActions
+          value={value}
+          readOnly={readOnly}
+          showCopy={showCopy}
+          showUpload={showUpload}
+          copyFeedback={copyFeedback}
+          onCopy={onCopy}
+          onUpload={onUpload}
+          onUploadError={onUploadError}
+          onCopySuccess={onCopySuccess}
+          onCopyError={onCopyError}
+          onCopyFeedback={onCopyFeedback}
+        />
+      </AiaBox>
+    </AiaBox>
   );
 }

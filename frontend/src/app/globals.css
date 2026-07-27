@@ -7,9 +7,6 @@
   --font-body: museo-sans, sans-serif;
   --font-title: Gilroy-ExtraBold, museo-sans, sans-serif;
 
-  --color-header-bg: #F1F1F1;
-  --color-header-text: #121111;
-
   --color-app-bg: #f7f8fa;
   --color-surface: #ffffff;
   --color-surface-muted: #f5f7fa;
@@ -36,9 +33,6 @@
 }
 
 [data-theme="dark"] {
-  --color-header-bg: #717171;
-  --color-header-text: #ffffff;
-
   --color-app-bg: #383737;
  --color-surface: #727176;
   --color-surface-muted: #cbc8c8;

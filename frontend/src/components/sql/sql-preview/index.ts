@@ -11,6 +11,6 @@ export type { SqlPreviewStat } from './sql-preview-stat-pills';
 export { SqlValidationFooter } from './sql-validation-footer';
 export type { SqlValidationFooterProps } from './sql-validation-footer';
 export {
-  SQL_PREVIEW_STAT_PILL_SX,
+  SQL_PREVIEW_CHIP_PROPS,
   SQL_PREVIEW_WORKSPACE_BG,
 } from './sql-preview-styles';

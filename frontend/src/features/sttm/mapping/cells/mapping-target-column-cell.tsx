@@ -1,7 +1,10 @@
-import { Box, CircularProgress, TableCell, Typography } from '@mui/material';
+import { AiaBox, AiaCircularProgress, AiaTableCellPrimitive } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+
 import type { SxProps, Theme } from '@mui/material/styles';
 import { aiaTableCellSx } from '@/components/ui/aia-table';
 import { VerifiedRoundedIcon } from '@/utils/icons';
+import { MAPPING_TABLE_BODY_TEXT_SX } from '../mapping-table-styles';
 
 type MappingTargetColumnCellProps = {
   name: string;
@@ -22,8 +25,8 @@ export const MappingTargetColumnCell = ({
   minWidth,
   sx,
 }: MappingTargetColumnCellProps) => (
-  <TableCell sx={aiaTableCellSx({ width, minWidth, sx })}>
-    <Box
+  <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx })}>
+    <AiaBox
       sx={{
         display: 'flex',
         alignItems: 'center',
@@ -32,11 +35,9 @@ export const MappingTargetColumnCell = ({
         flexWrap: 'wrap',
       }}
     >
-      <Typography
+      <AiaText
         sx={{
-          fontSize: '0.8rem',
-          fontWeight: 400,
-          color: '#111827',
+          ...MAPPING_TABLE_BODY_TEXT_SX,
           lineHeight: 1.45,
           whiteSpace: 'normal',
           overflowWrap: 'anywhere',
@@ -44,9 +45,9 @@ export const MappingTargetColumnCell = ({
         }}
       >
         {name}
-      </Typography>
+      </AiaText>
       {isProcessing ? (
-        <Box
+        <AiaBox
           aria-label="Processing"
           sx={{
             width: 18,
@@ -61,8 +62,8 @@ export const MappingTargetColumnCell = ({
             flexShrink: 0,
           }}
         >
-          <CircularProgress size={10} thickness={6} sx={{ color: '#2563eb' }} />
-        </Box>
+          <AiaCircularProgress size={10} thickness={6} sx={{ color: '#2563eb' }} />
+        </AiaBox>
       ) : showMappedIcon && isMapped ? (
         <VerifiedRoundedIcon
           aria-label="Mapped"
@@ -73,6 +74,6 @@ export const MappingTargetColumnCell = ({
           }}
         />
       ) : null}
-    </Box>
-  </TableCell>
+    </AiaBox>
+  </AiaTableCellPrimitive>
 );

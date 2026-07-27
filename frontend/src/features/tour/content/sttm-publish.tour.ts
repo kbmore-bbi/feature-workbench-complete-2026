@@ -1,0 +1,60 @@
+import type { TourDefinition } from "../types/tour.types";
+import { TOUR_TARGETS, tourSelector } from "../constants/tour-targets";
+
+export const sttmPublishTour: TourDefinition = {
+  id: "sttm-publish",
+  label: "STTM — Publish Actions",
+  description: "Bulk actions for selected mapping rows.",
+  routes: ["/sttm/builder/new/mapping"],
+  steps: [
+    {
+      id: "sttm-row-selection-bar",
+      screen: "Screen 10",
+      title: "Row Selection bar",
+      body: "The dark action bar that appears at the top of the mapping grid when one or more rows are selected. Shows the count of selected rows and available actions.",
+      target: tourSelector(TOUR_TARGETS.sttmRowSelectionBar),
+      placement: "bottom",
+      route: "/sttm/builder/new/mapping",
+      requiresState: "rows-selected",
+    },
+    {
+      id: "sttm-mark-mapped",
+      screen: "Screen 10",
+      title: "Mark Mapped",
+      body: "Manually marks the selected row(s) as 'Mapped'. Useful when the user has reviewed and accepted the AI suggestion.",
+      target: tourSelector(TOUR_TARGETS.sttmMarkMapped),
+      placement: "bottom",
+      route: "/sttm/builder/new/mapping",
+      requiresState: "rows-selected",
+    },
+    {
+      id: "sttm-set-direct",
+      screen: "Screen 10",
+      title: "Set Direct",
+      body: "Sets the pre-processing rule for the selected row(s) to 'Direct' — meaning the source value is copied to the target without any transformation.",
+      target: tourSelector(TOUR_TARGETS.sttmSetDirect),
+      placement: "bottom",
+      route: "/sttm/builder/new/mapping",
+      requiresState: "rows-selected",
+    },
+    {
+      id: "sttm-publish-row-mapping",
+      screen: "Screen 10",
+      title: "Publish (Row) Mapping",
+      body: "Publishes the selected mapping row to the final STTM output. This commits the mapping and makes it available in Step 3: Final Mapping and Summary.",
+      target: tourSelector(TOUR_TARGETS.sttmPublishRowMapping),
+      placement: "bottom",
+      route: "/sttm/builder/new/mapping",
+      requiresState: "rows-selected",
+    },
+    {
+      id: "sttm-next-publish",
+      screen: "Screen 10",
+      title: "Next",
+      body: "Proceeds to Step 3 once all required mappings are confirmed.",
+      target: tourSelector(TOUR_TARGETS.sttmNextButton),
+      placement: "bottom",
+      route: "/sttm/builder/new/mapping",
+    },
+  ],
+};

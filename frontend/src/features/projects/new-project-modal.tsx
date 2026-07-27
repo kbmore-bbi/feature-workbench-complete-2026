@@ -1,19 +1,14 @@
 "use client";
+import { AiaBox, AiaButton, AiaIconButton, AiaSelect, AiaStack, AiaInput } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import {
   CheckRoundedIcon,
   CloseOutlinedIcon,
   FolderOutlinedIcon,
 } from "@/utils/icons";
-import {
-  Box,
-  Button,
-  IconButton,
-  Stack,
-  TextField,
-  Typography,
-} from "@mui/material";
+
 import {
   DEFAULT_PROJECT_COLOR_ID,
   PROJECT_COLOR_OPTIONS,
@@ -26,6 +21,7 @@ type NewProjectModalProps = {
   open: boolean;
   onClose: () => void;
   onCreate: (project: ProjectItem) => void;
+  availableProjects?: ProjectItem[];
 };
 
 const fieldLabelSx = {
@@ -59,31 +55,45 @@ const inputSx = {
   },
 } as const;
 
-export default function NewProjectModal({ open, onClose, onCreate }: NewProjectModalProps) {
+export default function NewProjectModal({ open, onClose, onCreate, availableProjects = [] }: NewProjectModalProps) {
   const [projectName, setProjectName] = useState("");
   const [description, setDescription] = useState("");
+  const [domain, setDomain] = useState("");
+  const [intendedOutcome, setIntendedOutcome] = useState("");
+  const [businessProcess, setBusinessProcess] = useState("");
+  const [owner, setOwner] = useState("");
+  const [linkedProjectIds, setLinkedProjectIds] = useState<string[]>([]);
   const [selectedColorId, setSelectedColorId] = useState(DEFAULT_PROJECT_COLOR_ID);
 
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
+  const resetForm = () => {
     setProjectName("");
     setDescription("");
+    setDomain("");
+    setIntendedOutcome("");
+    setBusinessProcess("");
+    setOwner("");
+    setLinkedProjectIds([]);
     setSelectedColorId(DEFAULT_PROJECT_COLOR_ID);
-  }, [open]);
+  };
 
   const selectedColor = useMemo(
     () => getProjectColorById(selectedColorId),
     [selectedColorId],
   );
 
-  const canCreate = projectName.trim().length > 0;
+  const canCreate = Boolean(
+    projectName.trim()
+    && description.trim()
+    && domain.trim()
+    && intendedOutcome.trim()
+    && businessProcess.trim()
+  );
   const previewName = projectName.trim() || "Project Name";
   const previewDescription = description.trim() || "No description yet";
 
   const handleClose = () => {
     onClose();
+    resetForm();
   };
 
   const handleCreate = () => {
@@ -96,9 +106,15 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
         name: projectName,
         description,
         color: selectedColor,
+        domain,
+        intendedOutcome,
+        businessProcess,
+        owner,
+        linkedProjectIds,
       }),
     );
     onClose();
+    resetForm();
   };
 
   if (!open) {
@@ -106,11 +122,18 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
   }
 
   return (
-    <Box
+    <AiaBox
       role="dialog"
       aria-modal="true"
       aria-label="New Project"
-      onClick={handleClose}
+      onClick={(event) => {
+        // MUI Select menus render through a React portal. Portal click events
+        // still bubble through this component tree, so an unconditional close
+        // resets linkedProjectIds immediately after the user selects precedent.
+        if (event.target === event.currentTarget) {
+          handleClose();
+        }
+      }}
       sx={{
         position: "fixed",
         inset: 0,
@@ -124,11 +147,14 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
         backdropFilter: "blur(4px)",
       }}
     >
-      <Box
+      <AiaBox
         onClick={(event) => event.stopPropagation()}
         sx={{
           width: "100%",
           maxWidth: 520,
+          maxHeight: "90vh",
+          display: "flex",
+          flexDirection: "column",
           borderRadius: "16px",
           border: "1px solid rgba(15, 23, 42, 0.08)",
           boxShadow: "0 30px 60px rgba(15, 23, 42, 0.18)",
@@ -136,7 +162,7 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
           backgroundColor: "#FFFFFF",
         }}
       >
-        <Box
+        <AiaBox
           sx={{
             display: "flex",
             alignItems: "flex-start",
@@ -147,8 +173,8 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
             borderBottom: "1px solid #EEF2F7",
           }}
         >
-          <Stack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
-            <Box
+          <AiaStack direction="row" spacing={1.25} sx={{ alignItems: "center" }}>
+            <AiaBox
               sx={{
                 width: 36,
                 height: 36,
@@ -162,18 +188,18 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
               }}
             >
               <FolderOutlinedIcon sx={{ fontSize: 18 }} />
-            </Box>
-            <Box>
-              <Typography sx={{ fontSize: 16, fontWeight: 700, color: "#111827", lineHeight: 1.2 }}>
+            </AiaBox>
+            <AiaBox>
+              <AiaText sx={{ fontSize: 16, fontWeight: 700, color: "#111827", lineHeight: 1.2 }}>
                 New Project
-              </Typography>
-              <Typography sx={{ fontSize: 12, color: "#64748B", mt: 0.35, lineHeight: 1.35 }}>
+              </AiaText>
+              <AiaText sx={{ fontSize: 12, color: "#64748B", mt: 0.35, lineHeight: 1.35 }}>
                 Create a new project folder to organise your mappings
-              </Typography>
-            </Box>
-          </Stack>
+              </AiaText>
+            </AiaBox>
+          </AiaStack>
 
-          <IconButton
+          <AiaIconButton
             onClick={handleClose}
             aria-label="Close"
             sx={{
@@ -186,47 +212,111 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
             }}
           >
             <CloseOutlinedIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-        </Box>
+          </AiaIconButton>
+        </AiaBox>
 
-        <Box sx={{ px: 2.5, py: 2.25 }}>
-          <Box sx={{ mb: 2 }}>
-            <Typography sx={fieldLabelSx}>
+        <AiaBox sx={{ px: 2.5, py: 2.25, overflowY: "auto", minHeight: 0, flex: 1 }}>
+          <AiaBox sx={{ mb: 2 }}>
+            <AiaText sx={fieldLabelSx}>
               PROJECT NAME{" "}
-              <Box component="span" sx={{ color: "#EF4444" }}>
+              <AiaBox component="span" sx={{ color: "#EF4444" }}>
                 *
-              </Box>
-            </Typography>
-            <TextField
+              </AiaBox>
+            </AiaText>
+            <AiaInput
               fullWidth
               value={projectName}
-              onChange={(event) => setProjectName(event.target.value)}
-              placeholder="e.g. Marketing Analytics"
+              onChange={setProjectName}
+              placeholder="e.g. Customer 360 Migration"
               sx={inputSx}
             />
-          </Box>
+          </AiaBox>
 
-          <Box sx={{ mb: 2 }}>
-            <Typography sx={fieldLabelSx}>DESCRIPTION (optional)</Typography>
-            <TextField
+          <AiaBox sx={{ mb: 2 }}>
+            <AiaText sx={fieldLabelSx}>DESCRIPTION *</AiaText>
+            <AiaInput
               fullWidth
               multiline
               minRows={3}
               value={description}
-              onChange={(event) => setDescription(event.target.value)}
-              placeholder="Brief description of what this project covers..."
+              onChange={setDescription}
+              placeholder="e.g. Consolidate CRM and billing data into a trusted customer model"
               sx={inputSx}
             />
-          </Box>
+          </AiaBox>
 
-          <Box sx={{ mb: 2 }}>
-            <Typography sx={fieldLabelSx}>PROJECT COLOUR</Typography>
-            <Box sx={{ display: "flex", flexWrap: "wrap", gap: 1.1 }}>
+          <AiaBox sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5, mb: 2 }}>
+            <AiaBox>
+              <AiaText sx={fieldLabelSx}>BUSINESS DOMAIN *</AiaText>
+              <AiaInput
+                fullWidth
+                value={domain}
+                onChange={setDomain}
+                placeholder="e.g. Retail banking"
+                sx={inputSx}
+              />
+            </AiaBox>
+            <AiaBox>
+              <AiaText sx={fieldLabelSx}>OWNER (optional)</AiaText>
+              <AiaInput
+                fullWidth
+                value={owner}
+                onChange={setOwner}
+                placeholder="e.g. Customer Data Office"
+                sx={inputSx}
+              />
+            </AiaBox>
+          </AiaBox>
+
+          <AiaBox sx={{ mb: 2 }}>
+            <AiaText sx={fieldLabelSx}>INTENDED OUTCOME *</AiaText>
+            <AiaInput
+              fullWidth
+              value={intendedOutcome}
+              onChange={setIntendedOutcome}
+              placeholder="e.g. A publish-ready customer mapping for analytics and operations"
+              sx={inputSx}
+            />
+          </AiaBox>
+
+          <AiaBox sx={{ mb: 2 }}>
+            <AiaText sx={fieldLabelSx}>IMPORTANT BUSINESS PROCESS *</AiaText>
+            <AiaInput
+              fullWidth
+              value={businessProcess}
+              onChange={setBusinessProcess}
+              placeholder="e.g. Customer onboarding and account servicing"
+              sx={inputSx}
+            />
+          </AiaBox>
+
+          {availableProjects.length ? (
+            <AiaBox sx={{ mb: 2 }}>
+              <AiaText sx={fieldLabelSx}>REUSE KNOWLEDGE FROM (optional)</AiaText>
+              <AiaSelect
+                multiple
+                value={linkedProjectIds}
+                options={availableProjects.map((project) => ({
+                  value: project.id,
+                  label: project.name,
+                }))}
+                placeholder="Select precedent projects"
+                onChange={(value) => setLinkedProjectIds(Array.isArray(value) ? value : [])}
+              />
+              <AiaText sx={{ mt: 0.75, fontSize: 11, color: '#94A3B8', lineHeight: 1.45 }}>
+                Validated mappings, joins, transformations, and derived-source patterns from selected projects may be reused. Project-specific values remain excluded.
+              </AiaText>
+            </AiaBox>
+          ) : null}
+
+          <AiaBox sx={{ mb: 2 }}>
+            <AiaText sx={fieldLabelSx}>PROJECT COLOUR</AiaText>
+            <AiaBox sx={{ display: "flex", flexWrap: "wrap", gap: 1.1 }}>
               {PROJECT_COLOR_OPTIONS.map((color) => {
                 const selected = selectedColorId === color.id;
 
                 return (
-                  <IconButton
+                  <AiaIconButton
                     key={color.id}
                     aria-label={color.label}
                     aria-pressed={selected}
@@ -247,13 +337,13 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
                     }}
                   >
                     {selected ? <CheckRoundedIcon sx={{ fontSize: 14, color: "#FFFFFF" }} /> : null}
-                  </IconButton>
+                  </AiaIconButton>
                 );
               })}
-            </Box>
-          </Box>
+            </AiaBox>
+          </AiaBox>
 
-          <Box
+          <AiaBox
             sx={{
               borderRadius: "12px",
               border: "1px solid #E5E7EB",
@@ -262,8 +352,8 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
               bgcolor: "#FFFFFF",
             }}
           >
-            <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.25, p: 1.5 }}>
-              <Box
+            <AiaBox sx={{ display: "flex", alignItems: "flex-start", gap: 1.25, p: 1.5 }}>
+              <AiaBox
                 sx={{
                   width: 36,
                   height: 36,
@@ -277,9 +367,9 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
                 }}
               >
                 <FolderOutlinedIcon sx={{ fontSize: 18 }} />
-              </Box>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography
+              </AiaBox>
+              <AiaBox sx={{ minWidth: 0 }}>
+                <AiaText
                   sx={{
                     fontSize: 14,
                     fontWeight: 700,
@@ -288,16 +378,16 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
                   }}
                 >
                   {previewName}
-                </Typography>
-                <Typography sx={{ mt: 0.35, fontSize: 12, color: "#94A3B8", lineHeight: 1.4 }}>
+                </AiaText>
+                <AiaText sx={{ mt: 0.35, fontSize: 12, color: "#94A3B8", lineHeight: 1.4 }}>
                   {previewDescription}
-                </Typography>
-              </Box>
-            </Box>
-          </Box>
-        </Box>
+                </AiaText>
+              </AiaBox>
+            </AiaBox>
+          </AiaBox>
+        </AiaBox>
 
-        <Box
+        <AiaBox
           sx={{
             px: 2.5,
             py: 1.75,
@@ -308,7 +398,7 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
             backgroundColor: "#FFFFFF",
           }}
         >
-          <Button
+          <AiaButton
             variant="outlined"
             onClick={handleClose}
             sx={{
@@ -327,8 +417,8 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
             }}
           >
             Cancel
-          </Button>
-          <Button
+          </AiaButton>
+          <AiaButton
             variant="contained"
             disabled={!canCreate}
             onClick={handleCreate}
@@ -355,9 +445,9 @@ export default function NewProjectModal({ open, onClose, onCreate }: NewProjectM
             }}
           >
             Create Project
-          </Button>
-        </Box>
-      </Box>
-    </Box>
+          </AiaButton>
+        </AiaBox>
+      </AiaBox>
+    </AiaBox>
   );
 }

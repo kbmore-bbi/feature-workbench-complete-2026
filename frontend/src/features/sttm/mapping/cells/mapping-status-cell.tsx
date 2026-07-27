@@ -1,6 +1,7 @@
 import { AiaChipCell } from '@/components/ui/aia-table';
 import type { SxProps, Theme } from '@mui/material/styles';
 import type { MappingStatus } from '@/features/sttm/types/sttm.types';
+import type { AiaChipColor } from '@/components/ui/aia-chip';
 
 type MappingStatusCellProps = {
   status: MappingStatus;
@@ -16,35 +17,11 @@ const STATUS_LABELS: Record<MappingStatus, string> = {
   UNMAPPED: 'Unmapped',
 };
 
-const MAPPED_SX = {
-  height: 22,
-  fontSize: '0.7rem',
-  fontWeight: 700,
-  bgcolor: '#dcfce7',
-  color: '#166534',
-  border: '1px solid #bbf7d0',
-  borderRadius: '999px',
-} as const;
-
-const UNMAPPED_SX = {
-  height: 22,
-  fontSize: '0.7rem',
-  fontWeight: 700,
-  bgcolor: '#ffedd5',
-  color: '#c2410c',
-  border: '1px solid #fed7aa',
-  borderRadius: '999px',
-} as const;
-
-const PROCESSING_SX = {
-  height: 22,
-  fontSize: '0.7rem',
-  fontWeight: 700,
-  bgcolor: '#eff6ff',
-  color: '#1d4ed8',
-  border: '1px solid #bfdbfe',
-  borderRadius: '999px',
-} as const;
+const STATUS_COLORS: Record<MappingStatus, AiaChipColor> = {
+  MAPPED: 'success',
+  PROCESSING: 'primary',
+  UNMAPPED: 'warning',
+};
 
 export const MappingStatusCell = ({
   status,
@@ -56,7 +33,7 @@ export const MappingStatusCell = ({
   <AiaChipCell
     align={align}
     label={STATUS_LABELS[status]}
-    chipSx={status === 'MAPPED' ? MAPPED_SX : status === 'PROCESSING' ? PROCESSING_SX : UNMAPPED_SX}
+    color={STATUS_COLORS[status]}
     width={width}
     minWidth={minWidth}
     sx={sx}

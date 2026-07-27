@@ -1,15 +1,17 @@
 export const SQL_PREVIEW_WORKSPACE_BG = '#0b1220';
 
-export const SQL_PREVIEW_STAT_PILL_SX = {
-  px: 1,
-  py: 0.45,
-  borderRadius: '999px',
-  border: '1px solid rgba(148,163,184,0.18)',
-  backgroundColor: 'rgba(15,23,42,0.72)',
-  color: '#cbd5e1',
-  fontSize: '0.73rem',
-  fontWeight: 800,
-  whiteSpace: 'nowrap',
+/** Dark-surface chip colors; font comes from AiaChip defaults. */
+export const SQL_PREVIEW_CHIP_PROPS = {
+  customBackgroundColor: 'rgba(15,23,42,0.72)',
+  customColor: '#cbd5e1',
+  customBorderColor: 'rgba(148,163,184,0.18)',
+} as const;
+
+/** Count badges (mapped, tables, filters, joins, tab counts). */
+export const SQL_PREVIEW_COUNT_CHIP_PROPS = {
+  customBackgroundColor: 'var(--color-primary)',
+  customColor: '#ffffff',
+  customBorderColor: 'var(--color-primary)',
 } as const;
 
 export const SQL_PREVIEW_SECTION_SX = {

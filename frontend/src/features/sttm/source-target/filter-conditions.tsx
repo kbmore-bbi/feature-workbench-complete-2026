@@ -1,9 +1,12 @@
 "use client";
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import React, { useMemo, useState } from "react";
-import { Box, Typography } from "@mui/material";
+
 import type { SxProps, Theme } from "@mui/material/styles";
 import type {
+  JoinConfig,
   TableMeta,
   RuleLogic,
   RuleCondition,
@@ -11,9 +14,16 @@ import type {
   RuleNode,
 } from "@/features/sttm/types/sttm.types";
 import { AiaButton } from "@/components/ui/aia-button";
+import { AiaChip } from "@/components/ui/aia-chip";
+import { textStyleCssVars } from "@/config/typography-tokens";
+import { AddIcon, FilterListRoundedIcon } from "@/utils/icons";
 import { AiaSelect } from "@/components/ui/aia-select";
+import { AiaAutocomplete } from "@/components/ui/aia-auto-complete";
 import { AiaInput } from "@/components/ui/aia-input";
-import { SqlEditor, SQL_EDITOR_PREVIEW_HEIGHT } from "@/components/sql";
+import { SqlEditor } from "@/components/sql";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+import { getApiErrorMessage } from "@/api/axiosInstance";
+import { dbService } from "@/services/dbService";
 
 export type { RuleLogic, RuleCondition, RuleGroup, RuleNode };
 
@@ -57,6 +67,10 @@ interface FilterConditionsProps {
   initialGroupBy?: string[];
   initialOrderBy?: string[];
   previewSql?: string;
+  expandedPreviewSql?: string;
+  expandedReferenceReplacements?: Record<string, string>;
+  relationships?: JoinConfig[];
+  drivingTableId?: string | null;
   previewLabel?: string;
   showPreview?: boolean;
 }
@@ -67,6 +81,7 @@ const DEFAULT_CONTROL_SIZES: Required<FilterControlSizes> = {
   valueMaxPx: 152,
   groupLogicWidthPx: 88,
 };
+const SOURCE_QUERY_PREVIEW_HEIGHT = 420;
 
 function serializeRuleNode(node: RuleNode): string {
   if (node.type === "condition") {
@@ -116,6 +131,10 @@ export function FilterConditions({
   initialGroupBy,
   initialOrderBy,
   previewSql,
+  expandedPreviewSql,
+  expandedReferenceReplacements,
+  relationships = [],
+  drivingTableId,
   previewLabel = "QUERY PREVIEW",
   showPreview = true,
 }: FilterConditionsProps) {
@@ -136,6 +155,16 @@ export function FilterConditions({
       lineHeight: 1.35,
     },
   };
+
+  const fieldAutocompleteSx: SxProps<Theme> = {
+    ...selectDensitySx,
+    "& .MuiInputBase-input, & .MuiAutocomplete-input": {
+      py: "6px !important",
+      fontSize: 12,
+      lineHeight: 1.35,
+    },
+  };
+
   const allFields = useMemo(() => {
     return tables.flatMap((t) => {
       const schema = t.schema ?? "";
@@ -144,7 +173,11 @@ export function FilterConditions({
       return cols.map((c) => {
         const colName = c.name ?? "";
         const full = `${schema}.${name}.${colName}`.replace(/\.+/g, ".");
-        return { value: full, label: full };
+        return {
+          value: full,
+          label: colName,
+          group: name,
+        };
       });
     });
   }, [tables]);
@@ -172,6 +205,12 @@ export function FilterConditions({
     [allFields]
   );
 
+  const toFieldValue = React.useCallback(
+    (val: string | string[]) =>
+      normalizeFieldValue(Array.isArray(val) ? val[0] ?? "" : String(val)),
+    [normalizeFieldValue]
+  );
+
   const normalizeRuleNode = React.useCallback(
     (node: RuleGroup | RuleCondition): RuleGroup | RuleCondition => {
       if (node.type === "condition") {
@@ -196,6 +235,17 @@ export function FilterConditions({
   );
 
   const [rootGroups, _setRootGroups] = useState<RuleGroup[]>(cloneRuleGroups(initialGroups));
+  const [previewMode, setPreviewMode] = useState<"runtime" | "expanded">("runtime");
+  const [previewOverrides, setPreviewOverrides] = useState<Partial<Record<"runtime" | "expanded", string>>>({});
+  const [isValidatingPreview, setIsValidatingPreview] = useState(false);
+  const [previewValidation, setPreviewValidation] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+  const [validatedPreview, setValidatedPreview] = useState<{
+    columns: Array<{ name: string; dataType: string }>;
+    rows: Array<Record<string, unknown>>;
+  } | null>(null);
   const [activeTab, setActiveTab] = useState<"filters" | "grouping" | "sorting">("filters");
   const [groupByItems, setGroupByItems] = useState<GroupByItem[]>(
     (initialGroupBy ?? []).map((field) => ({
@@ -544,12 +594,13 @@ export function FilterConditions({
   const renderNode = (node: RuleNode, prefix: string) => {
     if (node.type === "group") {
       return (
-        <Box key={node.id} sx={{ display: "flex", flexDirection: "column" }}>
-          <Box
+        <AiaBox key={node.id} sx={{ display: "flex", flexDirection: "column" }}>
+          <AiaBox
             sx={{
               display: "flex",
               alignItems: "center",
               gap: 1.25,
+              width: "100%",
               minHeight: 40,
               py: 0.5,
               borderRadius: 1,
@@ -559,13 +610,13 @@ export function FilterConditions({
               },
             }}
           >
-            <Box sx={{ width: 52, textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
+            <AiaBox sx={{ width: 52, textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
               {prefix}
-            </Box>
+            </AiaBox>
 
-            <Box sx={{ width: 12, color: "#cbd5e1", fontSize: 12 }}>▼</Box>
+            <AiaBox sx={{ width: 12, color: "#cbd5e1", fontSize: 12 }}>▼</AiaBox>
 
-            <Box sx={{ width: cw.groupLogicWidthPx, flexShrink: 0 }}>
+            <AiaBox sx={{ width: cw.groupLogicWidthPx, flexShrink: 0 }}>
               <AiaSelect
                 options={[
                   { label: "All", value: "AND" },
@@ -578,19 +629,20 @@ export function FilterConditions({
                 fullWidth
                 sx={{ width: "100%", ...selectDensitySx }}
               />
-            </Box>
+            </AiaBox>
 
-            <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+            <AiaText sx={{ fontSize: 12, color: "#64748b", flexShrink: 0 }}>
               of the conditions in this branch must match
-            </Typography>
+            </AiaText>
 
-            <Box
+            <AiaBox
               className="filter-row-actions"
               sx={{
-                ml: "auto",
                 display: "flex",
                 alignItems: "center",
-                gap: 1,
+                gap: 0.75,
+                flexShrink: 0,
+                ml: "auto",
                 opacity: 0,
                 pointerEvents: "none",
                 transition: "opacity 0.18s ease",
@@ -599,40 +651,48 @@ export function FilterConditions({
               <AiaButton
                 variant="outlined"
                 size="small"
-                rounded="full"
                 onClick={() => handleAddCondition(node.id)}
-                customBorderColor="#e5e7eb"
-                customBackgroundColor="#ffffff"
-                customHoverBackgroundColor="#f8fafc"
-                customColor="#374151"
+                sx={{ minWidth: 0, boxShadow: "none" }}
+                customBorderColor="var(--aia-button-color)"
+                customColor="var(--aia-button-color)"
+                customHoverBackgroundColor="color-mix(in srgb, var(--aia-button-color) 6%, transparent)"
               >
                 + Condition
               </AiaButton>
               <AiaButton
                 variant="outlined"
                 size="small"
-                rounded="full"
                 onClick={() => handleAddGroup(node.id)}
-                customBorderColor="#bfdbfe"
-                customBackgroundColor="#eff6ff"
-                customHoverBackgroundColor="#dbeafe"
-                customColor="#1d4ed8"
+                sx={{ minWidth: 0, boxShadow: "none" }}
+                customBorderColor="var(--aia-button-color)"
+                customColor="var(--aia-button-color)"
+                customHoverBackgroundColor="color-mix(in srgb, var(--aia-button-color) 6%, transparent)"
               >
                 + Sub-group
               </AiaButton>
               <AiaButton
-                variant="text"
+                variant="outlined"
                 size="small"
-                rounded="full"
                 onClick={() => handleDelete(node.id)}
-                customColor="#ef4444"
+                sx={{
+                  minWidth: 28,
+                  width: 28,
+                  height: 28,
+                  p: 0,
+                  fontSize: 14,
+                  lineHeight: 1,
+                  boxShadow: "none",
+                }}
+                customBorderColor="var(--aia-button-color)"
+                customColor="var(--aia-button-color)"
+                customHoverBackgroundColor="color-mix(in srgb, var(--aia-button-color) 6%, transparent)"
               >
                 ✕
               </AiaButton>
-            </Box>
-          </Box>
+            </AiaBox>
+          </AiaBox>
 
-          <Box
+          <AiaBox
             sx={{
               ml: 6.5,
               borderLeft: "1px solid #e2e8f0",
@@ -646,18 +706,19 @@ export function FilterConditions({
             {node.children.map((child, idx) =>
               renderNode(child, `${prefix}.${idx + 1}`)
             )}
-          </Box>
-        </Box>
+          </AiaBox>
+        </AiaBox>
       );
     }
 
     return (
-      <Box
+      <AiaBox
         key={node.id}
         sx={{
           display: "flex",
           alignItems: "center",
           gap: 1.25,
+          width: "100%",
           minHeight: 40,
           borderRadius: 1,
           "&:hover .filter-row-actions, &:focus-within .filter-row-actions": {
@@ -666,11 +727,11 @@ export function FilterConditions({
           },
         }}
       >
-        <Box sx={{ width: 52, textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
+        <AiaBox sx={{ width: 52, textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
           {prefix}
-        </Box>
+        </AiaBox>
 
-        <Box
+        <AiaBox
           sx={{
             flex: "0 1 auto",
             maxWidth: cw.fieldSelectMaxPx,
@@ -678,17 +739,20 @@ export function FilterConditions({
             minWidth: 0,
           }}
         >
-          <AiaSelect
+          <AiaAutocomplete
+            hideLabel
+            freeSolo
             options={allFields}
+            groupBy={(option) => option.group ?? ""}
             value={node.field}
-            placeholder="Select field…"
-            onChange={(val) => handleUpdateCondition(node.id, { field: String(val) })}
+            placeholder="Search field…"
+            onChange={(val) => handleUpdateCondition(node.id, { field: toFieldValue(val) })}
             fullWidth
-            sx={{ maxWidth: "100%", ...selectDensitySx }}
+            sx={{ maxWidth: "100%", ...fieldAutocompleteSx }}
           />
-        </Box>
+        </AiaBox>
 
-        <Box sx={{ width: cw.operatorWidthPx, flexShrink: 0 }}>
+        <AiaBox sx={{ width: cw.operatorWidthPx, flexShrink: 0 }}>
           <AiaSelect
             options={[
               { label: "=", value: "=" },
@@ -712,11 +776,11 @@ export function FilterConditions({
             fullWidth
             sx={{ width: "100%", ...selectDensitySx }}
           />
-        </Box>
+        </AiaBox>
 
         {!["IS NULL", "IS NOT NULL"].includes(node.operator.toUpperCase()) ? (
           <>
-            <Box sx={{ width: 92, flexShrink: 0 }}>
+            <AiaBox sx={{ width: 92, flexShrink: 0 }}>
               <AiaSelect
                 options={[
                   { label: "Value", value: "literal" },
@@ -733,9 +797,9 @@ export function FilterConditions({
                 fullWidth
                 sx={{ width: "100%", ...selectDensitySx }}
               />
-            </Box>
+            </AiaBox>
 
-            <Box
+            <AiaBox
               sx={{
                 width: "100%",
                 maxWidth: cw.valueMaxPx,
@@ -743,13 +807,18 @@ export function FilterConditions({
               }}
             >
               {node.valueMode === "field" ? (
-                <AiaSelect
+                <AiaAutocomplete
+                  hideLabel
+                  freeSolo
                   options={allFields}
+                  groupBy={(option) => option.group ?? ""}
                   value={node.valueField ?? ""}
-                  placeholder="Select column…"
-                  onChange={(val) => handleUpdateCondition(node.id, { valueField: String(val) })}
+                  placeholder="Search column…"
+                  onChange={(val) =>
+                    handleUpdateCondition(node.id, { valueField: toFieldValue(val) })
+                  }
                   fullWidth
-                  sx={{ maxWidth: "100%", ...selectDensitySx }}
+                  sx={{ maxWidth: "100%", ...fieldAutocompleteSx }}
                 />
               ) : (
                 <AiaInput
@@ -760,14 +829,14 @@ export function FilterConditions({
                   sx={inputDensitySx}
                 />
               )}
-            </Box>
+            </AiaBox>
 
             {["BETWEEN", "NOT BETWEEN"].includes(node.operator.toUpperCase()) ? (
               <>
-                <Typography sx={{ fontSize: 12, color: "#64748b", flexShrink: 0 }}>
+                <AiaText sx={{ fontSize: 12, color: "#64748b", flexShrink: 0 }}>
                   and
-                </Typography>
-                <Box sx={{ width: 92, flexShrink: 0 }}>
+                </AiaText>
+                <AiaBox sx={{ width: 92, flexShrink: 0 }}>
                   <AiaSelect
                     options={[
                       { label: "Value", value: "literal" },
@@ -784,8 +853,8 @@ export function FilterConditions({
                     fullWidth
                     sx={{ width: "100%", ...selectDensitySx }}
                   />
-                </Box>
-                <Box
+                </AiaBox>
+                <AiaBox
                   sx={{
                     width: "100%",
                     maxWidth: cw.valueMaxPx,
@@ -793,15 +862,20 @@ export function FilterConditions({
                   }}
                 >
                   {node.secondaryValueMode === "field" ? (
-                    <AiaSelect
+                    <AiaAutocomplete
+                      hideLabel
+                      freeSolo
                       options={allFields}
+                      groupBy={(option) => option.group ?? ""}
                       value={node.secondaryValueField ?? ""}
-                      placeholder="Select column…"
+                      placeholder="Search column…"
                       onChange={(val) =>
-                        handleUpdateCondition(node.id, { secondaryValueField: String(val) })
+                        handleUpdateCondition(node.id, {
+                          secondaryValueField: toFieldValue(val),
+                        })
                       }
                       fullWidth
-                      sx={{ maxWidth: "100%", ...selectDensitySx }}
+                      sx={{ maxWidth: "100%", ...fieldAutocompleteSx }}
                     />
                   ) : (
                     <AiaInput
@@ -812,46 +886,171 @@ export function FilterConditions({
                       sx={inputDensitySx}
                     />
                   )}
-                </Box>
+                </AiaBox>
               </>
             ) : null}
           </>
         ) : null}
 
-        <Box
+        <AiaBox
           className="filter-row-actions"
           sx={{
             display: "flex",
             alignItems: "center",
+            gap: 0.75,
             flexShrink: 0,
+            ml: "auto",
             opacity: 0,
             pointerEvents: "none",
             transition: "opacity 0.18s ease",
           }}
         >
           <AiaButton
-            variant="text"
+            variant="outlined"
             size="small"
-            rounded="full"
             onClick={() => handleDelete(node.id)}
-            customColor="#ef4444"
+            sx={{
+              minWidth: 28,
+              width: 28,
+              height: 28,
+              p: 0,
+              fontSize: 14,
+              lineHeight: 1,
+              boxShadow: "none",
+            }}
+            customBorderColor="var(--aia-button-color)"
+            customColor="var(--aia-button-color)"
+            customHoverBackgroundColor="color-mix(in srgb, var(--aia-button-color) 6%, transparent)"
           >
             ✕
           </AiaButton>
-        </Box>
-      </Box>
+        </AiaBox>
+      </AiaBox>
     );
   };
 
   const fullSql = rootGroups.map((g) => generateSQL(g, 0)).join("\n\nAND\n\n");
-  const resolvedPreviewSql = [
-    previewSql?.trim() ?? "",
+  const selectedPreviewSql = previewMode === "expanded" && expandedPreviewSql
+    ? expandedPreviewSql
+    : previewSql;
+  let resolvedPreviewSql = [
+    selectedPreviewSql?.trim() ?? "",
     fullSql ? `WHERE\n${fullSql}` : "",
     groupBySql ? `GROUP BY\n  ${groupBySql}` : "",
     orderBySql ? `ORDER BY\n  ${orderBySql}` : "",
   ]
     .filter(Boolean)
     .join("\n\n");
+  if (previewMode === "expanded") {
+    for (const [reference, alias] of Object.entries(expandedReferenceReplacements ?? {})) {
+      resolvedPreviewSql = resolvedPreviewSql.split(reference).join(alias);
+    }
+  }
+  const editablePreviewSql = previewOverrides[previewMode] ?? resolvedPreviewSql;
+  const hasPreviewOverride = previewOverrides[previewMode] !== undefined;
+
+  const handlePreviewSqlChange = (nextSql: string) => {
+    setPreviewOverrides((current) => ({ ...current, [previewMode]: nextSql }));
+    setPreviewValidation(null);
+    setValidatedPreview(null);
+  };
+
+  const handleResetPreviewSql = () => {
+    setPreviewOverrides((current) => {
+      const next = { ...current };
+      delete next[previewMode];
+      return next;
+    });
+    setPreviewValidation(null);
+    setValidatedPreview(null);
+  };
+
+  const handleValidatePreviewSql = async () => {
+    if (!editablePreviewSql.trim()) {
+      setPreviewValidation({ type: "error", message: "Enter SQL before validating the query." });
+      return;
+    }
+
+    const tableById = new Map(tables.map((table) => [table.id, table]));
+    const toTableRef = (table: TableMeta | undefined) => ({
+      database: table?.database ?? "",
+      schema: table?.schema ?? "",
+      table: table?.name ?? "",
+    });
+    const sourceTables = tables
+      .map((table) => toTableRef(table))
+      .filter((table) => table.database && table.schema && table.table);
+    const drivingTable = toTableRef(
+      drivingTableId ? tableById.get(drivingTableId) : undefined,
+    );
+
+    try {
+      setIsValidatingPreview(true);
+      setPreviewValidation(null);
+      setValidatedPreview(null);
+      const result = await dbService.validateDerivedSource({
+        derived_source_name: "__selection_query_validation__",
+        sql_text: editablePreviewSql,
+        source_tables: sourceTables,
+        driving_table: drivingTable.database && drivingTable.schema && drivingTable.table
+          ? drivingTable
+          : null,
+        relationships: relationships
+          .map((relationship) => ({
+            id: relationship.id,
+            left_table: toTableRef(tableById.get(relationship.leftTableId)),
+            right_table: toTableRef(tableById.get(relationship.rightTableId)),
+            join_type: relationship.joinType ?? "INNER",
+            constraint_name: relationship.constraintName ?? null,
+            source: relationship.source ?? "USER_DEFINED",
+            locked: relationship.locked ?? false,
+            conditions: (relationship.conditions ?? [])
+              .filter((condition) => condition.leftColumn && condition.rightColumn)
+              .map((condition) => ({
+                left_column: condition.leftColumn as string,
+                right_column: condition.rightColumn as string,
+                operator: condition.operator ?? "=",
+              })),
+          }))
+          .filter(
+            (relationship) =>
+              relationship.left_table.database &&
+              relationship.left_table.schema &&
+              relationship.left_table.table &&
+              relationship.right_table.database &&
+              relationship.right_table.schema &&
+              relationship.right_table.table,
+          ),
+        filters: rootGroups,
+      });
+      if (!result.valid) {
+        setPreviewValidation({
+          type: "error",
+          message: result.message || "Snowflake did not accept the query.",
+        });
+        return;
+      }
+      const rowCount = result.preview_rows?.length ?? 0;
+      setValidatedPreview({
+        columns: (result.preview_columns ?? []).map((column) => ({
+          name: column.name,
+          dataType: column.data_type,
+        })),
+        rows: (result.preview_rows ?? []).map((row) => row.values),
+      });
+      setPreviewValidation({
+        type: "success",
+        message: result.message || `SQL is valid. The preview query returned ${rowCount} sample row${rowCount === 1 ? "" : "s"}.`,
+      });
+    } catch (error) {
+      setPreviewValidation({
+        type: "error",
+        message: getApiErrorMessage(error, "Unable to validate the query in Snowflake."),
+      });
+    } finally {
+      setIsValidatingPreview(false);
+    }
+  };
 
   const rootCount = rootGroups.length;
   const rootBadgeLabel =
@@ -873,71 +1072,98 @@ export function FilterConditions({
   });
 
   return (
-    <Box
+    <AiaBox
       className="filter-section"
       sx={{
         backgroundColor: "#ffffff",
         minHeight: 420,
         display: "flex",
         flexDirection: "column",
-        pb: showPreview && tables.length > 0 ? 3 : 0,
+        pb: 0,
       }}
     >
-      <Box
+      <AiaBox
         className="filter-header"
         sx={{
           px: 3,
-          py: 2,
+          minHeight: "var(--aia-workspace-section-header-min-height)",
           borderBottom: "1px solid #e5e7eb",
           flexShrink: 0,
           gap: 2,
+          overflow: "visible",
         }}
       >
-        <Box
+        <AiaBox
           sx={{
             display: "flex",
             alignItems: "center",
-            gap: "10px",
+            gap: 1.25,
             flexWrap: "wrap",
             flex: 1,
             minWidth: 0,
+            overflow: "visible",
           }}
         >
-          <Typography
+          <FilterListRoundedIcon
             sx={{
-              fontSize: 15,
-              fontWeight: 800,
-              color: "#0f172a",
-              letterSpacing: "-0.02em",
+              fontSize: "calc(var(--aia-card-title-font-size) + 2px)",
+              color: "var(--aia-card-title-color)",
+              flexShrink: 0,
+            }}
+            aria-hidden
+          />
+          <AiaText
+            sx={{
+              ...textStyleCssVars("cardTitle"),
+              textTransform: "capitalize",
+              letterSpacing: "-0.01em",
             }}
           >
-            Filter Conditions
-          </Typography>
-          <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+            Filter conditions
+          </AiaText>
+          <AiaText sx={{ fontSize: 12, color: "#64748b" }}>
             Query builder
-          </Typography>
-          <span className="canvas-area__badge">
-            {activeTab === "filters"
-              ? rootBadgeLabel
-              : activeTab === "grouping"
-                ? groupingBadgeLabel
-                : sortingBadgeLabel}
-          </span>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <button type="button" style={tabButtonSx(activeTab === "filters")} onClick={() => setActiveTab("filters")}>
+          </AiaText>
+          <AiaChip
+            size="small"
+            color="primary"
+            label={
+              activeTab === "filters"
+                ? rootBadgeLabel
+                : activeTab === "grouping"
+                  ? groupingBadgeLabel
+                  : sortingBadgeLabel
+            }
+          />
+          <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+            <button
+              type="button"
+              style={tabButtonSx(activeTab === "filters")}
+              onClick={() => setActiveTab("filters")}
+            >
               Filters
             </button>
-            <button type="button" style={tabButtonSx(activeTab === "grouping")} onClick={() => setActiveTab("grouping")}>
+            <button
+              type="button"
+              style={tabButtonSx(activeTab === "grouping")}
+              onClick={() => setActiveTab("grouping")}
+            >
               Grouping
             </button>
-            <button type="button" style={tabButtonSx(activeTab === "sorting")} onClick={() => setActiveTab("sorting")}>
+            <button
+              type="button"
+              style={tabButtonSx(activeTab === "sorting")}
+              onClick={() => setActiveTab("sorting")}
+            >
               Sorting
             </button>
-          </Box>
-        </Box>
-        <button
-          type="button"
-          className="canvas-area__add-btn"
+          </AiaBox>
+        </AiaBox>
+        <AiaButton
+          data-tour={TOUR_TARGETS.sttmAddGroup}
+          size="small"
+          variant="outlined"
+          startIcon={<AddIcon sx={{ fontSize: 18 }} />}
           onClick={
             activeTab === "filters"
               ? handleAddRootGroup
@@ -946,25 +1172,24 @@ export function FilterConditions({
                 : handleAddOrderBy
           }
           disabled={tables.length === 0}
-          style={{
-            opacity: tables.length === 0 ? 0.5 : 1,
-            cursor: tables.length === 0 ? "not-allowed" : "pointer",
-            flexShrink: 0,
-          }}
+          sx={{ minWidth: 0, boxShadow: "none", flexShrink: 0 }}
+          customBorderColor="var(--aia-state-success-color)"
+          customColor="var(--aia-state-success-color)"
+          customHoverBackgroundColor="var(--aia-state-success-hover-bg)"
         >
           {activeTab === "filters"
-            ? "+ Add Group"
+            ? "Add Group"
             : activeTab === "grouping"
-              ? "+ Add Grouping"
-              : "+ Add Sort"}
-        </button>
-      </Box>
+              ? "Add Grouping"
+              : "Add Sort"}
+        </AiaButton>
+      </AiaBox>
 
-      <Box
+      <AiaBox
         className="filter-body"
         sx={{
           px: 3,
-          pb: 3,
+          pb: showPreview && tables.length > 0 ? 0 : 3,
           flex: 1,
           minHeight: 320,
           display: "flex",
@@ -978,10 +1203,9 @@ export function FilterConditions({
               here so you can define filter conditions.
             </div>
           </div>
-        ) : (
-          activeTab === "filters" ? (
+        ) : activeTab === "filters" ? (
           <>
-            <Box
+            <AiaBox
               sx={{
                 display: "flex",
                 alignItems: "center",
@@ -993,160 +1217,304 @@ export function FilterConditions({
                 letterSpacing: "0.08em",
               }}
             >
-              <Box sx={{ width: 52, textAlign: "center" }}>#</Box>
-              <Box sx={{ flex: 1 }}>CONDITION / GROUP</Box>
-            </Box>
+              <AiaBox sx={{ width: 52, textAlign: "center" }}>#</AiaBox>
+              <AiaBox sx={{ flex: 1 }}>CONDITION / GROUP</AiaBox>
+            </AiaBox>
 
-            <Box sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.25 }}>
+            <AiaBox sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.25 }}>
               {rootGroups.map((group, idx) => renderNode(group, `${idx + 1}`))}
-            </Box>
+            </AiaBox>
           </>
-          ) : activeTab === "grouping" ? (
-            <Box sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.25 }}>
-              <Box
+        ) : activeTab === "grouping" ? (
+          <AiaBox sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.25 }}>
+            <AiaBox
+              sx={{
+                display: "grid",
+                gridTemplateColumns: "52px minmax(0, 320px) auto",
+                gap: 1.25,
+                alignItems: "center",
+                py: 1.25,
+                borderBottom: "1px solid #f1f5f9",
+                color: "#94a3b8",
+                fontSize: 10,
+                fontWeight: 800,
+                letterSpacing: "0.08em",
+              }}
+            >
+              <AiaBox sx={{ textAlign: "center" }}>#</AiaBox>
+              <AiaBox>GROUP BY FIELD</AiaBox>
+              <AiaBox />
+            </AiaBox>
+            {groupByItems.map((item, idx) => (
+              <AiaBox
+                key={item.id}
                 sx={{
                   display: "grid",
                   gridTemplateColumns: "52px minmax(0, 320px) auto",
                   gap: 1.25,
                   alignItems: "center",
-                  py: 1.25,
-                  borderBottom: "1px solid #f1f5f9",
-                  color: "#94a3b8",
-                  fontSize: 10,
-                  fontWeight: 800,
-                  letterSpacing: "0.08em",
+                  minHeight: 40,
                 }}
               >
-                <Box sx={{ textAlign: "center" }}>#</Box>
-                <Box>GROUP BY FIELD</Box>
-                <Box />
-              </Box>
-              {groupByItems.map((item, idx) => (
-                <Box
-                  key={item.id}
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: "52px minmax(0, 320px) auto",
-                    gap: 1.25,
-                    alignItems: "center",
-                    minHeight: 40,
-                  }}
+                <AiaBox sx={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
+                  {idx + 1}
+                </AiaBox>
+                <AiaAutocomplete
+                  hideLabel
+                  freeSolo
+                  options={allFields}
+                  groupBy={(option) => option.group ?? ""}
+                  value={item.field}
+                  placeholder="Search field…"
+                  onChange={(val) => handleUpdateGroupBy(item.id, toFieldValue(val))}
+                  fullWidth
+                  sx={{ maxWidth: 320, ...fieldAutocompleteSx }}
+                />
+                <AiaButton
+                  variant="text"
+                  size="small"
+                  rounded="full"
+                  onClick={() => handleDeleteGroupBy(item.id)}
+                  customColor="#ef4444"
                 >
-                  <Box sx={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
-                    {idx + 1}
-                  </Box>
-                  <AiaSelect
-                    options={allFields}
-                    value={item.field}
-                    placeholder="Select field…"
-                    onChange={(val) => handleUpdateGroupBy(item.id, String(val))}
-                    fullWidth
-                    sx={{ maxWidth: 320, ...selectDensitySx }}
-                  />
-                  <AiaButton
-                    variant="text"
-                    size="small"
-                    rounded="full"
-                    onClick={() => handleDeleteGroupBy(item.id)}
-                    customColor="#ef4444"
-                  >
-                    ✕
-                  </AiaButton>
-                </Box>
-              ))}
-            </Box>
-          ) : (
-            <Box sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.25 }}>
-              <Box
+                  ✕
+                </AiaButton>
+              </AiaBox>
+            ))}
+          </AiaBox>
+        ) : (
+          <AiaBox sx={{ mt: 2, display: "flex", flexDirection: "column", gap: 1.25 }}>
+            <AiaBox
+              sx={{
+                display: "grid",
+                gridTemplateColumns: "52px minmax(0, 320px) 120px auto",
+                gap: 1.25,
+                alignItems: "center",
+                py: 1.25,
+                borderBottom: "1px solid #f1f5f9",
+                color: "#94a3b8",
+                fontSize: 10,
+                fontWeight: 800,
+                letterSpacing: "0.08em",
+              }}
+            >
+              <AiaBox sx={{ textAlign: "center" }}>#</AiaBox>
+              <AiaBox>SORT FIELD</AiaBox>
+              <AiaBox>DIRECTION</AiaBox>
+              <AiaBox />
+            </AiaBox>
+            {orderByItems.map((item, idx) => (
+              <AiaBox
+                key={item.id}
                 sx={{
                   display: "grid",
                   gridTemplateColumns: "52px minmax(0, 320px) 120px auto",
                   gap: 1.25,
                   alignItems: "center",
-                  py: 1.25,
-                  borderBottom: "1px solid #f1f5f9",
-                  color: "#94a3b8",
-                  fontSize: 10,
-                  fontWeight: 800,
-                  letterSpacing: "0.08em",
+                  minHeight: 40,
                 }}
               >
-                <Box sx={{ textAlign: "center" }}>#</Box>
-                <Box>SORT FIELD</Box>
-                <Box>DIRECTION</Box>
-                <Box />
-              </Box>
-              {orderByItems.map((item, idx) => (
-                <Box
-                  key={item.id}
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: "52px minmax(0, 320px) 120px auto",
-                    gap: 1.25,
-                    alignItems: "center",
-                    minHeight: 40,
-                  }}
+                <AiaBox sx={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
+                  {idx + 1}
+                </AiaBox>
+                <AiaAutocomplete
+                  hideLabel
+                  freeSolo
+                  options={allFields}
+                  groupBy={(option) => option.group ?? ""}
+                  value={item.field}
+                  placeholder="Search field…"
+                  onChange={(val) =>
+                    handleUpdateOrderBy(item.id, { field: toFieldValue(val) })
+                  }
+                  fullWidth
+                  sx={{ maxWidth: 320, ...fieldAutocompleteSx }}
+                />
+                <AiaSelect
+                  options={[
+                    { label: "Ascending", value: "ASC" },
+                    { label: "Descending", value: "DESC" },
+                  ]}
+                  value={item.direction}
+                  onChange={(val) => handleUpdateOrderBy(item.id, { direction: val as SortDirection })}
+                  fullWidth
+                  sx={{ width: 120, ...selectDensitySx }}
+                />
+                <AiaButton
+                  variant="text"
+                  size="small"
+                  rounded="full"
+                  onClick={() => handleDeleteOrderBy(item.id)}
+                  customColor="#ef4444"
                 >
-                  <Box sx={{ textAlign: "center", color: "#64748b", fontSize: 12, fontWeight: 500 }}>
-                    {idx + 1}
-                  </Box>
-                  <AiaSelect
-                    options={allFields}
-                    value={item.field}
-                    placeholder="Select field…"
-                    onChange={(val) => handleUpdateOrderBy(item.id, { field: String(val) })}
-                    fullWidth
-                    sx={{ maxWidth: 320, ...selectDensitySx }}
-                  />
-                  <AiaSelect
-                    options={[
-                      { label: "Ascending", value: "ASC" },
-                      { label: "Descending", value: "DESC" },
-                    ]}
-                    value={item.direction}
-                    onChange={(val) => handleUpdateOrderBy(item.id, { direction: val as SortDirection })}
-                    fullWidth
-                    sx={{ width: 120, ...selectDensitySx }}
-                  />
-                  <AiaButton
-                    variant="text"
-                    size="small"
-                    rounded="full"
-                    onClick={() => handleDeleteOrderBy(item.id)}
-                    customColor="#ef4444"
-                  >
-                    ✕
-                  </AiaButton>
-                </Box>
-              ))}
-            </Box>
-          )
+                  ✕
+                </AiaButton>
+              </AiaBox>
+            ))}
+          </AiaBox>
         )}
-      </Box>
+      </AiaBox>
 
       {showPreview && tables.length > 0 && (
-        <Box
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            overflow: 'hidden',
-            borderTop: '1px solid #e2e8f0',
-            flexShrink: 0,
-          }}
-        >
+        <AiaBox className="filter-preview">
           <SqlEditor
-            value={resolvedPreviewSql}
-            readOnly
-            title={previewLabel}
+            className="filter-preview__sql-editor"
+            value={editablePreviewSql}
+            onChange={handlePreviewSqlChange}
+            title={previewMode === "expanded" ? `${previewLabel} · DERIVED SOURCES EXPANDED` : previewLabel}
+            toolbarActions={(
+              <>
+                {expandedPreviewSql ? (
+                  <>
+                    <AiaButton
+                      size="small"
+                      variant={previewMode === "runtime" ? "contained" : "outlined"}
+                      onClick={() => setPreviewMode("runtime")}
+                      sx={{ minHeight: 28, py: 0.25, whiteSpace: "nowrap" }}
+                    >
+                      Runtime view
+                    </AiaButton>
+                    <AiaButton
+                      size="small"
+                      variant={previewMode === "expanded" ? "contained" : "outlined"}
+                      onClick={() => setPreviewMode("expanded")}
+                      sx={{ minHeight: 28, py: 0.25, whiteSpace: "nowrap" }}
+                    >
+                      Expanded SQL
+                    </AiaButton>
+                  </>
+                ) : null}
+                {hasPreviewOverride ? (
+                  <AiaButton
+                    size="small"
+                    variant="text"
+                    onClick={handleResetPreviewSql}
+                    sx={{ minHeight: 28, py: 0.25, whiteSpace: "nowrap" }}
+                  >
+                    Reset
+                  </AiaButton>
+                ) : null}
+                <AiaButton
+                  size="small"
+                  variant="outlined"
+                  disabled={isValidatingPreview}
+                  onClick={() => void handleValidatePreviewSql()}
+                  sx={{ minHeight: 28, py: 0.25, whiteSpace: "nowrap" }}
+                >
+                  {isValidatingPreview ? "Validating…" : "Validate & Run"}
+                </AiaButton>
+              </>
+            )}
             emptyText="-- No query clauses defined"
             showCopy
-            minHeight={SQL_EDITOR_PREVIEW_HEIGHT}
-            maxHeight={SQL_EDITOR_PREVIEW_HEIGHT}
+            minHeight={SOURCE_QUERY_PREVIEW_HEIGHT}
+            maxHeight={SOURCE_QUERY_PREVIEW_HEIGHT}
             showLineNumbers={false}
-            sx={{ width: '100%' }}
+            sx={{
+              width: "100%",
+              border: "none",
+              borderRadius: 0,
+            }}
           />
-        </Box>
+          {previewValidation ? (
+            <AiaBox
+              role={previewValidation.type === "error" ? "alert" : "status"}
+              sx={{
+                px: 1.5,
+                py: 1,
+                borderTop: "1px solid",
+                borderColor: previewValidation.type === "success" ? "#bbf7d0" : "#fecaca",
+                backgroundColor: previewValidation.type === "success" ? "#f0fdf4" : "#fef2f2",
+              }}
+            >
+              <AiaText sx={{ fontSize: 12, color: previewValidation.type === "success" ? "#166534" : "#b91c1c" }}>
+                {previewValidation.message}
+              </AiaText>
+            </AiaBox>
+          ) : null}
+          {validatedPreview ? (
+            <AiaBox sx={{ borderTop: "1px solid #e2e8f0", backgroundColor: "#ffffff" }}>
+              <AiaBox
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 1,
+                  px: 1.5,
+                  py: 1,
+                  borderBottom: "1px solid #e2e8f0",
+                }}
+              >
+                <AiaText sx={{ fontSize: 12, fontWeight: 700, color: "#334155" }}>
+                  Sample data
+                </AiaText>
+                <AiaText sx={{ fontSize: 11, color: "#64748b" }}>
+                  {validatedPreview.columns.length} columns · {validatedPreview.rows.length} rows
+                </AiaText>
+              </AiaBox>
+              {validatedPreview.columns.length ? (
+                <AiaBox sx={{ width: "100%", maxHeight: 280, overflow: "auto" }}>
+                  <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        {validatedPreview.columns.map((column) => (
+                          <th
+                            key={column.name}
+                            style={{
+                              position: "sticky",
+                              top: 0,
+                              zIndex: 1,
+                              padding: "8px 12px",
+                              borderBottom: "1px solid #cbd5e1",
+                              background: "#f8fafc",
+                              color: "#334155",
+                              fontSize: 11,
+                              textAlign: "left",
+                              whiteSpace: "nowrap",
+                            }}
+                          >
+                            <div>{column.name}</div>
+                            <div style={{ color: "#94a3b8", fontWeight: 400 }}>{column.dataType}</div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {validatedPreview.rows.map((row, rowIndex) => (
+                        <tr key={rowIndex}>
+                          {validatedPreview.columns.map((column) => (
+                            <td
+                              key={`${rowIndex}:${column.name}`}
+                              style={{
+                                maxWidth: 320,
+                                padding: "8px 12px",
+                                borderBottom: "1px solid #f1f5f9",
+                                color: "#475569",
+                                fontSize: 11,
+                                whiteSpace: "normal",
+                                overflowWrap: "anywhere",
+                              }}
+                            >
+                              {row[column.name] == null
+                                ? "NULL"
+                                : typeof row[column.name] === "object"
+                                  ? JSON.stringify(row[column.name])
+                                  : String(row[column.name])}
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </AiaBox>
+              ) : (
+                <AiaText sx={{ px: 1.5, py: 1.25, fontSize: 12, color: "#64748b" }}>
+                  The query is valid but did not return a preview schema.
+                </AiaText>
+              )}
+            </AiaBox>
+          ) : null}
+        </AiaBox>
       )}
-    </Box>
+    </AiaBox>
   );
 }

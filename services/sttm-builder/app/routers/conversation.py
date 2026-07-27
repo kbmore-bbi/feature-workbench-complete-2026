@@ -3,9 +3,14 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from app.api.deps import get_conversation_service
+from app.api.deps import (
+    get_conversation_light_service,
+    get_conversation_service,
+    get_prepared_workspace_context_service,
+)
 from app.auth.dependencies import get_current_principal
 from app.core.conversation import ConversationService
+from app.core.prepared_context import PreparedWorkspaceContextService
 from app.core.config import get_settings
 from app.guardrails.config.loader import load_config
 from app.guardrails.contracts.decisions import GovernanceDecision
@@ -18,7 +23,6 @@ from app.schema.conversation import (
     ConversationRequestEnvelope,
     ConversationSettingsRequestEnvelope,
     ConversationSettingsResponseData,
-    ConversationSignalsEvaluateRequestEnvelope,
     ConversationSignalsListRequestEnvelope,
     ConversationSignalsRespondRequestEnvelope,
     ConversationSignalsResponseData,
@@ -29,6 +33,40 @@ from app.schema.conversation import (
 )
 
 router = APIRouter(prefix="/workbench/conversation", tags=["Conversation"])
+
+
+def _hydrate_prepared_workspace(
+    body: ConversationRequestEnvelope,
+    prepared_service: PreparedWorkspaceContextService,
+) -> ConversationRequestEnvelope:
+    context_id = (body.context.workspace_context_id or "").strip()
+    if not context_id:
+        return body
+    hydrated = prepared_service.hydrate(context_id)
+    if not hydrated:
+        return body
+    prepared = hydrated["prepared"]
+    if (
+        body.context.workspace_context_hash
+        and body.context.workspace_context_hash != prepared.workspace_context_hash
+    ):
+        return body
+    workspace = hydrated["workspace"]
+    learning = hydrated.get("learning_context")
+    updates: dict[str, Any] = {
+        "workspace_context": workspace,
+        "semantic_bundle_id": prepared.semantic_bundle_id,
+        "semantic_bundle_hash": prepared.semantic_bundle_hash,
+        "learning_context_id": prepared.learning_context_id,
+        "learning_context_hash": prepared.learning_context_hash,
+        "artifact_refs": prepared.artifact_refs,
+        "prepared_context_hash": prepared.workspace_context_hash,
+    }
+    if learning is not None:
+        updates["learning_context"] = learning
+    return body.model_copy(
+        update={"context": body.context.model_copy(update=updates)}
+    )
 
 
 def _apply_conversation_preflight(
@@ -74,7 +112,12 @@ def invoke(
     request: Request,
     body: ConversationRequestEnvelope,
     service: Annotated[ConversationService, Depends(get_conversation_service)],
+    prepared_service: Annotated[
+        PreparedWorkspaceContextService,
+        Depends(get_prepared_workspace_context_service),
+    ],
 ) -> Any:
+    body = _hydrate_prepared_workspace(body, prepared_service)
     normalized, decision = _apply_conversation_preflight(request, body)
     return service.invoke(normalized, governance_decision=decision)
 
@@ -87,7 +130,12 @@ def invoke_stream(
     request: Request,
     body: ConversationRequestEnvelope,
     service: Annotated[ConversationService, Depends(get_conversation_service)],
+    prepared_service: Annotated[
+        PreparedWorkspaceContextService,
+        Depends(get_prepared_workspace_context_service),
+    ],
 ) -> StreamingResponse:
+    body = _hydrate_prepared_workspace(body, prepared_service)
     normalized, decision = _apply_conversation_preflight(request, body)
     return StreamingResponse(
         service.invoke_stream(normalized, governance_decision=decision),
@@ -107,7 +155,7 @@ def invoke_stream(
 def search(
     request: Request,
     body: ConversationSearchRequestEnvelope,
-    service: Annotated[ConversationService, Depends(get_conversation_service)],
+    service: Annotated[ConversationService, Depends(get_conversation_light_service)],
 ) -> ApiResponseEnvelope[ConversationSearchResponseData]:
     normalized = body
     if not normalized.request_id:
@@ -129,7 +177,7 @@ def search(
 def sync_index(
     request: Request,
     body: ConversationIndexSyncRequestEnvelope,
-    service: Annotated[ConversationService, Depends(get_conversation_service)],
+    service: Annotated[ConversationService, Depends(get_conversation_light_service)],
 ) -> ApiResponseEnvelope[ConversationIndexSyncResponseData]:
     normalized = body
     if not normalized.request_id:
@@ -148,7 +196,7 @@ def sync_index(
 def settings(
     request: Request,
     body: ConversationSettingsRequestEnvelope,
-    service: Annotated[ConversationService, Depends(get_conversation_service)],
+    service: Annotated[ConversationService, Depends(get_conversation_light_service)],
 ) -> ApiResponseEnvelope[ConversationSettingsResponseData]:
     normalized = body
     if not normalized.request_id:
@@ -179,7 +227,7 @@ def settings(
 def list_signals(
     request: Request,
     body: ConversationSignalsListRequestEnvelope,
-    service: Annotated[ConversationService, Depends(get_conversation_service)],
+    service: Annotated[ConversationService, Depends(get_conversation_light_service)],
 ) -> ApiResponseEnvelope[ConversationSignalsResponseData]:
     normalized = body
     if not normalized.request_id:
@@ -196,37 +244,11 @@ def list_signals(
     )
 
 
-@router.post("/signals/evaluate")
-def evaluate_signals(
-    request: Request,
-    body: ConversationSignalsEvaluateRequestEnvelope,
-    service: Annotated[ConversationService, Depends(get_conversation_service)],
-) -> ApiResponseEnvelope[ConversationSignalsResponseData]:
-    normalized = body
-    if not normalized.request_id:
-        normalized = normalized.model_copy(update={"request_id": resolve_request_id(request)})
-    principal = get_current_principal(request)
-    actor = ApiActor(user_id=str(principal.user_id), role=principal.app_persona.value)
-    return build_response_envelope(
-        operation=normalized.operation,
-        request=request,
-        request_id=normalized.request_id,
-        actor=actor,
-        context=normalized.context.model_dump(mode="json", exclude_none=True),
-        data=service.evaluate_signals(
-            request_id=normalized.request_id,
-            conversation_id=normalized.context.thread_id,
-            user_id=actor.user_id,
-            data=normalized.data,
-        ),
-    )
-
-
 @router.post("/signals/respond")
 def respond_to_signal(
     request: Request,
     body: ConversationSignalsRespondRequestEnvelope,
-    service: Annotated[ConversationService, Depends(get_conversation_service)],
+    service: Annotated[ConversationService, Depends(get_conversation_light_service)],
 ) -> ApiResponseEnvelope[AssistantSignalResponseData]:
     normalized = body
     if not normalized.request_id:

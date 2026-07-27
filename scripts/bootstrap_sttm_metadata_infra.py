@@ -16,10 +16,15 @@ import yaml
 ROOT_DIR = Path(__file__).resolve().parent.parent
 SOURCE_NAMESPACE = "FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA"
 NAMESPACE_PLACEHOLDER = "__STTM_METADATA_NAMESPACE__"
+SEMANTIC_TABLE_OBJECT_PLACEHOLDER = "__SEMANTIC_TABLE_VIEWS_OBJECT__"
+SEMANTIC_COLUMN_OBJECT_PLACEHOLDER = "__SEMANTIC_COLUMN_VIEWS_OBJECT__"
+SEMANTIC_NATIVE_OBJECT_PLACEHOLDER = "__SEMANTIC_NATIVE_VIEWS_OBJECT__"
 SKILLS_STAGE_NAME = "STTM_AGENT_SKILLS"
 
-SQL_FILES = [
+BASE_SQL_FILES = [
     ROOT_DIR / "infra/snowflake/create-table-ddl.sql",
+    ROOT_DIR
+    / "infra/snowflake/migrations/20260723_warehouse_routing_conversation_artifacts.sql",
     ROOT_DIR / "infra/snowflake/create-derived-sources-table.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-ddl.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-list-tables.sql",
@@ -33,6 +38,7 @@ SQL_FILES = [
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-cached-semantic-view.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-context-bundle.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-save-semantic-view.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-semantic-registry.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-rollup-schema-summary.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-semantic-model.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-subagent-semantic-model.sql",
@@ -41,13 +47,59 @@ SQL_FILES = [
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-dbt-repo-tools.sql",
 ]
 
+FIR_SQL_FILES = [
+    ROOT_DIR / "infra/snowflake/fir_system/tables/tbl_agent_fir_360.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/tables/tbl_semantic_view_versions.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/tables/tbl_fir_agent_recommendations.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/tables/fir_v2_schema.sql",
+    ROOT_DIR / "infra/snowflake/scripts/20260719_evernest_import_reliability.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/tables/fir_v2_linking_schema.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/streams/fir_streams.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-collect-feedback.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-enrich-context.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-refresh-features.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-backfill-events.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-generate-inferences.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-create-semantic-version.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-generate-recommendations.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-apply-confidence-decay.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-get-agent-recommendations.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-orchestrate-batch.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-consolidate-semantic-versions.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-read-documents.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-read-pending-records.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-read-semantic-evidence.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-store-inference.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-store-recommendation.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-reconcile-recommendation-identities.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-store-qa-pair.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-agent-learning-helpers.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-materialize-derived-source.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-precompute-from-semantic-view.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-precompute-permutations.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-score-recommendations.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-invoke-agent.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/cortex_search/workbench_rag_search_service.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/cortex_search/fir_search_services.sql",
+]
+
+LINKING_MIGRATION_SQL_FILES = [
+    ROOT_DIR / "infra/snowflake/fir_system/tables/fir_v2_linking_schema.sql",
+]
+
+POST_AGENT_SQL_FILES = [
+    ROOT_DIR / "infra/snowflake/fir_system/tasks/fir_tasks.sql",
+]
+
 AGENT_SPECS = [
     ("AGT_SOURCE_MAPPING", ROOT_DIR / "infra/snowflake/agents/agent_spec_source_mapping.yaml"),
     ("AGT_TRANSFORMATION_RULE", ROOT_DIR / "infra/snowflake/agents/agent_spec_transformation_rule.yaml"),
     ("AGT_STTM_BUILDER", ROOT_DIR / "infra/snowflake/agents/agent_spec_sttm_builder.yaml"),
     ("AGT_DBT_CONVERSION", ROOT_DIR / "infra/snowflake/agents/agent_spec_dbt_conversion.yaml"),
+    ("AGT_DBT_TEST_GENERATION", ROOT_DIR / "infra/snowflake/agents/agent_spec_test_case_generation.yaml"),
     ("AGT_SEMANTIC_MODEL", ROOT_DIR / "infra/snowflake/agents/agent_spec_semantic_model.yaml"),
     ("AGT_WORKBENCH_CONVERSATION", ROOT_DIR / "infra/snowflake/agents/agent_spec_workbench_conversation.yaml"),
+    ("AGT_FIR_SYSTEM", ROOT_DIR / "infra/snowflake/agents/agent_spec_fir_system.yaml"),
 ]
 
 SKILL_DIRECTORIES = [
@@ -61,7 +113,43 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--database", default=os.environ.get("SNOWFLAKE_DATABASE", ""))
     parser.add_argument("--schema", default=os.environ.get("SNOWFLAKE_SCHEMA", ""))
+    parser.add_argument(
+        "--semantic-database",
+        default=os.environ.get("SNOWFLAKE_SEMANTIC_VIEWS_DATABASE", ""),
+    )
+    parser.add_argument(
+        "--semantic-schema",
+        default=os.environ.get("SNOWFLAKE_SEMANTIC_VIEWS_SCHEMA", ""),
+    )
+    parser.add_argument(
+        "--semantic-table-object",
+        default=os.environ.get(
+            "SNOWFLAKE_SEMANTIC_TABLE_VIEWS_TABLE",
+            "LATEST_TABLE_VIEWS",
+        ),
+    )
+    parser.add_argument(
+        "--semantic-column-object",
+        default=os.environ.get(
+            "SNOWFLAKE_SEMANTIC_COLUMN_VIEWS_TABLE",
+            "LATEST_COLUMN_VIEWS",
+        ),
+    )
+    parser.add_argument(
+        "--semantic-native-object",
+        default=os.environ.get(
+            "SNOWFLAKE_SEMANTIC_NATIVE_VIEWS_TABLE",
+            "LATEST_NATIVE_VIEWS",
+        ),
+    )
     parser.add_argument("--warehouse", default=os.environ.get("SNOWFLAKE_WAREHOUSE", ""))
+    parser.add_argument(
+        "--artifact-stage",
+        default=os.environ.get(
+            "SNOWFLAKE_AGENT_ARTIFACT_STAGE",
+            "AI_WORKBENCH_ARTIFACTS",
+        ),
+    )
     parser.add_argument("--role", default=os.environ.get("SNOWFLAKE_ROLE", ""))
     parser.add_argument("--account", default=os.environ.get("SNOWFLAKE_ACCOUNT", ""))
     parser.add_argument("--user", default=os.environ.get("SNOWFLAKE_USER", ""))
@@ -71,6 +159,11 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("SNOWFLAKE_AUTHENTICATOR", ""),
     )
     parser.add_argument("--host", default=os.environ.get("SNOWFLAKE_HOST", ""))
+    parser.add_argument(
+        "--linking-migration-only",
+        action="store_true",
+        help="Apply only the FIR project/mapping linking migration; do not deploy agents or skills.",
+    )
     return parser.parse_args()
 
 
@@ -110,9 +203,39 @@ def target_namespace(database: str, schema: str) -> str:
     return f"{database.strip()}.{schema.strip()}"
 
 
-def render_sql(raw_sql: str, namespace: str) -> str:
+def render_sql(
+    raw_sql: str,
+    namespace: str,
+    *,
+    warehouse: str = "",
+    role: str = "",
+    database: str = "",
+    semantic_namespace: str = "",
+    semantic_table_object: str = "LATEST_TABLE_VIEWS",
+    semantic_column_object: str = "LATEST_COLUMN_VIEWS",
+    semantic_native_object: str = "LATEST_NATIVE_VIEWS",
+) -> str:
     rendered = raw_sql.replace(NAMESPACE_PLACEHOLDER, namespace)
     rendered = rendered.replace(SOURCE_NAMESPACE, namespace)
+    rendered = rendered.replace("__WAREHOUSE_NAME__", warehouse)
+    rendered = rendered.replace("__SERVICE_OWNER_ROLE__", role)
+    rendered = rendered.replace("__DATABASE__", database)
+    rendered = rendered.replace(
+        "__SEMANTIC_REGISTRY_NAMESPACE__",
+        semantic_namespace or namespace,
+    )
+    rendered = rendered.replace(
+        SEMANTIC_TABLE_OBJECT_PLACEHOLDER,
+        semantic_table_object or "LATEST_TABLE_VIEWS",
+    )
+    rendered = rendered.replace(
+        SEMANTIC_COLUMN_OBJECT_PLACEHOLDER,
+        semantic_column_object or "LATEST_COLUMN_VIEWS",
+    )
+    rendered = rendered.replace(
+        SEMANTIC_NATIVE_OBJECT_PLACEHOLDER,
+        semantic_native_object or "LATEST_NATIVE_VIEWS",
+    )
     return re.sub(
         r"CREATE TABLE(?! IF NOT EXISTS)\s+",
         "CREATE TABLE IF NOT EXISTS ",
@@ -123,7 +246,14 @@ def render_sql(raw_sql: str, namespace: str) -> str:
 
 def execute_multi_statement(connection, sql_text: str, label: str) -> None:
     print(f"[bootstrap-sttm-metadata] Applying {label}")
-    stream = io.StringIO(sql_text)
+    # Snowflake's execute_stream treats a trailing block of line comments after
+    # the final semicolon as another (empty) statement when comments are
+    # preserved. Keep comments inside SQL/procedure bodies intact, but remove a
+    # comment-only tail before handing the stream to the connector.
+    executable_sql = re.sub(r"(?:\s*--[^\r\n]*(?:\r?\n|$))+\s*$", "", sql_text)
+    if not executable_sql.strip():
+        return
+    stream = io.StringIO(executable_sql)
     for cursor in connection.execute_stream(stream, remove_comments=False):
         try:
             _ = cursor.rowcount
@@ -137,15 +267,64 @@ def create_schema(connection, database: str, schema: str) -> None:
         cursor.execute(statement)
 
 
-def create_stage(connection, database: str, schema: str) -> None:
-    statement = f'CREATE STAGE IF NOT EXISTS "{database}"."{schema}"."{SKILLS_STAGE_NAME}"'
+def create_stage(
+    connection,
+    database: str,
+    schema: str,
+    stage_name: str,
+) -> None:
+    raw_parts = [
+        part.strip().strip('"')
+        for part in stage_name.lstrip("@").split(".")
+        if part.strip()
+    ]
+    if len(raw_parts) == 1:
+        parts = [database, schema, raw_parts[0]]
+    elif len(raw_parts) == 3:
+        parts = raw_parts
+    else:
+        raise SystemExit(
+            "Stage names must be OBJECT or DATABASE.SCHEMA.OBJECT; received "
+            f"'{stage_name}'."
+        )
+    if any(not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_$]*", part) for part in parts):
+        raise SystemExit(f"Unsafe Snowflake stage identifier: '{stage_name}'.")
+    qualified = ".".join(f'"{part}"' for part in parts)
+    statement = f"CREATE STAGE IF NOT EXISTS {qualified}"
     with connection.cursor() as cursor:
         cursor.execute(statement)
 
 
-def apply_sql_files(connection, namespace: str) -> None:
-    for path in SQL_FILES:
-        sql_text = render_sql(path.read_text(), namespace)
+def read_repository_text(path: Path) -> str:
+    """Read version-controlled SQL, YAML, and Markdown consistently on Windows."""
+    return path.read_text(encoding="utf-8-sig")
+
+
+def apply_sql_files(
+    connection,
+    paths: list[Path],
+    *,
+    namespace: str,
+    warehouse: str,
+    role: str,
+    database: str,
+    semantic_namespace: str,
+    semantic_table_object: str,
+    semantic_column_object: str,
+    semantic_native_object: str,
+) -> None:
+    for path in paths:
+        sql_text = render_sql(
+            read_repository_text(path),
+            namespace,
+            warehouse=warehouse,
+            role=role,
+            database=database,
+            semantic_namespace=semantic_namespace,
+            semantic_table_object=semantic_table_object,
+            semantic_column_object=semantic_column_object,
+            semantic_native_object=semantic_native_object,
+        )
         execute_multi_statement(connection, sql_text, str(path.relative_to(ROOT_DIR)))
 
 
@@ -174,7 +353,7 @@ def render_agent_statement(agent_name: str, spec_text: str, namespace: str) -> s
 
 def apply_agents(connection, namespace: str) -> None:
     for agent_name, path in AGENT_SPECS:
-        spec_text = render_sql(path.read_text(), namespace)
+        spec_text = render_sql(read_repository_text(path), namespace)
         statement = render_agent_statement(agent_name, spec_text, namespace)
         print(
             "[bootstrap-sttm-metadata] Creating agent "
@@ -337,14 +516,59 @@ def restore_bundle_analyst_tools(connection, *, namespace: str, warehouse: str) 
 def main() -> int:
     args = parse_args()
     namespace = target_namespace(args.database, args.schema)
+    semantic_namespace = target_namespace(
+        args.semantic_database or args.database,
+        args.semantic_schema or args.schema,
+    )
 
     with connect(args) as connection:
         activate_session(connection, args)
+        if args.linking_migration_only:
+            apply_sql_files(
+                connection,
+                LINKING_MIGRATION_SQL_FILES,
+                namespace=namespace,
+                warehouse=args.warehouse,
+                role=args.role,
+                database=args.database,
+                semantic_namespace=semantic_namespace,
+                semantic_table_object=args.semantic_table_object,
+                semantic_column_object=args.semantic_column_object,
+                semantic_native_object=args.semantic_native_object,
+            )
+            print("")
+            print("[bootstrap-sttm-metadata] FIR linking migration completed successfully.")
+            print(f"[bootstrap-sttm-metadata] Target namespace: {namespace}")
+            return 0
         create_schema(connection, args.database, args.schema)
-        create_stage(connection, args.database, args.schema)
+        create_stage(connection, args.database, args.schema, SKILLS_STAGE_NAME)
+        create_stage(connection, args.database, args.schema, args.artifact_stage)
         upload_skills(connection, args.database, args.schema)
-        apply_sql_files(connection, namespace)
+        apply_sql_files(
+            connection,
+            [*BASE_SQL_FILES, *FIR_SQL_FILES],
+            namespace=namespace,
+            warehouse=args.warehouse,
+            role=args.role,
+            database=args.database,
+            semantic_namespace=semantic_namespace,
+            semantic_table_object=args.semantic_table_object,
+            semantic_column_object=args.semantic_column_object,
+            semantic_native_object=args.semantic_native_object,
+        )
         apply_agents(connection, namespace)
+        apply_sql_files(
+            connection,
+            POST_AGENT_SQL_FILES,
+            namespace=namespace,
+            warehouse=args.warehouse,
+            role=args.role,
+            database=args.database,
+            semantic_namespace=semantic_namespace,
+            semantic_table_object=args.semantic_table_object,
+            semantic_column_object=args.semantic_column_object,
+            semantic_native_object=args.semantic_native_object,
+        )
         restore_bundle_analyst_tools(
             connection,
             namespace=namespace,
@@ -353,6 +577,14 @@ def main() -> int:
     print("")
     print("[bootstrap-sttm-metadata] Completed successfully.")
     print(f"[bootstrap-sttm-metadata] Target namespace: {namespace}")
+    print(f"[bootstrap-sttm-metadata] Semantic registry: {semantic_namespace}")
+    print(
+        "[bootstrap-sttm-metadata] Semantic objects: "
+        f"{args.semantic_table_object}, {args.semantic_column_object}, "
+        f"{args.semantic_native_object}"
+    )
+    print("[bootstrap-sttm-metadata] Role grants were not modified.")
+    print("[bootstrap-sttm-metadata] FIR tasks were created suspended; resume after verification.")
     return 0
 
 

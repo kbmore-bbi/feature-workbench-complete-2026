@@ -1,26 +1,44 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
-import { AddRoundedIcon, ArrowForwardRoundedIcon, CloseRoundedIcon, GridOnRoundedIcon, TerminalRoundedIcon, ViewKanbanRoundedIcon } from '@/utils/icons';
+import { AiaBox, AiaButton, AiaIconButton, AiaSelect, AiaStack } from '@/components/ui';
+import { AiaInput } from '@/components/ui/aia-input';
+import { AiaText } from '@/components/ui/aia-text';
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Box,
-  Button,
-  IconButton,
-  Stack,
-  Typography,
-} from "@mui/material";
+  AddRoundedIcon,
+  ArrowForwardRoundedIcon,
+  CloseRoundedIcon,
+  GridOnRoundedIcon,
+  TerminalRoundedIcon,
+  ViewKanbanRoundedIcon,
+} from "@/utils/icons";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+import { useTour } from "@/features/tour/engine/tour-context";
+import { API_ROUTES } from "@/api/routes";
+import { useRouter } from "next/navigation";
+import { useAppDispatch } from "@/store/hooks";
+import { resetBuilderForNewMapping } from "@/features/sttm/store/sttm-builder-slice";
+import { markExplicitNewDraftIntent } from "@/features/sttm/context/sttm-session-intent";
 
-
-
-
-
-
+type UploadResult = {
+  asset_id: string;
+  filename?: string;
+  learning_job_id?: string | null;
+  parsed_summary?: {
+    sources?: string[];
+    targets?: string[];
+    mappings_count?: number;
+    columns_count?: number;
+  };
+};
 
 type MappingCreationMode = "sql" | "excel" | "manual" | null;
 
 type NewMappingDialogProps = {
   open: boolean;
   onClose: () => void;
-  onBuildManually: () => void;
+  onBuildManually: (details?: { name: string; description: string; linkedMappingIds: string[] }) => void;
+  projectId?: string;
+  precedentMappings?: Array<{ id: string; name: string; projectName: string }>;
 };
 
 type MappingOption = {
@@ -66,10 +84,28 @@ export default function NewMappingDialog({
   open,
   onClose,
   onBuildManually,
+  projectId,
+  precedentMappings = [],
 }: NewMappingDialogProps) {
+  const dispatch = useAppDispatch();
+  const { registerModalTour, startTour } = useTour();
   const [selectedMode, setSelectedMode] = useState<MappingCreationMode>(null);
+  const [mappingName, setMappingName] = useState("");
+  const [mappingDescription, setMappingDescription] = useState("");
+  const [sourceTableHints, setSourceTableHints] = useState("");
+  const [targetTableHint, setTargetTableHint] = useState("");
+  const [linkedMappingIds, setLinkedMappingIds] = useState<string[]>([]);
   const sqlInputRef = useRef<HTMLInputElement | null>(null);
   const excelInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      registerModalTour(null);
+      return;
+    }
+    registerModalTour("new-mapping");
+    return () => registerModalTour(null);
+  }, [open, registerModalTour]);
 
   const selectedOption = useMemo(
     () => OPTIONS.find((option) => option.id === selectedMode) ?? null,
@@ -78,6 +114,13 @@ export default function NewMappingDialog({
 
   const handleClose = () => {
     setSelectedMode(null);
+    setMappingName("");
+    setMappingDescription("");
+    setSourceTableHints("");
+    setTargetTableHint("");
+    setLinkedMappingIds([]);
+    setUploadResult(null);
+    setLearningComplete(false);
     onClose();
   };
 
@@ -96,11 +139,135 @@ export default function NewMappingDialog({
 
     if (selectedMode === "manual") {
       setSelectedMode(null);
-      onBuildManually();
+      setMappingName("");
+      setMappingDescription("");
+      if (projectId) {
+        onBuildManually({
+          name: mappingName.trim(),
+          description: mappingDescription.trim(),
+          linkedMappingIds,
+        });
+      } else {
+        onBuildManually();
+      }
       return;
     }
 
     handleUploadSelection(selectedMode === "sql" ? sqlInputRef.current : excelInputRef.current);
+  };
+
+  const router = useRouter();
+  const [uploading, setUploading] = useState(false);
+  const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [learningInProgress, setLearningInProgress] = useState(false);
+  const [learningComplete, setLearningComplete] = useState(false);
+
+  const handleFileUpload = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+    type: "sql" | "excel"
+  ) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      alert("File exceeds 5MB limit");
+      return;
+    }
+
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("project_id", projectId || "default");
+      formData.append("mode", "auto_populate");
+      formData.append("source_table_hints", sourceTableHints.trim());
+      formData.append("target_table_hint", targetTableHint.trim());
+
+      const endpoint = type === "sql" ? API_ROUTES.upload.sql : API_ROUTES.upload.excel;
+      const response = await fetch(`/api${endpoint}`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: "Upload failed" }));
+        alert(err.detail || "Upload failed");
+        return;
+      }
+
+      const result = await response.json();
+      setUploadResult({ ...result, filename: file.name });
+    } catch {
+      alert("Upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const handleContinueEditing = () => {
+    if (!uploadResult) return;
+    sessionStorage.setItem("upload_parsed_data", JSON.stringify(uploadResult));
+    setUploadResult(null);
+    setSelectedMode(null);
+    onClose();
+    markExplicitNewDraftIntent();
+    dispatch(resetBuilderForNewMapping());
+    router.push("/sttm/builder/new/mapping?source=upload");
+  };
+
+  const handleUseAsLearning = async () => {
+    if (!uploadResult?.asset_id) return;
+    setLearningInProgress(true);
+    try {
+      const formData = new FormData();
+      formData.append("asset_id", uploadResult.asset_id);
+      formData.append("project_id", projectId || "default");
+      const response = await fetch(`/api${API_ROUTES.upload.triggerLearning}`, {
+        method: "POST",
+        body: formData,
+      });
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ detail: "Learning failed" }));
+        alert(err.detail || "Failed to create learnings.");
+        return;
+      }
+      const queued = await response.json().catch(() => ({}));
+      const jobId = String(
+        queued?.learning_job_id
+        ?? uploadResult.learning_job_id
+        ?? "",
+      );
+      if (jobId) {
+        let status = String(queued?.learning_job?.status ?? "running");
+        let attempts = 0;
+        while (!["completed", "failed"].includes(status) && attempts < 20) {
+          attempts += 1;
+          const resume = await fetch(
+            `/api${API_ROUTES.workbench.firJobResume(jobId)}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ max_items: 10 }),
+            },
+          );
+          if (!resume.ok) break;
+          const envelope = await resume.json().catch(() => ({}));
+          status = String(envelope?.data?.status ?? "running");
+        }
+      }
+      setLearningComplete(true);
+    } catch {
+      alert("Failed to create learnings. Please try again.");
+    } finally {
+      setLearningInProgress(false);
+    }
+  };
+
+  const handleLearningDone = () => {
+    setUploadResult(null);
+    setLearningComplete(false);
+    setSelectedMode(null);
+    onClose();
   };
 
   if (!open) {
@@ -111,20 +278,14 @@ export default function NewMappingDialog({
           type="file"
           accept=".sql,text/sql,application/sql"
           hidden
-          onChange={() => {
-            setSelectedMode(null);
-            onClose();
-          }}
+          onChange={(e) => handleFileUpload(e, "sql")}
         />
         <input
           ref={excelInputRef}
           type="file"
           accept=".xlsx,.xls,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
           hidden
-          onChange={() => {
-            setSelectedMode(null);
-            onClose();
-          }}
+          onChange={(e) => handleFileUpload(e, "excel")}
         />
       </>
     );
@@ -132,11 +293,17 @@ export default function NewMappingDialog({
 
   return (
     <>
-      <Box
+      <AiaBox
         role="dialog"
         aria-modal="true"
         aria-label="New Mapping"
-        onClick={handleClose}
+        onClick={(event) => {
+          // The precedent multi-select uses a portal. Its option clicks bubble
+          // through the React tree and must not close/reset the mapping form.
+          if (event.target === event.currentTarget) {
+            handleClose();
+          }
+        }}
         sx={{
           position: "fixed",
           inset: 0,
@@ -150,7 +317,8 @@ export default function NewMappingDialog({
           backdropFilter: "blur(4px)",
         }}
       >
-        <Box
+        <AiaBox
+          data-tour={TOUR_TARGETS.newMappingModal}
           onClick={(event) => event.stopPropagation()}
           sx={{
             width: "100%",
@@ -162,7 +330,7 @@ export default function NewMappingDialog({
             backgroundColor: "#fff",
           }}
         >
-          <Box
+          <AiaBox
             sx={{
               display: "flex",
               alignItems: "flex-start",
@@ -173,34 +341,57 @@ export default function NewMappingDialog({
               borderBottom: "1px solid #edf2f7",
             }}
           >
-            <Stack direction="row" spacing={2} sx={{ alignItems: "center" }}>
-              <Box
+            <AiaStack direction="row" spacing={2} sx={{ alignItems: "center" }}>
+              <AiaBox
                 sx={{
                   width: 48,
                   height: 48,
                   borderRadius: "14px",
-                  bgcolor: "#0f172a",
-                  color: "#fff",
+                  bgcolor: "var(--aia-button-color)",
+                  color: "var(--aia-button-text-color)",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  boxShadow: "0 12px 24px rgba(15, 23, 42, 0.18)",
                 }}
               >
                 <AddRoundedIcon sx={{ fontSize: 28 }} />
-              </Box>
-              <Box>
-                <Typography sx={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
+              </AiaBox>
+              <AiaBox>
+                <AiaText sx={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
                   New Mapping
-                </Typography>
-                <Typography sx={{ fontSize: 14, color: "#64748b", mt: 0.5 }}>
+                </AiaText>
+                <AiaText sx={{ fontSize: 14, color: "#64748b", mt: 0.5 }}>
                   Choose how you&apos;d like to create this mapping
-                </Typography>
-              </Box>
-            </Stack>
+                </AiaText>
+              </AiaBox>
+            </AiaStack>
 
-            <IconButton
-              onClick={handleClose}
+            <AiaStack direction="row" spacing={1} sx={{ alignItems: "center", flexShrink: 0 }}>
+              <AiaButton
+                variant="contained"
+                size="small"
+                onClick={() => startTour("new-mapping")}
+                aria-label="Start New Mapping tour guide"
+                sx={{
+                  textTransform: "none",
+                  fontWeight: 700,
+                  fontSize: 13,
+                  borderRadius: "10px",
+                  px: 1.5,
+                  py: 0.6,
+                  minHeight: 34,
+                  backgroundColor: "var(--aia-primary-bg-color)",
+                  color: "var(--aia-primary-bg-text-color)",
+                  boxShadow: "none",
+                  "&:hover": {
+                    backgroundColor: "var(--aia-primary-bg-hover-color)",
+                  },
+                }}
+              >
+                Tour Guide
+              </AiaButton>
+              <AiaIconButton
+                onClick={handleClose}
               sx={{
                 border: "1px solid #e2e8f0",
                 color: "#64748b",
@@ -211,19 +402,91 @@ export default function NewMappingDialog({
               }}
             >
               <CloseRoundedIcon sx={{ fontSize: 18 }} />
-            </IconButton>
-          </Box>
+            </AiaIconButton>
+            </AiaStack>
+          </AiaBox>
 
-          <Box sx={{ px: 4, py: 3.5 }}>
-            <Stack spacing={2}>
+          {uploadResult ? (
+            <AiaBox sx={{ px: 4, py: 3.5 }}>
+              {learningComplete ? (
+                <AiaStack spacing={2} sx={{ alignItems: "center", py: 2 }}>
+                  <AiaBox sx={{ width: 56, height: 56, borderRadius: "50%", bgcolor: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <AiaText sx={{ fontSize: 28 }}>&#10003;</AiaText>
+                  </AiaBox>
+                  <AiaText sx={{ fontSize: 16, fontWeight: 700, color: "#0f172a", textAlign: "center" }}>
+                    Document Queued for Learning
+                  </AiaText>
+                  <AiaText sx={{ fontSize: 13.5, color: "#64748b", textAlign: "center" }}>
+                    FIR will resolve the referenced tables and prepare evidence, inferences, and recommendations offline.
+                  </AiaText>
+                  <AiaButton variant="contained" color="primary" rounded="lg" size="medium" onClick={handleLearningDone} sx={{ mt: 1, borderRadius: "14px", fontWeight: 700 }}>
+                    Done
+                  </AiaButton>
+                </AiaStack>
+              ) : learningInProgress ? (
+                <AiaStack spacing={2} sx={{ alignItems: "center", py: 3 }}>
+                  <AiaBox sx={{ width: 48, height: 48, borderRadius: "50%", border: "3px solid #e2e8f0", borderTopColor: "var(--aia-button-color)", animation: "spin 1s linear infinite", "@keyframes spin": { from: { transform: "rotate(0deg)" }, to: { transform: "rotate(360deg)" } } }} />
+                  <AiaText sx={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
+                    Queueing Document...
+                  </AiaText>
+                  <AiaText sx={{ fontSize: 13, color: "#64748b", textAlign: "center" }}>
+                    Saving this document for the next offline FIR cycle.
+                  </AiaText>
+                </AiaStack>
+              ) : (
+                <AiaStack spacing={2.5}>
+                  <AiaBox sx={{ p: 2, borderRadius: "12px", bgcolor: "#f8fafc", border: "1px solid #e2e8f0" }}>
+                    <AiaText sx={{ fontSize: 13, fontWeight: 700, color: "#334155", mb: 0.5 }}>
+                      File uploaded: {uploadResult.filename || "document"}
+                    </AiaText>
+                    {uploadResult.parsed_summary && (
+                      <AiaText sx={{ fontSize: 12.5, color: "#64748b" }}>
+                        {uploadResult.parsed_summary.sources?.length ?? 0} source table(s)
+                        {uploadResult.parsed_summary.targets?.length ? ` • ${uploadResult.parsed_summary.targets.length} target(s)` : ""}
+                        {uploadResult.parsed_summary.columns_count ? ` • ${uploadResult.parsed_summary.columns_count} columns` : ""}
+                      </AiaText>
+                    )}
+                  </AiaBox>
+                  <AiaText sx={{ fontSize: 14, fontWeight: 600, color: "#0f172a" }}>
+                    What would you like to do with this file?
+                  </AiaText>
+                  <AiaButton
+                    variant="text"
+                    onClick={handleContinueEditing}
+                    sx={{ width: "100%", textTransform: "none", display: "block", px: 2.25, py: 2, borderRadius: "14px", border: "1px solid #dbe2ea", textAlign: "left", "&:hover": { borderColor: "var(--aia-button-color)", bgcolor: "#fafbff" } }}
+                  >
+                    <AiaText sx={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Continue Editing</AiaText>
+                    <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.5 }}>Auto-populate the mapping builder with parsed tables and columns from this file.</AiaText>
+                  </AiaButton>
+                  <AiaButton
+                    variant="text"
+                    onClick={handleUseAsLearning}
+                    sx={{ width: "100%", textTransform: "none", display: "block", px: 2.25, py: 2, borderRadius: "14px", border: "1px solid #dbe2ea", textAlign: "left", "&:hover": { borderColor: "var(--aia-button-color)", bgcolor: "#fafbff" } }}
+                  >
+                    <AiaText sx={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Submit for Offline Learning</AiaText>
+                    <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.5 }}>FIR will combine this document with resolved table semantics and existing evidence before generating guidance.</AiaText>
+                  </AiaButton>
+                </AiaStack>
+              )}
+            </AiaBox>
+          ) : (
+          <AiaBox sx={{ px: 4, py: 3.5 }}>
+            <AiaStack spacing={2}>
               {OPTIONS.map((option) => {
                 const selected = selectedMode === option.id;
 
                 return (
-                  <Button
+                  <AiaButton
                     key={option.id}
                     variant="text"
                     onClick={() => setSelectedMode(option.id)}
+                    data-tour={
+                      option.id === "sql"
+                        ? TOUR_TARGETS.newMappingSqlUpload
+                        : option.id === "excel"
+                          ? TOUR_TARGETS.newMappingExcelUpload
+                          : TOUR_TARGETS.newMappingManual
+                    }
                     sx={{
                       width: "100%",
                       textTransform: "none",
@@ -231,28 +494,29 @@ export default function NewMappingDialog({
                       px: 0,
                       py: 0,
                       borderRadius: "18px",
-                      border: selected ? "1px solid #003D59" : "1px solid #dbe2ea",
-                      boxShadow: selected
-                        ? "0 10px 24px rgba(0, 61, 89, 0.12)"
-                        : "0 2px 8px rgba(15, 23, 42, 0.06)",
+                      border: selected
+                        ? "1px solid var(--aia-button-color)"
+                        : "1px solid #dbe2ea",
+                      boxShadow: selected ? "none" : "0 2px 8px rgba(15, 23, 42, 0.06)",
                       backgroundColor: "#fff",
                       "&:hover": {
                         backgroundColor: "#fff",
-                        borderColor: selected ? "#003D59" : "#cbd5e1",
+                        borderColor: selected ? "var(--aia-button-color)" : "#cbd5e1",
                       },
                     }}
                   >
-                    <Box
+                    <AiaBox
                       sx={{
                         display: "flex",
-                        alignItems: "center",
+                        alignItems: "flex-start",
                         gap: 2,
                         px: 2.25,
                         py: 2.1,
                         textAlign: "left",
+                        width: "100%",
                       }}
                     >
-                      <Box
+                      <AiaBox
                         sx={{
                           width: 54,
                           height: 54,
@@ -266,20 +530,20 @@ export default function NewMappingDialog({
                         }}
                       >
                         {option.icon}
-                      </Box>
+                      </AiaBox>
 
-                      <Box sx={{ minWidth: 0, flex: 1 }}>
-                        <Stack
+                      <AiaBox sx={{ minWidth: 0, flex: 1, overflow: "hidden" }}>
+                        <AiaStack
                           direction="row"
                           spacing={1}
                           useFlexGap
                           sx={{ alignItems: "center", flexWrap: "wrap" }}
                         >
-                          <Typography sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
+                          <AiaText sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
                             {option.label}
-                          </Typography>
+                          </AiaText>
                           {option.badge ? (
-                            <Box
+                            <AiaBox
                               component="span"
                               sx={{
                                 px: 1,
@@ -293,42 +557,146 @@ export default function NewMappingDialog({
                               }}
                             >
                               {option.badge}
-                            </Box>
+                            </AiaBox>
                           ) : null}
-                        </Stack>
-                        <Typography
+                        </AiaStack>
+                        <AiaText
                           sx={{
                             mt: 0.85,
                             fontSize: 13.5,
                             lineHeight: 1.55,
                             color: "#64748b",
-                            maxWidth: 460,
+                            display: "block",
+                            overflowWrap: "anywhere",
+                            wordBreak: "break-word",
                           }}
                         >
                           {option.description}
-                        </Typography>
-                      </Box>
+                        </AiaText>
+                      </AiaBox>
 
-                      <Box
+                      <AiaBox
                         aria-hidden
                         sx={{
                           width: 26,
                           height: 26,
                           borderRadius: "50%",
-                          border: selected ? "7px solid #003D59" : "2px solid #cbd5e1",
+                          border: selected
+                            ? "7px solid var(--aia-button-color)"
+                            : "2px solid #cbd5e1",
                           backgroundColor: selected ? "#fff" : "transparent",
-                          boxShadow: selected ? "0 0 0 4px rgba(0, 61, 89, 0.12)" : "none",
+                          boxShadow: selected ? "0 0 0 4px var(--aia-button-color)" : "none",
                           flexShrink: 0,
+                          alignSelf: "center",
+                          ml: 0.5,
                         }}
                       />
-                    </Box>
-                  </Button>
+                    </AiaBox>
+                  </AiaButton>
                 );
               })}
-            </Stack>
-          </Box>
+              {(selectedMode === "sql" || selectedMode === "excel") && (
+                <AiaBox sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.5, pt: 0.5 }}>
+                  <AiaBox>
+                    <AiaText sx={{ fontSize: 11, fontWeight: 700, color: "#64748B", mb: 0.75 }}>
+                      SOURCE TABLES (optional)
+                    </AiaText>
+                    <AiaInput
+                      value={sourceTableHints}
+                      onChange={setSourceTableHints}
+                      placeholder="e.g. DB.SCHEMA.CUSTOMERS, ORDERS"
+                      fullWidth
+                    />
+                  </AiaBox>
+                  <AiaBox>
+                    <AiaText sx={{ fontSize: 11, fontWeight: 700, color: "#64748B", mb: 0.75 }}>
+                      TARGET TABLE (optional)
+                    </AiaText>
+                    <AiaInput
+                      value={targetTableHint}
+                      onChange={setTargetTableHint}
+                      placeholder="e.g. DB.SCHEMA.CUSTOMER_360"
+                      fullWidth
+                    />
+                  </AiaBox>
+                  <AiaText sx={{ gridColumn: { sm: "1 / -1" }, fontSize: 12, color: "#94A3B8" }}>
+                    FIR discovers table references from the file first. Add hints only for aliases, unqualified names, or missing targets.
+                  </AiaText>
+                </AiaBox>
+              )}
+            </AiaStack>
+          </AiaBox>
+          )}
 
-          <Box
+          {selectedMode === "manual" && projectId && !uploadResult && (
+            <AiaBox
+              sx={{
+                px: 4,
+                pb: 3,
+                display: "flex",
+                flexDirection: "column",
+                gap: 2,
+              }}
+            >
+              <AiaInput
+                label="Mapping Name"
+                value={mappingName}
+                onChange={setMappingName}
+                placeholder="e.g. Customer Orders → DW_ORDERS"
+                fullWidth
+              />
+              <AiaInput
+                label="Mapping Description"
+                value={mappingDescription}
+                onChange={setMappingDescription}
+                placeholder="Briefly describe the purpose of this mapping"
+                multiline
+                minRows={2}
+                maxRows={4}
+                fullWidth
+              />
+              {precedentMappings.length ? (
+                <AiaBox>
+                  <AiaText sx={{ fontSize: 11, fontWeight: 700, color: '#64748B', mb: 0.75 }}>
+                    REUSE PRECEDENT MAPPINGS (optional)
+                  </AiaText>
+                  <AiaSelect
+                    multiple
+                    value={linkedMappingIds}
+                    options={precedentMappings.map((mapping) => ({
+                      value: mapping.id,
+                      label: `${mapping.name} · ${mapping.projectName}`,
+                    }))}
+                    placeholder="Select precedent mappings"
+                    onChange={(value) => setLinkedMappingIds(Array.isArray(value) ? value : [])}
+                  />
+                  <AiaText sx={{ mt: 0.75, fontSize: 11, color: '#94A3B8', lineHeight: 1.45 }}>
+                    These precedents are retrieved before fuzzy search and are passed to source mapping, transformation, and builder agents.
+                  </AiaText>
+                </AiaBox>
+              ) : (
+                <AiaBox
+                  sx={{
+                    border: "1px solid #e2e8f0",
+                    borderRadius: "8px",
+                    bgcolor: "#f8fafc",
+                    px: 1.5,
+                    py: 1.25,
+                  }}
+                >
+                  <AiaText sx={{ fontSize: 11, fontWeight: 700, color: "#64748B" }}>
+                    REUSE PRECEDENT MAPPINGS
+                  </AiaText>
+                  <AiaText sx={{ mt: 0.6, fontSize: 11.5, color: "#64748b", lineHeight: 1.45 }}>
+                    No published mappings are available to link explicitly. FIR knowledge learned from scripts and documents is still retrieved automatically. Import and publish a mapping to make it selectable here.
+                  </AiaText>
+                </AiaBox>
+              )}
+            </AiaBox>
+          )}
+
+          {!uploadResult && (
+          <AiaBox
             sx={{
               px: 4,
               py: 2.25,
@@ -340,80 +708,82 @@ export default function NewMappingDialog({
               backgroundColor: "#fff",
             }}
           >
-            <Typography sx={{ fontSize: 13.5, color: "#94a3b8", fontWeight: 500 }}>
+            <AiaText
+              sx={{
+                fontSize: 13.5,
+                color: "#94a3b8",
+                fontWeight: 500,
+                flex: 1,
+                minWidth: 0,
+                pr: 2,
+                overflowWrap: "anywhere",
+                wordBreak: "break-word",
+              }}
+            >
               {selectedOption
                 ? selectedOption.description
                 : "Select an option above to continue"}
-            </Typography>
+            </AiaText>
 
-            <Stack direction="row" spacing={1.25}>
-              <Button
+            <AiaStack direction="row" spacing={1.25} sx={{ flexShrink: 0 }}>
+              <AiaButton
                 variant="outlined"
+                rounded="lg"
+                size="medium"
                 onClick={handleClose}
+                data-tour={TOUR_TARGETS.newMappingCancel}
                 sx={{
                   minWidth: 108,
                   height: 44,
                   borderRadius: "14px",
-                  borderColor: "#dbe2ea",
                   color: "#334155",
+                  borderColor: "#dbe2ea",
                   fontSize: 14,
                   fontWeight: 700,
-                  textTransform: "none",
                 }}
               >
                 Cancel
-              </Button>
-              <Button
+              </AiaButton>
+              <AiaButton
                 variant="contained"
+                color="primary"
+                rounded="lg"
+                size="medium"
                 endIcon={<ArrowForwardRoundedIcon sx={{ fontSize: 16 }} />}
-                disabled={!selectedMode}
+                disabled={
+                  !selectedMode ||
+                  (selectedMode === "manual" && !!projectId && (!mappingName.trim() || !mappingDescription.trim()))
+                }
                 onClick={handleProceed}
                 sx={{
                   minWidth: 156,
                   height: 44,
                   borderRadius: "14px",
-                  backgroundColor: "#003D59",
-                  color: "#fff",
                   fontSize: 14,
                   fontWeight: 800,
-                  textTransform: "none",
-                  boxShadow: "none",
-                  "&:hover": {
-                    backgroundColor: "#012c3f",
-                    boxShadow: "none",
-                  },
-                  "&.Mui-disabled": {
-                    backgroundColor: "#e5e7eb",
-                    color: "#94a3b8",
-                  },
                 }}
               >
-                {selectedMode === "manual" ? "Proceed" : "Choose File"}
-              </Button>
-            </Stack>
-          </Box>
-        </Box>
-      </Box>
+                {selectedMode === "manual" ? "Build Mapping" : "Choose File"}
+              </AiaButton>
+            </AiaStack>
+          </AiaBox>
+          )}
+        </AiaBox>
+      </AiaBox>
 
       <input
         ref={sqlInputRef}
         type="file"
         accept=".sql,text/sql,application/sql"
         hidden
-        onChange={() => {
-          setSelectedMode(null);
-          onClose();
-        }}
+        onChange={(e) => handleFileUpload(e, "sql")}
       />
       <input
         ref={excelInputRef}
         type="file"
         accept=".xlsx,.xls,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv"
         hidden
-        onChange={() => {
-          setSelectedMode(null);
-          onClose();
-        }}
+        onChange={(e) => handleFileUpload(e, "excel")}
       />
     </>
   );

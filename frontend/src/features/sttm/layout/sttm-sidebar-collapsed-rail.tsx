@@ -1,6 +1,7 @@
 "use client";
+import { AiaBox, AiaIconButton, AiaTooltip } from '@/components/ui';
 
-import { Box, IconButton, Tooltip } from "@mui/material";
+
 import {
   SttmSidebarSectionIcon,
   type SttmSidebarIconKind,
@@ -17,7 +18,7 @@ type SttmSidebarCollapsedRailProps = {
 
 export function SttmSidebarCollapsedRail({ items }: SttmSidebarCollapsedRailProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "flex",
         flexDirection: "column",
@@ -29,8 +30,8 @@ export function SttmSidebarCollapsedRail({ items }: SttmSidebarCollapsedRailProp
       }}
     >
       {items.map((item) => (
-        <Tooltip key={`${item.kind}-${item.label}`} title={item.label} placement="right">
-          <IconButton
+        <AiaTooltip key={`${item.kind}-${item.label}`} title={item.label} placement="right" arrow>
+          <AiaIconButton
             size="small"
             aria-label={item.label}
             sx={{
@@ -46,10 +47,10 @@ export function SttmSidebarCollapsedRail({ items }: SttmSidebarCollapsedRailProp
               },
             }}
           >
-            <SttmSidebarSectionIcon kind={item.kind} fontSize={16} />
-          </IconButton>
-        </Tooltip>
+            <SttmSidebarSectionIcon kind={item.kind} />
+          </AiaIconButton>
+        </AiaTooltip>
       ))}
-    </Box>
+    </AiaBox>
   );
 }

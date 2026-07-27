@@ -17,14 +17,19 @@ export default function SttmBuilderPage() {
   }, [setContent]);
 
   return (
-    <div className="sttm-scroll-pane h-full min-h-0 flex-1 overflow-y-auto bg-white p-3">
-      <div className="flex flex-col gap-3 pb-3">
-        <div className="flex min-h-[450px] flex-col rounded-xl border border-[#e5e7eb] bg-white lg:flex-row lg:items-stretch">
-          <div className="flex flex-1 border-b border-[#e5e7eb] lg:border-b-0 lg:border-r">
+    <div className="sttm-scroll-pane h-full min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden bg-white p-3">
+      <div className="flex min-w-0 flex-col gap-3 pb-3">
+        <div className="grid min-h-[450px] min-w-0 grid-cols-1 overflow-hidden rounded-lg border border-[#e5e7eb] bg-white lg:grid-cols-[minmax(0,1.35fr)_minmax(340px,0.65fr)]">
+          <div className="flex min-w-0 border-b border-[#e5e7eb] lg:border-b-0 lg:border-r">
             <SourceTargetPanel type="source" />
           </div>
-          <div className="flex flex-1">
-            <SourceTargetPanel type="target" />
+          <div className="grid min-w-0 grid-rows-[minmax(150px,auto)_minmax(240px,1fr)]">
+            <div className="flex min-w-0 border-b border-[#e5e7eb]">
+              <SourceTargetPanel type="derived" />
+            </div>
+            <div className="flex min-w-0">
+              <SourceTargetPanel type="target" />
+            </div>
           </div>
         </div>
 

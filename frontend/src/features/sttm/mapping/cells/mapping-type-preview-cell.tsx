@@ -1,6 +1,6 @@
 import { AiaChipCell } from '@/components/ui/aia-table';
 import type { SxProps, Theme } from '@mui/material/styles';
-import { formatSqlType, typeChipSx } from '../mapping-utils';
+import { formatSqlType, typeChipColor } from '../mapping-utils';
 
 type MappingTypePreviewCellProps = {
   dataType?: string;
@@ -25,11 +25,11 @@ export const MappingTypePreviewCell = ({
       />
     );
   }
+
   return (
     <AiaChipCell
-      label={formatSqlType(dataType)}
-      chipSx={typeChipSx(dataType)}
-      rounded={false}
+      label={formatSqlType(dataType).toLowerCase()}
+      color={typeChipColor(dataType)}
       width={width}
       minWidth={minWidth}
       sx={sx}

@@ -1,3 +1,4 @@
+import hashlib
 import json
 import logging
 import time
@@ -9,6 +10,7 @@ from typing import Any
 from app.core.config import Settings
 from app.core.conversation_memory import ConversationMemoryService
 from app.core.exceptions import SnowflakeAgentError, SnowflakeQueryError
+from app.core.learning_retrieval import LearningRetrievalService
 from app.core.sttm_builder import STTMBuilderService
 from app.core.sttm_builder import (
     _extract_stream_message_text,
@@ -16,6 +18,7 @@ from app.core.sttm_builder import (
     _extract_stream_status,
     _extract_stream_suggestions,
     _extract_stream_text_delta,
+    _iter_agent_events_with_heartbeat,
 )
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.guardrails.adapters.rag_source import SemanticContextRAGSource
@@ -99,16 +102,18 @@ class SignalCandidate:
 class ConversationService:
     def __init__(
         self,
-        agent_client: SnowflakeAgentClient,
+        agent_client: SnowflakeAgentClient | None,
         *,
-        sttm_builder_service: STTMBuilderService,
+        sttm_builder_service: STTMBuilderService | None,
         memory_service: ConversationMemoryService,
         settings: Settings,
+        learning_service: LearningRetrievalService | None = None,
     ) -> None:
         self._agent = agent_client
         self._sttm_builder = sttm_builder_service
         self._memory = memory_service
         self._settings = settings
+        self._learning_service = learning_service
         self._guardrails_config = load_config(settings=settings)
         self._router = DeterministicRouter(self._guardrails_config)
         self._model_guard = ModelBoundaryGuard(self._guardrails_config)
@@ -124,6 +129,13 @@ class ConversationService:
         self,
         req: ConversationRequestEnvelope,
     ) -> ConversationRequestEnvelope:
+        if self._sttm_builder is None:
+            return req
+        # A prepared bundle plus its model-facing semantic payload is already
+        # a complete handle. Avoid a durable bundle lookup here; the STTM
+        # handoff will hydrate composed YAML only if the selected route needs it.
+        if req.context.semantic_bundle_id and req.context.semantic_context:
+            return req
         resolved_bundle_id, resolved_view_name = self._sttm_builder.resolve_usable_semantic_context(
             semantic_bundle_id=req.context.semantic_bundle_id,
             semantic_view_name=req.context.semantic_view_name,
@@ -151,6 +163,8 @@ class ConversationService:
         self,
         data: ConversationSignalEvaluationData,
     ) -> ConversationSignalEvaluationData:
+        if self._sttm_builder is None:
+            return data
         resolved_bundle_id, resolved_view_name = self._sttm_builder.resolve_usable_semantic_context(
             semantic_bundle_id=data.semantic_bundle_id,
             semantic_view_name=data.semantic_view_name,
@@ -175,6 +189,7 @@ class ConversationService:
         governance_decision: GovernanceDecision | None = None,
     ) -> Any:
         req = self._sanitize_conversation_request_semantic_context(req)
+        req = self._with_learning_context(req)
         decision = governance_decision or GovernanceDecision(
             trace_id=req.context.trace_id or req.request_id or "conversation-trace",
             request_id=req.request_id,
@@ -354,6 +369,7 @@ class ConversationService:
             return f"event: {event}\ndata: {json.dumps(data, default=str)}\n\n"
 
         def iterator() -> Iterator[str]:
+            nonlocal req
             decision = governance_decision or GovernanceDecision(
                 trace_id=req.context.trace_id or req.request_id or f"conversation-stream-{uuid.uuid4().hex[:8]}",
                 request_id=req.request_id,
@@ -367,6 +383,25 @@ class ConversationService:
             if fast_response is not None:
                 yield emit("final", fast_response.model_dump(mode="json"))
                 return
+
+            already_prepared = bool(
+                req.context.semantic_bundle_id
+                and req.context.semantic_context
+                and req.context.learning_context
+            )
+            yield emit(
+                "status",
+                {
+                    "phase": "preparing_context",
+                    "message": (
+                        "Using the prepared workspace context."
+                        if already_prepared
+                        else "Resolving workspace context."
+                    ),
+                    "conversation_id": conversation_id,
+                },
+            )
+            req = self._with_learning_context(req)
 
             if req.operation == ConversationOperation.FEEDBACK:
                 response = self.invoke(req, governance_decision=decision)
@@ -474,13 +509,32 @@ class ConversationService:
             )
             raw_payload: dict[str, Any] | None = None
             text_parts: list[str] = []
+            yield emit(
+                "status",
+                {
+                    "phase": "agent_started",
+                    "message": "The workbench conversation agent is preparing its response.",
+                    "conversation_id": conversation_id,
+                },
+            )
             try:
-                for event_name, payload_item in self._agent.stream_events(
+                agent_events = self._agent.stream_events(
                     [{"role": "user", "content": [{"type": "text", "text": user_text}]}],
                     agent=self._agent_name,
                     thread_id=req.context.thread_id,
                     parent_message_id=req.context.parent_message_id,
-                ):
+                )
+                for event_name, payload_item in _iter_agent_events_with_heartbeat(agent_events):
+                    if event_name == "__heartbeat__":
+                        yield emit(
+                            "status",
+                            {
+                                "phase": "agent_processing",
+                                "message": "The workbench conversation agent is still processing.",
+                                **payload_item,
+                            },
+                        )
+                        continue
                     delta = _extract_stream_text_delta(event_name, payload_item)
                     if delta:
                         text_parts.append(delta)
@@ -534,10 +588,13 @@ class ConversationService:
         return iterator()
 
     def search(self, data: ConversationSearchRequestData) -> ConversationSearchResponseData:
-        resolved_bundle_id, resolved_view_name = self._sttm_builder.resolve_usable_semantic_context(
-            semantic_bundle_id=data.semantic_bundle_id,
-            semantic_view_name=data.semantic_view_name,
-        )
+        if self._sttm_builder is None:
+            resolved_bundle_id, resolved_view_name = data.semantic_bundle_id, data.semantic_view_name
+        else:
+            resolved_bundle_id, resolved_view_name = self._sttm_builder.resolve_usable_semantic_context(
+                semantic_bundle_id=data.semantic_bundle_id,
+                semantic_view_name=data.semantic_view_name,
+            )
         hits = self._memory.search(
             query=data.query,
             limit=data.limit,
@@ -615,6 +672,17 @@ class ConversationService:
                 context_key=context_key,
                 user_id=user_id,
             )
+            if resolved_mapping_intent is None and data.target_table is not None:
+                target_only_key = self._memory.build_context_key(
+                    source_tables=None,
+                    target_table=self._qualified_table_name(data.target_table),
+                    page=data.page,
+                    surface=data.surface,
+                )
+                resolved_mapping_intent = self._memory.get_mapping_intent(
+                    context_key=target_only_key,
+                    user_id=user_id,
+                )
             if resolved_mapping_intent is not None:
                 data = data.model_copy(update={"mapping_intent": resolved_mapping_intent})
             self._memory.record_fir_event(
@@ -627,6 +695,13 @@ class ConversationService:
                 entity_type="table_selection",
                 entity_ids=self._signal_entity_ids(data),
                 event_payload=data.model_dump(mode="json", exclude_none=True),
+                context_key=context_key,
+                snapshot_id=(data.workspace_context.snapshot_id if data.workspace_context else None),
+                milestone=(
+                    data.workspace_context.milestone
+                    if data.workspace_context and data.workspace_context.milestone
+                    else data.activity_type
+                ),
             )
             signal_result = self._evaluate_signal_candidates(
                 request_id=request_id,
@@ -636,7 +711,11 @@ class ConversationService:
                 data=data,
             )
             signals = self._memory.list_signals(user_id=user_id, limit=50)
-            relevant_signals = self._filter_signals_for_context(signals, data)
+            relevant_signals = self._filter_signals_for_context(
+                signals,
+                data,
+                context_key=context_key,
+            )
             inference_id: str | None = None
             if signal_result is not None:
                 signal_id, inference_id = signal_result
@@ -707,6 +786,8 @@ class ConversationService:
     def _filter_signals_for_context(
         signals: list[AssistantSignal],
         data: ConversationSignalEvaluationData,
+        *,
+        context_key: str,
     ) -> list[AssistantSignal]:
         expected_page = (data.page or "").strip().lower()
         expected_surface = (data.surface or "").strip().upper()
@@ -719,7 +800,12 @@ class ConversationService:
                 f"{data.target_table.database}.{data.target_table.schema}.{data.target_table.table}".upper()
             )
         selected_entity_ids.update(str(item).strip().upper() for item in (data.selected_derived_sources or []) if str(item).strip())
-        filtered = list(signals)
+        filtered = [
+            item
+            for item in signals
+            if item.status == AssistantSignalStatus.NEW
+            and str(item.attributes.get("context_key") or "").strip() == context_key
+        ]
         if selected_entity_ids:
             filtered = [
                 item
@@ -773,12 +859,6 @@ class ConversationService:
                     status="reviewed",
                 )
             feedback_recorded = True
-            self._apply_signal_learning(
-                signal=target,
-                payload=payload,
-                user_id=user_id,
-                session_id=None,
-            )
         self._memory.record_fir_event(
             event_type=f"signal_response.{next_status.value}",
             user_id=user_id,
@@ -797,6 +877,22 @@ class ConversationService:
             },
         )
         self._memory.update_signal_status(signal_id=payload.signal_id, status=next_status)
+        try:
+            self._apply_signal_learning(
+                signal=target,
+                payload=payload,
+                user_id=user_id,
+                session_id=conversation_id,
+            )
+        except Exception:
+            # The user's response is already persisted above. Keep this endpoint
+            # successful if asynchronous FIR outcome enrichment is temporarily
+            # unavailable; the recorded event can be replayed by the task graph.
+            logger.exception(
+                "conversation.signal_learning failed signal_id=%s request_id=%s",
+                payload.signal_id,
+                request_id,
+            )
         return AssistantSignalResponseData(
             signal_id=payload.signal_id,
             status=next_status,
@@ -812,6 +908,7 @@ class ConversationService:
             self._business_rules.validate_handoff_payload(req.data.model_dump(mode="json", exclude_none=True))
             return req.data.handoff_request
 
+        sttm_route_hint = self._sttm_route_hint_for_conversation(req, route_plan)
         return STTMBuilderEnvelopeRequest.model_validate(
             {
                 "contract_version": "1.0",
@@ -820,8 +917,8 @@ class ConversationService:
                 # can then decide how to branch internally with the existing context.
                 "operation": STTMOperation.CHAT.value,
                 "context": {
-                    "thread_id": None,
-                    "parent_message_id": None,
+                    "thread_id": req.context.thread_id,
+                    "parent_message_id": req.context.parent_message_id,
                     "trace_id": req.context.trace_id,
                     "surface": req.context.surface or "SOURCE_SELECTION",
                     "semantic_level_requested": req.context.semantic_level_requested or "L1_CONTEXT",
@@ -835,18 +932,37 @@ class ConversationService:
                     "target_table": req.context.target_table.model_dump(mode="json")
                     if req.context.target_table is not None
                     else None,
-                    "selected_derived_sources": req.context.selected_derived_sources,
+                "selected_derived_sources": req.context.selected_derived_sources,
                     "semantic_bundle_id": req.context.semantic_bundle_id,
                     "semantic_bundle_label": req.context.semantic_bundle_label,
                     "semantic_view_name": req.context.semantic_view_name,
                     "derived_source_lineage": req.context.derived_source_lineage,
                     "semantic_context": req.context.semantic_context,
-                    "relationships": req.context.relationships,
-                    "selected_columns_by_table": req.context.selected_columns_by_table,
-                    "datahub_context": req.context.datahub_context,
-                },
+                "learning_context": req.context.learning_context.model_dump(mode="json")
+                if req.context.learning_context is not None
+                else None,
+                "prepared_context_hash": req.context.prepared_context_hash,
+                "relationships": req.context.relationships,
+                "selected_columns_by_table": req.context.selected_columns_by_table,
+                "datahub_context": req.context.datahub_context,
+                "mapping_intent": req.context.mapping_intent.model_dump(mode="json")
+                if hasattr(req.context.mapping_intent, "model_dump")
+                else req.context.mapping_intent,
+                "workspace_context": req.context.workspace_context.model_dump(mode="json")
+                if req.context.workspace_context is not None
+                else None,
+                "routing_hint": (
+                    getattr(req.context, "routing_hint", None)
+                    or (req.context.workspace_context.model_dump(mode="json").get("semantic_bundle", {}) if req.context.workspace_context is not None else {}).get("intent_route")
+                    or sttm_route_hint
+                ),
+            },
                 "data": {
                     "intent": Interface.CHAT.value,
+                    "intent_route": (
+                        getattr(req.context, "routing_hint", None)
+                        or sttm_route_hint
+                    ),
                     "message": req.data.message,
                     "attributes": None,
                 },
@@ -859,6 +975,36 @@ class ConversationService:
                 },
             }
         )
+
+    def _sttm_route_hint_for_conversation(
+        self,
+        req: ConversationRequestEnvelope,
+        route_plan: AgentRoutePlan,
+    ) -> str:
+        text = (req.data.message or "").strip().lower()
+        if any(token in text for token in ("coco", "deep agent", "code agent", "edit code", "deploy")):
+            return "coco_deep_agent"
+        if any(token in text for token in ("dbt", "model.sql", "schema.yml", "schema yaml")):
+            return "dbt_conversion"
+        if any(token in text for token in ("test case", "test cases", "data test", "unit test")):
+            return "test_cases"
+        if any(token in text for token in (
+            "tell me about", "what can you", "what about", "do you see",
+            "describe", "overview", "explain the", "information about",
+            "what do you know", "any insight", "any recommendation",
+        )):
+            return "rag_answer"
+        if any(token in text for token in ("derived source", "cte", "join the", "generate sql", "write sql", "validate sql")):
+            return "analyst_sql_or_derived_source"
+        if "query" in text and not any(token in text for token in ("tell", "about", "see", "know", "explain")):
+            return "analyst_sql_or_derived_source"
+        if any(token in text for token in ("preprocessing", "pre-processing", "rule", "cast", "case ", "preprocess", "pre-process", "transform", "convert", "expression")):
+            return "transformation_rule"
+        if any(token in text for token in ("map", "mapping", "source column", "confidence", "why low", "remap")):
+            return "source_mapping"
+        if route_plan.intent_class in {ConversationIntentClass.RAG_LOOKUP, ConversationIntentClass.RECOMMENDATION}:
+            return "rag_answer"
+        return "direct_answer"
 
     def _plan_route(
         self,
@@ -885,6 +1031,26 @@ class ConversationService:
                 intent_class=fallback_intent,
                 reason=fallback.reason,
                 confidence=None,
+                status=ConversationStatus.COMPLETED,
+            )
+
+        return AgentRoutePlan(
+            route=ConversationRoute.STTM_BUILDER,
+            intent_class=fallback_intent,
+            reason="deterministic:single_orchestrator_sttm_builder",
+            confidence=1.0,
+            status=ConversationStatus.COMPLETED,
+        )
+
+        # The deterministic router already covers the product's explicit handoff
+        # vocabulary. A second Cortex request solely to decide which Cortex request
+        # to make doubled first-token latency for every ordinary message.
+        if not self._settings.conversation_model_route_planning_enabled:
+            return AgentRoutePlan(
+                route=fallback_route,
+                intent_class=fallback_intent,
+                reason=f"deterministic:{fallback.reason}",
+                confidence=1.0,
                 status=ConversationStatus.COMPLETED,
             )
 
@@ -973,15 +1139,74 @@ class ConversationService:
         if req.operation == ConversationOperation.FEEDBACK:
             return None
 
-        relationship_response = self._build_selected_relationship_response(
+        return self._build_greeting_response(
             req,
             decision,
             conversation_id=conversation_id,
         )
-        if relationship_response is not None:
-            return relationship_response
 
-        return None
+    def _build_greeting_response(
+        self,
+        req: ConversationRequestEnvelope,
+        decision: GovernanceDecision,
+        *,
+        conversation_id: str,
+    ) -> ApiResponseEnvelope[ConversationResponseData] | None:
+        message = " ".join((req.data.message or "").strip().lower().split())
+        greeting_only = {
+            "hi",
+            "hello",
+            "hey",
+            "hi there",
+            "hello there",
+            "good morning",
+            "good afternoon",
+            "good evening",
+        }
+        capability_question = any(
+            phrase in message
+            for phrase in ("what can you do", "how can you help", "your capabilities")
+        )
+        if message not in greeting_only and not capability_question:
+            return None
+
+        if capability_question:
+            response_message = (
+                "I can explain the selected source and target tables, inspect relationships, joins, and "
+                "mapping context, generate derived-source SQL, and hand mapping work to "
+                "the STTM agents. I use the exact workspace context shown above the chat."
+            )
+            quick_replies = [
+                "Explain the selected tables",
+                "Generate a derived source",
+                "Recommend the next mapping step",
+            ]
+        else:
+            response_message = "Hello! What would you like to do with the current STTM workspace?"
+            quick_replies = ["Explain this selection", "Recommend the next step"]
+
+        return self._finalize_conversation_response(
+            req,
+            decision,
+            route=ConversationRoute.STTM_BUILDER,
+            status=ConversationStatus.COMPLETED,
+            intent_class=ConversationIntentClass.QUICK_ANSWER,
+            agent="sttm_builder",
+            message=response_message,
+            artifact=ConversationArtifact(
+                conversation_id=conversation_id,
+                route_reason="local_fast_path:sttm_builder_greeting_or_capability",
+                route_confidence=1.0,
+                quick_replies=quick_replies,
+            ),
+            citations=[
+                EvidenceCitation(
+                    source_id="builtin:workbench_capabilities",
+                    source_type="agent_skill",
+                    snippet="Built-in workbench capability summary.",
+                )
+            ] if capability_question else [],
+        )
 
     def _build_selected_relationship_response(
         self,
@@ -1124,6 +1349,7 @@ class ConversationService:
             else None,
             "semantic_bundle_id": req.context.semantic_bundle_id,
             "semantic_view_name": req.context.semantic_view_name,
+            "fir_learning_context": self._compact_learning_context(req.context.learning_context),
         }
         if execution_mode != "route_planning":
             context_payload.update(
@@ -1131,6 +1357,21 @@ class ConversationService:
                     "semantic_bundle_label": req.context.semantic_bundle_label,
                     "selected_columns_by_table": req.context.selected_columns_by_table,
                     "relationship_count": len(req.context.relationships or []),
+                    "workspace_context": self._compact_workspace_context(
+                        req.context.workspace_context.model_dump(mode="json")
+                        if req.context.workspace_context is not None
+                        else (
+                            {
+                                "checked_mapping_row_ids": req.context.checked_mapping_row_ids,
+                                "mapping_rows": req.context.mapping_rows,
+                                "surface": req.context.surface,
+                                "source_tables": [t.model_dump(mode="json") for t in (req.context.source_tables or [])],
+                                "target_table": req.context.target_table.model_dump(mode="json") if req.context.target_table else None,
+                            }
+                            if req.context.checked_mapping_row_ids
+                            else None
+                        )
+                    ),
                 }
             )
 
@@ -1169,6 +1410,188 @@ class ConversationService:
             },
         }
         return json.dumps(payload, separators=(",", ":"))
+
+    def _with_learning_context(
+        self,
+        req: ConversationRequestEnvelope,
+    ) -> ConversationRequestEnvelope:
+        """Attach exact FIR context to direct conversation-agent requests."""
+        if self._learning_service is None or req.context.learning_context is not None:
+            return req
+        if req.context.learning_context_id:
+            prepared = self._learning_service.get_prepared_learning_context(
+                learning_context_id=req.context.learning_context_id,
+                learning_context_hash=req.context.learning_context_hash,
+            )
+            if prepared is not None:
+                return req.model_copy(
+                    update={
+                        "context": req.context.model_copy(
+                            update={
+                                "learning_context": prepared,
+                                "prepared_context_hash": (
+                                    req.context.workspace_context_hash
+                                    or prepared.learning_context_hash
+                                ),
+                            }
+                        )
+                    }
+                )
+        workspace = req.context.workspace_context
+        source_tables = [item.qualified_name for item in (req.context.source_tables or [])]
+        target_table = req.context.target_table.qualified_name if req.context.target_table else ""
+        if not workspace and not source_tables and not target_table:
+            return req
+        try:
+            target_columns: list[str] = []
+            if req.context.target_table and req.context.selected_columns_by_table:
+                target_fqn = req.context.target_table.qualified_name.upper()
+                for table_name, columns in req.context.selected_columns_by_table.items():
+                    if str(table_name).upper() in {target_fqn, req.context.target_table.table.upper()}:
+                        target_columns.extend(str(column) for column in columns)
+            mapping_intent = req.context.mapping_intent
+            learning = self._learning_service.get_comprehensive_learning_context(
+                project_id=workspace.project_id if workspace and workspace.project_id else "",
+                source_tables=source_tables,
+                target_table=target_table,
+                target_columns=target_columns,
+                mapping_intent=(
+                    mapping_intent.model_dump(mode="json")
+                    if hasattr(mapping_intent, "model_dump")
+                    else mapping_intent
+                ),
+                sttm_id=workspace.sttm_id if workspace else None,
+                context_key=workspace.context_key if workspace else None,
+                source_set_hash=workspace.source_set_hash if workspace else None,
+                derived_set_hash=workspace.derived_set_hash if workspace else None,
+                milestone=workspace.milestone if workspace else None,
+                # All free-text asks currently hand off to AGT_STTM_BUILDER.
+                # Prepare that agent's ranked context once and carry it through
+                # the handoff instead of retrieving a second copy.
+                target_agent="AGT_STTM_BUILDER",
+            )
+            prepared_context_hash = learning.learning_context_hash or hashlib.sha256(
+                json.dumps(
+                    learning.model_dump(mode="json", exclude_none=True),
+                    sort_keys=True,
+                    separators=(",", ":"),
+                    default=str,
+                ).encode("utf-8")
+            ).hexdigest()
+            return req.model_copy(
+                update={
+                    "context": req.context.model_copy(
+                        update={
+                            "learning_context": learning,
+                            "prepared_context_hash": prepared_context_hash,
+                        }
+                    )
+                }
+            )
+        except Exception as exc:
+            logger.warning("Failed to enrich conversation with FIR context: %s", exc)
+            return req
+
+    @staticmethod
+    def _compact_learning_context(learning: Any) -> dict[str, Any] | None:
+        if learning is None:
+            return None
+        payload = learning.model_dump(mode="json") if hasattr(learning, "model_dump") else learning
+        if not isinstance(payload, dict):
+            return None
+        limits = {
+            "fir_learnings": 10,
+            "fir_recommendations": 10,
+            "correction_history": 5,
+            "similar_mappings": 5,
+            "semantic_learnings": 10,
+            "semantic_version_learnings": 5,
+            "mapping_precedents": 3,
+            "linked_mapping_precedents": 3,
+            "target_mapping_patterns": 50,
+        }
+        compact = {
+            key: value[:limits[key]] if isinstance(value, list) and key in limits else value
+            for key, value in payload.items()
+            if key in limits
+            or key in {
+                "mapping_intent",
+                "project_context",
+                "context_key",
+                "retrieval_mode",
+                "used_inference_ids",
+                "used_recommendation_ids",
+            }
+        }
+        return compact
+
+    @staticmethod
+    def _compact_workspace_context(workspace_context: Any) -> dict[str, Any] | None:
+        if not isinstance(workspace_context, dict):
+            return None
+        checked_ids = {
+            str(item)
+            for item in (workspace_context.get("checked_mapping_row_ids") or [])
+            if item is not None
+        }
+        active_id = workspace_context.get("active_mapping_row_id")
+        mapping_rows = workspace_context.get("mapping_rows")
+        selected_rows: list[dict[str, Any]] = []
+        if isinstance(mapping_rows, list):
+            for row in mapping_rows:
+                if not isinstance(row, dict):
+                    continue
+                row_id = str(row.get("id") or "")
+                if checked_ids and row_id not in checked_ids:
+                    continue
+                if not checked_ids and active_id and row_id != str(active_id):
+                    continue
+                selected_rows.append(
+                    {
+                        "id": row.get("id"),
+                        "target_column": row.get("target_column"),
+                        "target_type": row.get("target_type"),
+                        "source_columns": row.get("source_columns") or row.get("source_column"),
+                        "source_type": row.get("source_type"),
+                        "rule": row.get("rule"),
+                        "expression": row.get("expression"),
+                        "natural_language_rule": row.get("natural_language_rule"),
+                        "description": row.get("description"),
+                        "load_order": row.get("load_order"),
+                        "confidence": row.get("confidence") or row.get("confidence_score"),
+                        "confidence_reason": row.get("confidence_reason"),
+                        "status": row.get("status"),
+                    }
+                )
+        semantic = workspace_context.get("semantic")
+        return {
+            "context_version": workspace_context.get("context_version"),
+            "context_hash": workspace_context.get("context_hash"),
+            "page": workspace_context.get("page"),
+            "surface": workspace_context.get("surface"),
+            "source_tables": workspace_context.get("source_tables"),
+            "target_table": workspace_context.get("target_table"),
+            "relationships": workspace_context.get("relationships"),
+            "mapping_intent": workspace_context.get("mapping_intent"),
+            "checked_mapping_row_ids": list(checked_ids),
+            "active_mapping_row_id": active_id,
+            "selected_mapping_rows": selected_rows[:20],
+            "mapping_summary": {
+                "row_count": len(mapping_rows) if isinstance(mapping_rows, list) else 0,
+                "checked_count": len(checked_ids),
+            },
+            "semantic": semantic if isinstance(semantic, dict) else None,
+            "conversation_history": [
+                {
+                    "role": item.get("role"),
+                    "content": str(item.get("content") or "")[:2000],
+                }
+                for item in (workspace_context.get("conversation_history") or [])[-30:]
+                if isinstance(item, dict)
+                and item.get("role") in {"user", "assistant"}
+                and str(item.get("content") or "").strip()
+            ],
+        }
 
     @staticmethod
     def _build_capability_summary(selected_table_names: list[str]) -> str:
@@ -1599,9 +2022,19 @@ class ConversationService:
                 "page": signal.attributes.get("page") if isinstance(signal.attributes, dict) else None,
                 "surface": signal.attributes.get("surface") if isinstance(signal.attributes, dict) else None,
             },
+            context_key=context_key or None,
+            question_id=signal.attributes.get("question_id") if isinstance(signal.attributes, dict) else None,
+            inference_id=signal.inference_id,
+            agent_recommendation_id=signal.attributes.get("fir_recommendation_id") if isinstance(signal.attributes, dict) else None,
+            snapshot_id=signal.attributes.get("snapshot_id") if isinstance(signal.attributes, dict) else None,
+            correction_payload={"comment": payload.comment, "option_selected": payload.option_selected}
+            if payload.comment or payload.option_selected
+            else None,
         )
 
     def _build_signal_context_key(self, data: ConversationSignalEvaluationData) -> str:
+        if data.workspace_context and data.workspace_context.context_key:
+            return data.workspace_context.context_key
         return self._memory.build_context_key(
             source_tables=data.source_tables or [],
             target_table=self._qualified_table_name(data.target_table),
@@ -1847,27 +2280,35 @@ class ConversationService:
             return
         option = str(payload.option_selected or "").strip().lower()
         rating = payload.rating
+        fir_recommendation_id = str(signal.attributes.get("fir_recommendation_id") or "").strip()
+        if fir_recommendation_id:
+            if payload.status == "dismissed":
+                outcome_type = "dismissed"
+            elif (rating is not None and rating >= 4) or option in {"looks right", "confirm", "yes, remember this"}:
+                outcome_type = "accepted"
+            elif payload.comment or "correct" in option or "needs correction" in option:
+                outcome_type = "corrected"
+            elif (rating is not None and rating <= 2) or option in {"reject", "not relevant right now", "not always true"}:
+                outcome_type = "rejected"
+            else:
+                outcome_type = "used"
+            self._memory.record_fir_recommendation_outcome(
+                recommendation_id=fir_recommendation_id,
+                outcome_type=outcome_type,
+                context_key=context_key,
+                snapshot_id=str(signal.attributes.get("snapshot_id") or "") or None,
+                user_id=user_id,
+                payload={
+                    "signal_id": signal.signal_id,
+                    "question_id": signal.attributes.get("question_id"),
+                    "rating": rating,
+                    "option_selected": payload.option_selected,
+                    "comment": payload.comment,
+                },
+            )
         feedback_class = str(signal.attributes.get("feedback_class") or signal.layer or "general")
-        learning_summary = payload.comment or payload.option_selected or signal.title
-        confidence = 0.88 if option in {"looks right", "this is a new mapping", "i am updating an existing mapping"} else 0.61
-        self._memory.upsert_semantic_learning(
-            learning_key=f"{feedback_class}|{context_key}|{option or rating or 'response'}",
-            entity_type="fir_context",
-            entity_ids=[context_key, *signal.entity_ids[:3]],
-            learning_type=feedback_class,
-            summary=learning_summary,
-            confidence=confidence,
-            source="user_feedback",
-            attributes={
-                "signal_id": signal.signal_id,
-                "signal_type": signal.signal_type.value,
-                "rating": rating,
-                "option_selected": payload.option_selected,
-                "page": signal.attributes.get("page"),
-                "surface": signal.attributes.get("surface"),
-            },
-            user_id=user_id,
-        )
+        # FIR recommendation responses are written as exact outcomes and consumed
+        # by the offline task graph. Do not create a parallel online learning row.
         if feedback_class == "mapping_intent_capture":
             lifecycle = "unknown"
             if option.startswith("this is a new mapping"):
@@ -1929,25 +2370,32 @@ class ConversationService:
             suspicious_join=suspicious_join,
         )
 
-        candidate = self._build_signal_candidate(
-            settings=settings,
+        fir_candidate = self._match_fir_recommendation_to_context(
             data=data,
             context_key=context_key,
-            feature_snapshot=feature_snapshot,
             selected_tables=selected_tables,
-            selected_pair=selected_pair,
-            relationship_count=relationship_count,
-            semantic_ready=semantic_ready,
-            suspicious_join=suspicious_join,
         )
-        if candidate is None:
-            return None
 
-        candidate = self._llm_personalize_signal_candidate(
-            candidate,
-            data=data,
-            context_hits=None,
-        )
+        if fir_candidate is not None:
+            candidate = fir_candidate
+        else:
+            # FIR remains outside the request path. This deterministic checkpoint
+            # fallback is used only while offline evidence is pending or no exact
+            # recommendation has been precomputed for the current identity.
+            candidate = self._build_signal_candidate(
+                settings=settings,
+                data=data,
+                context_key=context_key,
+                feature_snapshot=feature_snapshot,
+                selected_tables=selected_tables,
+                selected_pair=selected_pair,
+                relationship_count=relationship_count,
+                semantic_ready=semantic_ready,
+                suspicious_join=suspicious_join,
+            )
+            if candidate is None:
+                return None
+
         self._memory.dismiss_conflicting_signals(
             keep_signal_key=candidate.signal_key,
             entity_type=candidate.entity_type,
@@ -1956,38 +2404,8 @@ class ConversationService:
             surface=(candidate.attributes or {}).get("surface") if isinstance(candidate.attributes, dict) else None,
             user_id=user_id,
         )
-        inference_id = self._memory.record_inference(
-            inference_key=candidate.inference_key,
-            request_id=request_id,
-            conversation_id=conversation_id,
-            source=candidate.source,
-            inference_type=candidate.inference_type,
-            summary=candidate.inference_summary,
-            confidence=candidate.confidence,
-            entity_type=candidate.entity_type,
-            entity_ids=candidate.entity_ids,
-            attributes=candidate.attributes,
-            status="open",
-            user_id=user_id,
-        )
-
-        recommendation_id = None
-        if candidate.recommendation_type and candidate.recommendation_message:
-            recommendation_id = self._memory.record_recommendation(
-                request_id=request_id,
-                conversation_id=conversation_id or "",
-                signal_id=None,
-                recommendation_type=candidate.recommendation_type,
-                message=candidate.recommendation_message,
-                citations=candidate.recommendation_citations,
-                entity_type=candidate.entity_type,
-                entity_ids=candidate.entity_ids,
-                confidence=candidate.confidence,
-                attributes=candidate.recommendation_attributes or {},
-                approval_required=False,
-                status="completed",
-                user_id=user_id,
-            )
+        inference_id = str(candidate.attributes.get("fir_inference_id") or "") or None
+        recommendation_id = str(candidate.attributes.get("fir_recommendation_id") or "") or None
 
         signal_id = self._memory.upsert_signal(
             signal_key=candidate.signal_key,
@@ -2009,6 +2427,17 @@ class ConversationService:
             recommendation_id=recommendation_id,
             user_id=user_id,
         )
+        fir_recommendation_id = candidate.attributes.get("fir_recommendation_id")
+        if fir_recommendation_id:
+            self._memory.record_fir_recommendation_outcome(
+                recommendation_id=str(fir_recommendation_id),
+                outcome_type="shown",
+                context_key=str(candidate.attributes.get("context_key") or "") or None,
+                snapshot_id=str(candidate.attributes.get("snapshot_id") or "") or None,
+                request_id=request_id,
+                user_id=user_id,
+                payload={"signal_id": signal_id, "question_id": candidate.attributes.get("question_id")},
+            )
         return signal_id, inference_id
 
     def _build_signal_candidate(
@@ -2103,6 +2532,7 @@ class ConversationService:
                     "context_key": context_key,
                     "action_type": "explain_relationship",
                     "feedback_class": "business_relationship_confirmation",
+                    "question_id": "Q6",
                     "grounding_needed": not feature_snapshot.get("semantic_learning_count"),
                     "current_understanding": current_understanding,
                     "suggested_prompt": (
@@ -2226,6 +2656,7 @@ class ConversationService:
                     "target_table": target_key,
                     "context_key": context_key,
                     "feedback_class": "semantic_gap_needs_feedback",
+                    "question_id": "Q6",
                     "grounding_needed": False,
                     "current_understanding": current_understanding,
                 },
@@ -2246,15 +2677,18 @@ class ConversationService:
                 f"semantic-ready|{page_key}|{surface_key}|{'|'.join(selected_tables[:3])}|"
                 f"{target_key}|{derived_key}"
             )
+            # Check if this is from a loaded mapping vs active selection
+            is_loaded_context = bool(data.sttm_id) and page_key == "builder"
+            context_prefix = "Based on this mapping's saved context, I" if is_loaded_context else "I"
             if target_label:
                 message = (
-                    f"I can give better join explanations and mapping suggestions for "
+                    f"{context_prefix} can give better join explanations and mapping suggestions for "
                     f"`{selected_pair_labels[0]}`{f' and `{selected_pair_labels[1]}`' if len(selected_pair_labels) > 1 else ''} "
                     f"before you map into `{target_label}`."
                 )
             else:
                 message = (
-                    f"I can give better join explanations and mapping suggestions for "
+                    f"{context_prefix} can give better join explanations and mapping suggestions for "
                     f"`{selected_pair_labels[0]}`{f' and `{selected_pair_labels[1]}`' if len(selected_pair_labels) > 1 else ''} "
                     "if I first build richer context for this selection."
                 )
@@ -2292,6 +2726,132 @@ class ConversationService:
                 inference_summary="The current selection needs richer context before join and mapping guidance can be more reliable.",
             )
         return None
+
+    def _match_fir_recommendation_to_context(
+        self,
+        *,
+        data: ConversationSignalEvaluationData,
+        context_key: str,
+        selected_tables: list[str],
+    ) -> SignalCandidate | None:
+        """Check FIR pre-computed recommendations for ones matching the current workspace context.
+
+        The FIR agent pre-analyzes uploaded documents and generates rich recommendations
+        (mapping insights, context enrichment, table suggestions, feedback questions).
+        This method matches those recommendations to the user's current action — delivering
+        the right insight at the right moment rather than pushing blindly.
+        """
+        target_table_fqn = (
+            f"{data.target_table.database}.{data.target_table.schema}.{data.target_table.table}".upper()
+            if data.target_table
+            else None
+        )
+        try:
+            fir_recs = self._memory.find_fir_recommendations_for_context(
+                selected_tables=selected_tables,
+                target_table=target_table_fqn,
+                project_id=data.project_id,
+                context_key=context_key,
+                source_set_hash=(data.workspace_context.source_set_hash if data.workspace_context else None),
+                derived_set_hash=(data.workspace_context.derived_set_hash if data.workspace_context else None),
+                milestone=(data.workspace_context.milestone if data.workspace_context else data.activity_type),
+                limit=3,
+            )
+        except Exception:
+            logger.debug("FIR recommendation context match failed", exc_info=True)
+            return None
+
+        if not fir_recs:
+            return None
+
+        rec = fir_recs[0]
+        rec_type = rec.get("recommendation_type") or "mapping_insight"
+        display_message = rec.get("display_message") or ""
+        display_context = rec.get("display_context") or ""
+        display_options = rec.get("display_options")
+        layer = rec.get("notification_layer") or "recommendation"
+        confidence = float(rec.get("confidence") or 0.75)
+        priority = int(rec.get("recommendation_priority") or 50)
+
+        if isinstance(display_options, list):
+            options = [
+                str(opt.get("label") if isinstance(opt, dict) else opt)
+                for opt in display_options
+                if opt
+            ][:4]
+        elif rec_type == "feedback_question":
+            options = ["Yes, that is correct", "Needs correction", "Explain first", "Not now"]
+        else:
+            options = ["Looks useful", "Not relevant right now", "Tell me more", "Dismiss"]
+
+        if rec_type != "feedback_question" and not any(
+            "correct" in option.lower() for option in options
+        ):
+            options = [*options[:3], "Needs correction"]
+
+        if not str(display_message).strip():
+            return None
+
+        title_map = {
+            "mapping_insight": "Mapping Insight from Document Analysis",
+            "feedback_question": "Question About Your Mapping",
+            "context_enrichment": "Context Update from Uploaded Documents",
+            "table_suggestion": "Table Suggestion Based on Document Analysis",
+            "pattern_reuse": "Pattern Detected in Your Documents",
+            "correction_warning": "Critical Mapping Check",
+        }
+        title = title_map.get(rec_type, "FIR Insight")
+
+        signal_type = (
+            AssistantSignalType.FEEDBACK
+            if rec_type == "feedback_question"
+            else AssistantSignalType.RECOMMENDATION
+        )
+
+        page_key = (data.page or "builder").strip().lower()
+        surface_key = (data.surface or "SOURCE_SELECTION").strip().upper()
+
+        return SignalCandidate(
+            signal_key=f"fir-rec|{rec.get('recommendation_id')}|{context_key}",
+            signal_type=signal_type,
+            layer=layer,
+            source="fir_agent",
+            title=title,
+            message=display_message,
+            options=options,
+            allow_free_text=True,
+            requires_response=rec_type == "feedback_question",
+            entity_type="fir_context",
+            entity_ids=[context_key, *selected_tables[:6]],
+            confidence=confidence,
+            attributes={
+                "page": page_key,
+                "surface": surface_key,
+                "context_key": context_key,
+                "fir_recommendation_id": rec.get("recommendation_id"),
+                "fir_record_id": rec.get("fir_record_id"),
+                "fir_inference_id": rec.get("fir_inference_id"),
+                "recommendation_class": rec_type,
+                "priority": priority,
+                "question_id": rec.get("question_id"),
+                "evidence_ids": rec.get("evidence_ids") or [],
+                "milestone": rec.get("milestone") or data.activity_type,
+                "validation_status": rec.get("validation_status") or "unvalidated",
+                "grounding_needed": False,
+                "current_understanding": (
+                    display_context
+                    or str((rec.get("agent_payload") or {}).get("current_understanding") or "").strip()
+                )[:300],
+                "action_type": str(
+                    (rec.get("agent_payload") or {}).get("action_type") or ""
+                ).strip() or None,
+            },
+            inference_key=f"fir-inference|{rec.get('recommendation_id')}",
+            inference_type=f"fir_{rec_type}",
+            inference_summary=display_message[:500],
+            recommendation_type=rec_type,
+            recommendation_message=display_message,
+        )
 
     def _llm_personalize_signal_candidate(
         self,

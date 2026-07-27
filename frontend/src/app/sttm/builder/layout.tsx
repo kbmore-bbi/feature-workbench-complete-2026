@@ -1,26 +1,14 @@
 'use client';
+import { AiaBox, AiaButton, AiaCircularProgress, AiaDialog, AiaIconButton, AiaLinearProgress, AiaStack } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { SidebarHost } from '@/features/sttm/layout/sidebar-host';
 import { SidebarSlotProvider, useSidebarSlot } from '@/features/sttm/layout/sidebar-slot-context';
 import { usePathname, useRouter } from 'next/navigation';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
-import {
-  getSelectedSourceTables,
-  getSelectedTargetTable,
-} from '@/features/sttm/shared/sttm-selection-utils';
-import { dbService } from '@/services/dbService';
+import { resolveBuilderSelectionState } from '@/features/sttm/shared/sttm-selection-utils';
 import { AiaResizeHandle } from '@/components/ui/aia-resize-handle';
 import { SttmSidebarCollapseFooter } from '@/features/sttm/layout/sttm-sidebar-collapse-footer';
-import {
-  Box,
-  Button,
-  CircularProgress,
-  Dialog,
-  IconButton,
-  LinearProgress,
-  Stack,
-  Typography,
-} from '@mui/material';
 
 type SemanticPrepState = {
   open: boolean;
@@ -42,7 +30,7 @@ const initialSemanticPrepState: SemanticPrepState = {
 
 const MIN_SIDEBAR_WIDTH = 248;
 const MAX_SIDEBAR_WIDTH = 420;
-const COLLAPSED_SIDEBAR_WIDTH = 54;
+const COLLAPSED_SIDEBAR_WIDTH = 70;
 
 function BuilderLayoutShell({ children }: { children: ReactNode }) {
   const [semanticPrepState, setSemanticPrepState] = useState<SemanticPrepState>(initialSemanticPrepState);
@@ -53,21 +41,27 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
   const proceedToMappingRef = useRef<() => void>(() => {});
   const {
     fullData,
+    sources,
+    targets,
     derivedSources,
-    relationships,
-    applySemanticRefresh,
     semanticBundleId,
     semanticViewName,
+    activeProjectId,
+    activeSttmId,
+    activeProjectName,
+    activeSttmName,
   } = useSttmBuilderContext();
 
-  const selectedSourceTables = useMemo(
-    () => getSelectedSourceTables(fullData?.sources ?? []),
-    [fullData?.sources],
-  );
-
-  const selectedTargetTable = useMemo(
-    () => getSelectedTargetTable(fullData?.targets ?? []),
-    [fullData?.targets],
+  const { resolvedSourceTables: selectedSourceTables, selectedTargetTable, canProceedToMapping } = useMemo(
+    () =>
+      resolveBuilderSelectionState({
+        sourceDatabases: fullData?.sources ?? [],
+        targetDatabases: fullData?.targets ?? [],
+        sources,
+        targets,
+        derivedSources,
+      }),
+    [derivedSources, fullData?.sources, fullData?.targets, sources, targets],
   );
 
   useEffect(() => {
@@ -102,25 +96,8 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
     };
   };
 
-  const makeTableRef = (qualifiedName: string) => {
-    const [database, schema, table] = qualifiedName.split('.', 3);
-    return { database, schema, table };
-  };
-
   const isWorkspacePage = pathname.includes('/mapping') || pathname.includes('/summary');
   const showSidebarHost = !isWorkspacePage && content !== null;
-
-  const canProceedToMapping = useMemo(
-    () =>
-      (selectedSourceTables.length > 0 || derivedSources.some((source) => source.isSelected)) &&
-      Boolean(selectedTargetTable),
-    [derivedSources, selectedSourceTables, selectedTargetTable],
-  );
-
-  const selectedDerivedSourceIds = useMemo(
-    () => derivedSources.filter((source) => source.isSelected).map((source) => source.id),
-    [derivedSources],
-  );
 
   const proceedToMapping = async () => {
     if (!canProceedToMapping) {
@@ -137,7 +114,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
       loading: true,
       progress: 12,
       title: 'Opening mapping workspace',
-      detail: 'Using the current source, join, and target context while semantic preparation continues in the background.',
+      detail: 'Opening with the current source, join, target, and semantic context.',
       error: null,
     });
 
@@ -146,37 +123,8 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
       progress: 52,
       detail: semanticBundleId || semanticViewName
         ? 'Reusing the current semantic context and opening mapping now.'
-        : 'Opening mapping now and continuing semantic preparation in the background.',
+        : 'Opening mapping now. No semantic refresh will run from the mapping page.',
     }));
-
-    void dbService.refreshSemanticContext({
-      selected_source_tables: selectedSourceTables.map((table) => makeTableRef(table.qualifiedName)),
-      selected_derived_sources: selectedDerivedSourceIds,
-      target_table: makeTableRef(selectedTarget.qualifiedName),
-      relationships: relationships
-        .filter((join) => join.leftTableId && join.rightTableId && join.conditions?.length)
-        .map((join) => ({
-          left_table: makeTableRef(join.leftTableId as string),
-          right_table: makeTableRef(join.rightTableId as string),
-          constraint_name: join.constraintName ?? null,
-          join_type: join.joinType ?? 'INNER',
-          source: join.source ?? 'USER_DEFINED',
-          locked: join.locked ?? false,
-          conditions: (join.conditions ?? []).map((condition) => ({
-            left_column: condition.leftColumn,
-            right_column: condition.rightColumn,
-            operator: condition.operator ?? '=',
-          })),
-        })),
-      requested_level: 'L3_MAPPING_ENRICHED',
-      force: false,
-    })
-      .then((refresh) => {
-        applySemanticRefresh(refresh);
-      })
-      .catch((error) => {
-        console.warn("Background semantic refresh did not complete before mapping opened.", error);
-      });
 
     window.setTimeout(() => {
       setSemanticPrepState({
@@ -185,8 +133,8 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
         progress: 100,
         title: semanticBundleId || semanticViewName ? 'Opening mapping with current context' : 'Opening mapping',
         detail: semanticBundleId || semanticViewName
-          ? 'Mapping is opening with the current semantic context while freshness checks continue in the background.'
-          : 'Mapping is opening now. Semantic preparation will continue in the background and update the current context when it completes.',
+          ? 'Mapping is opening with the current semantic context.'
+          : 'Mapping is opening now. Resolve semantic context on the selection page if agents need it.',
         error: null,
       });
       window.setTimeout(() => {
@@ -218,6 +166,47 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
 
   return (
     <>
+      {/* Context indicator - shows when mapping has no project association */}
+      {!activeProjectId && !activeSttmId && (
+        <AiaBox
+          sx={{
+            px: 2,
+            py: 0.75,
+            backgroundColor: '#fef3c7',
+            borderBottom: '1px solid #fcd34d',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+          }}
+        >
+          <AiaText sx={{ fontSize: '0.8rem', color: '#92400e', fontWeight: 600 }}>
+            Unsaved mapping
+          </AiaText>
+          <AiaText sx={{ fontSize: '0.76rem', color: '#a16207' }}>
+            This mapping is not associated with a project. Go to Projects to create a mapping within a project context.
+          </AiaText>
+        </AiaBox>
+      )}
+      {activeProjectId && activeSttmId && (
+        <AiaBox
+          sx={{
+            px: 2,
+            py: 0.5,
+            backgroundColor: '#f0fdf4',
+            borderBottom: '1px solid #86efac',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+          }}
+        >
+          <AiaText sx={{ fontSize: '0.76rem', color: '#166534', fontWeight: 600 }}>
+            Project: {activeProjectName || `${activeProjectId.slice(0, 8)}...`}
+          </AiaText>
+          <AiaText sx={{ fontSize: '0.72rem', color: '#15803d' }}>
+            Mapping: {activeSttmName || `${activeSttmId.slice(0, 8)}...`}
+          </AiaText>
+        </AiaBox>
+      )}
       <div className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-gray-50">
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {showSidebarHost ? (
@@ -226,7 +215,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
               style={{ width: collapsed ? COLLAPSED_SIDEBAR_WIDTH : width }}
             >
               {collapsed ? (
-                <Box
+                <AiaBox
                   sx={{
                     width: '100%',
                     height: '100%',
@@ -235,29 +224,29 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
                     flexDirection: 'column',
                   }}
                 >
-                  <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                  <AiaBox sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                     <SidebarHost />
-                  </Box>
+                  </AiaBox>
                   <SttmSidebarCollapseFooter
                     collapsed
                     centered
                     expandLabel="Expand source sidebar"
                     onToggle={() => setCollapsed(false)}
                   />
-                </Box>
+                </AiaBox>
               ) : (
-                <Box sx={{ display: 'flex', width: '100%', minWidth: 0, height: '100%', minHeight: 0 }}>
-                  <Box sx={{ minWidth: 0, flex: 1, height: '100%', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                    <Box sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <AiaBox sx={{ display: 'flex', width: '100%', minWidth: 0, height: '100%', minHeight: 0 }}>
+                  <AiaBox sx={{ minWidth: 0, flex: 1, height: '100%', minHeight: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                    <AiaBox sx={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
                       <SidebarHost />
-                    </Box>
-                  </Box>
+                    </AiaBox>
+                  </AiaBox>
                   <AiaResizeHandle
                     direction="horizontal"
                     onMouseDown={beginResize}
                     sx={{ alignSelf: 'stretch', height: '100%' }}
                   />
-                </Box>
+                </AiaBox>
               )}
             </aside>
           ) : null}
@@ -275,7 +264,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
           </div>
         </div>
       </div>
-      <Dialog
+      <AiaDialog
         open={semanticPrepState.open}
         onClose={() => {
           if (!semanticPrepState.loading) {
@@ -285,20 +274,20 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
         maxWidth="xs"
         fullWidth
       >
-        <Box sx={{ p: 3 }}>
-          <Stack spacing={2}>
-            <Stack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
-              {semanticPrepState.loading ? <CircularProgress size={22} /> : null}
-              <Box>
-                <Typography sx={{ fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
+        <AiaBox sx={{ p: 3 }}>
+          <AiaStack spacing={2}>
+            <AiaStack direction="row" spacing={1.5} sx={{ alignItems: 'center' }}>
+              {semanticPrepState.loading ? <AiaCircularProgress size={22} /> : null}
+              <AiaBox>
+                <AiaText sx={{ fontSize: 16, fontWeight: 800, color: '#0f172a' }}>
                   {semanticPrepState.title}
-                </Typography>
-                <Typography sx={{ fontSize: 13, color: '#475569', mt: 0.5 }}>
+                </AiaText>
+                <AiaText sx={{ fontSize: 13, color: '#475569', mt: 0.5 }}>
                   {semanticPrepState.detail}
-                </Typography>
-              </Box>
-            </Stack>
-            <LinearProgress
+                </AiaText>
+              </AiaBox>
+            </AiaStack>
+            <AiaLinearProgress
               variant="determinate"
               value={semanticPrepState.progress}
               sx={{
@@ -312,7 +301,7 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
               }}
             />
             {semanticPrepState.error ? (
-              <Box
+              <AiaBox
                 sx={{
                   borderRadius: 2,
                   border: '1px solid #fecaca',
@@ -321,24 +310,24 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
                   py: 1.25,
                 }}
               >
-                <Typography sx={{ fontSize: 13, color: '#b91c1c' }}>
+                <AiaText sx={{ fontSize: 13, color: '#b91c1c' }}>
                   {semanticPrepState.error}
-                </Typography>
-              </Box>
+                </AiaText>
+              </AiaBox>
             ) : null}
             {!semanticPrepState.loading ? (
-              <Stack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
-                <Button
+              <AiaStack direction="row" spacing={1} sx={{ justifyContent: 'flex-end' }}>
+                <AiaButton
                   onClick={() => setSemanticPrepState(initialSemanticPrepState)}
                   sx={{ textTransform: 'none' }}
                 >
                   Close
-                </Button>
-              </Stack>
+                </AiaButton>
+              </AiaStack>
             ) : null}
-          </Stack>
-        </Box>
-      </Dialog>
+          </AiaStack>
+        </AiaBox>
+      </AiaDialog>
     </>
   );
 }

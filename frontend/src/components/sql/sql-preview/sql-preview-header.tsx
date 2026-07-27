@@ -1,7 +1,11 @@
 'use client';
+import { AiaBox, AiaChip, AiaStack, AiaTooltip } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { Box, IconButton, Stack, Tooltip, Typography } from '@mui/material';
+
 import { ContentCopyRoundedIcon } from '@/utils/icons';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
+import { SQL_PREVIEW_CHIP_PROPS } from './sql-preview-styles';
 import { SqlPreviewStatPills, type SqlPreviewStat } from './sql-preview-stat-pills';
 
 const COPY_FEEDBACK_MS = 1500;
@@ -55,7 +59,7 @@ export function SqlPreviewHeader({
   }, [copyValue, onCopy]);
 
   return (
-    <Box
+    <AiaBox
       sx={{
         px: 2,
         py: 1.35,
@@ -66,8 +70,8 @@ export function SqlPreviewHeader({
         flexShrink: 0,
       }}
     >
-      <Stack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0 }}>
-        <Box
+      <AiaStack direction="row" spacing={1} sx={{ alignItems: 'center', minWidth: 0 }}>
+        <AiaBox
           sx={{
             width: 8,
             height: 8,
@@ -76,11 +80,11 @@ export function SqlPreviewHeader({
             flexShrink: 0,
           }}
         />
-        <Typography sx={{ fontSize: '0.95rem', fontWeight: 800, color: '#f8fafc' }}>
+        <AiaText sx={{ fontSize: '0.95rem', fontWeight: 800, color: '#f8fafc' }}>
           {title}
-        </Typography>
+        </AiaText>
         {subtitle ? (
-          <Typography
+          <AiaText
             sx={{
               fontSize: '0.8rem',
               color: '#64748b',
@@ -90,11 +94,11 @@ export function SqlPreviewHeader({
             }}
           >
             — {subtitle}
-          </Typography>
+          </AiaText>
         ) : null}
-      </Stack>
+      </AiaStack>
 
-      <Stack
+      <AiaStack
         direction="row"
         spacing={1}
         useFlexGap
@@ -103,31 +107,26 @@ export function SqlPreviewHeader({
         <SqlPreviewStatPills stats={stats} />
         {actions}
         {showCopy ? (
-          <Tooltip title={copied ? 'Copied' : 'Copy SQL'}>
-            <span>
-              <IconButton
-                size="small"
+          <AiaTooltip title={copied ? 'Copied' : 'Copy SQL'}>
+            <span data-tour={TOUR_TARGETS.sttmCopySql}>
+              <AiaChip
+                label={copied ? 'Copied' : 'Copy SQL'}
+                icon={<ContentCopyRoundedIcon />}
+                clickable={Boolean(copyValue.trim() || onCopy)}
                 onClick={() => {
                   void handleCopy();
                 }}
-                disabled={!copyValue.trim() && !onCopy}
-                sx={{
-                  borderRadius: '12px',
-                  border: '1px solid rgba(148,163,184,0.18)',
-                  color: '#e2e8f0',
-                  px: 1,
-                  gap: 0.75,
-                }}
-              >
-                <ContentCopyRoundedIcon sx={{ fontSize: 16 }} />
-                <Typography sx={{ fontSize: '0.76rem', fontWeight: 700 }}>
-                  {copied ? 'Copied' : 'Copy SQL'}
-                </Typography>
-              </IconButton>
+                {...SQL_PREVIEW_CHIP_PROPS}
+                sx={
+                  !copyValue.trim() && !onCopy
+                    ? { opacity: 0.45, pointerEvents: 'none' }
+                    : undefined
+                }
+              />
             </span>
-          </Tooltip>
+          </AiaTooltip>
         ) : null}
-      </Stack>
-    </Box>
+      </AiaStack>
+    </AiaBox>
   );
 }

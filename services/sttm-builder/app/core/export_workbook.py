@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+import csv
+from datetime import datetime, timezone
 from io import BytesIO
 import re
 from typing import Any
@@ -61,6 +62,8 @@ class WorkbookExportService:
         table_lineage_sheet = workbook.create_sheet("Table Lineage")
         column_lineage_sheet = workbook.create_sheet("Column Lineage")
         dbt_sheet = workbook.create_sheet("DBT Code")
+        test_case_summary_sheet = workbook.create_sheet("Test Case Summary")
+        test_case_document_sheet = workbook.create_sheet("Test Cases")
 
         preview_warning: str | None = None
         try:
@@ -157,6 +160,34 @@ class WorkbookExportService:
             section_fill,
             thin_border,
         )
+        self._build_test_case_summary_sheet(
+            test_case_summary_sheet,
+            body,
+            title_font,
+            header_font,
+            base_font,
+            section_fill,
+            thin_border,
+        )
+        self._build_test_case_document_sheet(
+            test_case_document_sheet,
+            body,
+            title_font,
+            header_font,
+            base_font,
+            section_fill,
+            thin_border,
+        )
+        self._build_test_case_seed_sheets(
+            workbook,
+            body,
+            get_column_letter,
+            title_font,
+            header_font,
+            base_font,
+            section_fill,
+            thin_border,
+        )
 
         buffer = BytesIO()
         workbook.save(buffer)
@@ -195,13 +226,20 @@ class WorkbookExportService:
             ("STTM Export Summary", None),
             ("Project", body.project_name or "STTM Export"),
             ("Created by", body.created_by or "Unknown"),
-            ("Generated at", body.created_at or datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")),
+            (
+                "Generated at",
+                body.created_at or datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            ),
             ("Version details", body.version_label or "Current builder session"),
             ("Target table", body.target_table.qualified_name if body.target_table else "Not selected"),
             ("Source tables", ", ".join(table.qualified_name for table in body.source_tables) or "None"),
             (
                 "DBT export status",
                 body.dbt_conversion.status if body.dbt_conversion else "DBT conversion not attached",
+            ),
+            (
+                "Test-case export status",
+                body.test_case_generation.status if body.test_case_generation else "Test-case generation not attached",
             ),
             (
                 "Sample preview rows",
@@ -594,6 +632,204 @@ class WorkbookExportService:
         sheet.column_dimensions["A"].width = 42
         sheet.column_dimensions["B"].width = 120
 
+    def _build_test_case_summary_sheet(
+        self,
+        sheet,
+        body: WorkbookExportRequest,
+        title_font,
+        header_font,
+        base_font,
+        section_fill,
+        thin_border,
+    ) -> None:
+        row = 1
+        row = self._write_section_title(sheet, row, "Test-case generation summary", title_font, section_fill)
+        summary_rows = [
+            (
+                "Status",
+                body.test_case_generation.status if body.test_case_generation else "Not generated yet",
+            ),
+            (
+                "Domain",
+                body.test_case_generation.domain_name if body.test_case_generation else "",
+            ),
+            (
+                "Target layer",
+                body.test_case_generation.target_layer if body.test_case_generation else "",
+            ),
+            (
+                "Materialization",
+                body.test_case_generation.materialization if body.test_case_generation else "",
+            ),
+            (
+                "Target model",
+                body.test_case_generation.target_model if body.test_case_generation else "",
+            ),
+            (
+                "Target table",
+                body.test_case_generation.target_table if body.test_case_generation else "",
+            ),
+            (
+                "Test groups",
+                len(body.test_case_generation.test_groups) if body.test_case_generation else 0,
+            ),
+            (
+                "Test cases",
+                len(body.test_case_generation.test_case_document) if body.test_case_generation else 0,
+            ),
+            (
+                "Seed files",
+                len(body.test_case_generation.seed_files) if body.test_case_generation else 0,
+            ),
+        ]
+        for label, value in summary_rows:
+            self._write_row(sheet, row, [label, value], base_font, thin_border)
+            sheet.cell(row=row, column=1).font = header_font
+            row += 1
+
+        row += 1
+        row = self._write_section_title(sheet, row, "Test groups", title_font, section_fill)
+        row = self._write_table_header(
+            sheet,
+            row,
+            ["Group", "Target Columns"],
+            header_font,
+            section_fill,
+            thin_border,
+        )
+        if not body.test_case_generation or not body.test_case_generation.test_groups:
+            self._write_row(sheet, row, ["No test groups attached yet.", ""], base_font, thin_border)
+            row += 1
+        else:
+            for group in body.test_case_generation.test_groups:
+                self._write_row(
+                    sheet,
+                    row,
+                    [group.group, ", ".join(group.target_columns)],
+                    base_font,
+                    thin_border,
+                )
+                row += 1
+
+        sheet.column_dimensions["A"].width = 28
+        sheet.column_dimensions["B"].width = 96
+
+    def _build_test_case_document_sheet(
+        self,
+        sheet,
+        body: WorkbookExportRequest,
+        title_font,
+        header_font,
+        base_font,
+        section_fill,
+        thin_border,
+    ) -> None:
+        row = 1
+        row = self._write_section_title(sheet, row, "Test-case document", title_font, section_fill)
+        headers = [
+            "Test Case ID",
+            "Group",
+            "Target Attribute",
+            "Source Columns",
+            "Mapping Rule",
+            "Description",
+            "Test Type",
+            "Sample Source Input",
+            "Expected Target Value",
+            "Confidence",
+        ]
+        row = self._write_table_header(sheet, row, headers, header_font, section_fill, thin_border)
+        if not body.test_case_generation or not body.test_case_generation.test_case_document:
+            self._write_row(
+                sheet,
+                row,
+                ["No test-case document rows attached yet.", "", "", "", "", "", "", "", "", ""],
+                base_font,
+                thin_border,
+            )
+            row += 1
+        else:
+            for item in body.test_case_generation.test_case_document:
+                self._write_row(
+                    sheet,
+                    row,
+                    [
+                        item.test_case_id,
+                        item.group,
+                        item.target_attribute,
+                        item.source_columns,
+                        item.mapping_rule,
+                        item.test_case_description,
+                        item.test_type,
+                        item.sample_source_input,
+                        item.expected_target_value,
+                        item.confidence or "",
+                    ],
+                    base_font,
+                    thin_border,
+                )
+                row += 1
+
+        for column, width in {
+            "A": 16,
+            "B": 22,
+            "C": 20,
+            "D": 28,
+            "E": 28,
+            "F": 54,
+            "G": 14,
+            "H": 44,
+            "I": 44,
+            "J": 14,
+        }.items():
+            sheet.column_dimensions[column].width = width
+
+    def _build_test_case_seed_sheets(
+        self,
+        workbook,
+        body: WorkbookExportRequest,
+        get_column_letter,
+        title_font,
+        header_font,
+        base_font,
+        section_fill,
+        thin_border,
+    ) -> None:
+        if not body.test_case_generation or not body.test_case_generation.seed_files:
+            seed_sheet = workbook.create_sheet("Seed Files")
+            row = self._write_section_title(seed_sheet, 1, "Seed files", title_font, section_fill)
+            self._write_row(
+                seed_sheet,
+                row,
+                ["No generated seed files were attached yet."],
+                base_font,
+                thin_border,
+            )
+            seed_sheet.column_dimensions["A"].width = 72
+            return
+
+        for index, seed_file in enumerate(body.test_case_generation.seed_files, start=1):
+            sheet_name = self._safe_sheet_title(seed_file.file_path, fallback=f"Seed {index}")
+            sheet = workbook.create_sheet(sheet_name)
+            row = 1
+            row = self._write_section_title(sheet, row, seed_file.file_path, title_font, section_fill)
+            self._write_row(sheet, row, ["File Type", seed_file.file_type], base_font, thin_border)
+            sheet.cell(row=row, column=1).font = header_font
+            row += 2
+            parsed_rows = list(csv.reader(seed_file.content.splitlines()))
+            if not parsed_rows:
+                self._write_row(sheet, row, ["Seed file content was empty."], base_font, thin_border)
+                sheet.column_dimensions["A"].width = 48
+                continue
+            header = parsed_rows[0]
+            row = self._write_table_header(sheet, row, header, header_font, section_fill, thin_border)
+            for data_row in parsed_rows[1:]:
+                self._write_row(sheet, row, data_row, base_font, thin_border)
+                row += 1
+            for index, column_name in enumerate(header, start=1):
+                width = min(max(len(str(column_name)) + 6, 16), 36)
+                sheet.column_dimensions[get_column_letter(index)].width = width
+
     def _write_code_file(
         self,
         sheet,
@@ -682,6 +918,11 @@ class WorkbookExportService:
         if node_id.startswith("tbl_"):
             return target_fill if "_DW_" in node_id or "_target_" in node_id.lower() else source_fill
         return source_fill
+
+    @staticmethod
+    def _safe_sheet_title(value: str, *, fallback: str) -> str:
+        sanitized = re.sub(r"[:\\/*?\[\]]+", "_", value.split("/")[-1].split(".")[0]).strip()
+        return (sanitized or fallback)[:31]
 
     @staticmethod
     def _parse_mermaid_flowchart(mermaid_text: str | None) -> tuple[dict[str, dict[str, str]], list[dict[str, str | None]]]:

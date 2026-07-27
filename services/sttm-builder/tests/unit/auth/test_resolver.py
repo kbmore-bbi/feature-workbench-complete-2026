@@ -82,6 +82,7 @@ def test_resolve_and_upsert_skips_metadata_in_local_dev(monkeypatch) -> None:
             local_dev_bypass_metadata=True,
             snowflake_user="DEV_USER",
             snowflake_password="secret",
+            snowflake_role="WORKBENCH_PUBLISHER",
             app_role_admin="WORKBENCH_ADMIN",
             app_role_publisher="WORKBENCH_PUBLISHER",
             app_role_viewer="WORKBENCH_VIEWER",

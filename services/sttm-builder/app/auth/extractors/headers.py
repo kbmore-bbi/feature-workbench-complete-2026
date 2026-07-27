@@ -12,7 +12,9 @@ def extract_snowflake_context(request: Request, settings: Settings) -> dict[str,
     snowflake_email = request.headers.get("Sf-Context-Current-User-Email")
     snowflake_user_token = request.headers.get("Sf-Context-Current-User-Token")
 
-    if not snowflake_user or not snowflake_user_token:
+    if not snowflake_user or (
+        settings.spcs_execute_as_caller_enabled and not snowflake_user_token
+    ):
         if settings.local_dev_auth_enabled:
             if not settings.snowflake_user:
                 raise HTTPException(
@@ -39,6 +41,8 @@ def extract_snowflake_context(request: Request, settings: Settings) -> dict[str,
                 "snowflake_user": settings.snowflake_user,
                 "email": settings.local_dev_effective_email,
                 "snowflake_user_token": "",
+                "snowflake_role": settings.snowflake_role or None,
+                "oauth_session_id": None,
             }
 
         raise HTTPException(status_code=401, detail="Missing Snowflake authentication context")
@@ -46,5 +50,7 @@ def extract_snowflake_context(request: Request, settings: Settings) -> dict[str,
     return {
         "snowflake_user": snowflake_user,
         "email": snowflake_email or snowflake_user,
-        "snowflake_user_token": snowflake_user_token,
+        "snowflake_user_token": snowflake_user_token or "",
+        "snowflake_role": None,
+        "oauth_session_id": None,
     }

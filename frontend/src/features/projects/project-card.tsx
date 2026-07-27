@@ -1,7 +1,9 @@
 "use client";
+import { AiaBox, AiaPaper } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { FolderOutlinedIcon, KeyboardArrowRightRoundedIcon } from '@/utils/icons';
-import { Box, Paper, Typography } from "@mui/material";
+
 import type { ProjectItem } from "./projects-data";
 import ProjectCardMeta from "./project-card-meta";
 import ProjectProgressBar from "./project-progress-bar";
@@ -14,7 +16,7 @@ type ProjectCardProps = {
 
 export default function ProjectCard({ project, onClick }: ProjectCardProps) {
   return (
-    <Paper
+    <AiaPaper
       elevation={0}
       onClick={onClick}
       sx={{
@@ -33,10 +35,10 @@ export default function ProjectCard({ project, onClick }: ProjectCardProps) {
         },
       }}
     >
-      <Box sx={{ p: 2 }}>
-        <Box sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1.5 }}>
-          <Box sx={{ display: "flex", alignItems: "flex-start", gap: 1.25, minWidth: 0 }}>
-            <Box
+      <AiaBox sx={{ p: 2 }}>
+        <AiaBox sx={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 1.5 }}>
+          <AiaBox sx={{ display: "flex", alignItems: "flex-start", gap: 1.25, minWidth: 0 }}>
+            <AiaBox
               sx={{
                 width: 40,
                 height: 40,
@@ -50,12 +52,12 @@ export default function ProjectCard({ project, onClick }: ProjectCardProps) {
               }}
             >
               <FolderOutlinedIcon sx={{ fontSize: 20 }} />
-            </Box>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography sx={{ fontSize: 15, fontWeight: 700, color: "#111827", lineHeight: 1.25 }}>
+            </AiaBox>
+            <AiaBox sx={{ minWidth: 0 }}>
+              <AiaText sx={{ fontSize: 15, fontWeight: 700, color: "#111827", lineHeight: 1.25 }}>
                 {project.name}
-              </Typography>
-              <Typography
+              </AiaText>
+              <AiaText
                 sx={{
                   mt: 0.5,
                   fontSize: 12,
@@ -68,17 +70,17 @@ export default function ProjectCard({ project, onClick }: ProjectCardProps) {
                 }}
               >
                 {project.description}
-              </Typography>
-            </Box>
-          </Box>
+              </AiaText>
+            </AiaBox>
+          </AiaBox>
           <KeyboardArrowRightRoundedIcon sx={{ fontSize: 18, color: "#94A3B8", mt: 0.25, flexShrink: 0 }} />
-        </Box>
+        </AiaBox>
 
-        <Box sx={{ mt: 1.75 }}>
+        <AiaBox sx={{ mt: 1.75 }}>
           <ProjectProgressBar percent={project.coveragePercent} barColor={project.coverageBarColor} />
-        </Box>
+        </AiaBox>
 
-        <Box sx={{ mt: 1.5, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+        <AiaBox sx={{ mt: 1.5, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
           <ProjectStatusBadge
             variant="mappings"
             label={`${project.totalMappings} mapping${project.totalMappings === 1 ? "" : "s"}`}
@@ -98,10 +100,10 @@ export default function ProjectCard({ project, onClick }: ProjectCardProps) {
           {project.draftCount > 0 ? (
             <ProjectStatusBadge variant="draft" label={`${project.draftCount} draft`} />
           ) : null}
-        </Box>
-      </Box>
+        </AiaBox>
+      </AiaBox>
 
-      <Box
+      <AiaBox
         sx={{
           display: "flex",
           gap: 2,
@@ -113,7 +115,7 @@ export default function ProjectCard({ project, onClick }: ProjectCardProps) {
       >
         <ProjectCardMeta label="CREATED BY" person={project.createdBy} />
         <ProjectCardMeta label="LAST MODIFIED BY" person={project.lastModifiedBy} />
-      </Box>
-    </Paper>
+      </AiaBox>
+    </AiaPaper>
   );
 }

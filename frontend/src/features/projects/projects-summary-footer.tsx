@@ -1,6 +1,6 @@
 "use client";
-
-import { Box, Typography } from "@mui/material";
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 type ProjectsSummaryFooterProps = {
   projectCount: number;
@@ -16,20 +16,20 @@ type SummaryItemProps = {
 
 function SummaryItem({ value, label }: SummaryItemProps) {
   return (
-    <Box sx={{ display: "flex", alignItems: "baseline", gap: 0.75 }}>
-      <Typography
+    <AiaBox sx={{ display: "flex", alignItems: "baseline", gap: 0.75 }}>
+      <AiaText
         component="span"
         sx={{ fontSize: 13, fontWeight: 700, color: "#111827", lineHeight: 1 }}
       >
         {value}
-      </Typography>
-      <Typography
+      </AiaText>
+      <AiaText
         component="span"
         sx={{ fontSize: 13, fontWeight: 400, color: "#9CA3AF", lineHeight: 1 }}
       >
         {label}
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }
 
@@ -40,7 +40,7 @@ export default function ProjectsSummaryFooter({
   inProgress,
 }: ProjectsSummaryFooterProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         mt: "auto",
         px: { xs: 2.5, md: 3.5 },
@@ -57,6 +57,6 @@ export default function ProjectsSummaryFooter({
       <SummaryItem value={totalMappings} label="Total Mappings" />
       <SummaryItem value={complete} label="Complete" />
       <SummaryItem value={inProgress} label="In Progress" />
-    </Box>
+    </AiaBox>
   );
 }

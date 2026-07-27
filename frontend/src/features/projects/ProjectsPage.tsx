@@ -1,33 +1,84 @@
 "use client";
+import { AiaBox, AiaLoadingOverlay } from '@/components/ui';
 
-import { useMemo, useState } from "react";
-import { Box } from "@mui/material";
+import { useEffect, useMemo, useState } from "react";
+
 import { useRouter } from "next/navigation";
 import NewProjectModal from "./new-project-modal";
 import ProjectCard from "./project-card";
 import ProjectsHeader from "./ProjectsHeader";
 import ProjectsSummaryFooter from "./projects-summary-footer";
-import { INITIAL_PROJECT_ITEMS, type ProjectItem } from "./projects-data";
+import { type ProjectItem } from "./projects-data";
 import { buildProjectsSummary } from "./project-utils";
-import { buildMappingsUrl } from "@/features/mappings/mappings-project-filter";
 import { PROJECT_CARD_WIDTH } from "./projects-ui-styles";
+import { PROJECT_COLOR_OPTIONS } from "./project-color-options";
+import { createProject, getAllProjectsSummary, projectRecordToItem } from "@/services/projectService";
 
 export default function ProjectsPage() {
   const router = useRouter();
-  const [projects, setProjects] = useState<ProjectItem[]>(INITIAL_PROJECT_ITEMS);
+  const [projects, setProjects] = useState<ProjectItem[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [isNewProjectOpen, setIsNewProjectOpen] = useState(false);
 
   const summary = useMemo(() => buildProjectsSummary(projects), [projects]);
 
-  const handleCreateProject = (project: ProjectItem) => {
-    setProjects((current) => [project, ...current]);
+  useEffect(() => {
+    let cancelled = false;
+    setIsLoadingProjects(true);
+
+    getAllProjectsSummary()
+      .then(({ projects: records }) => {
+        if (cancelled) {
+          return;
+        }
+        setProjects(records.map(projectRecordToItem));
+      })
+      .catch((error) => {
+        if (process.env.NODE_ENV === "development") {
+          console.warn("Project metadata is unavailable; showing no saved projects.", error);
+        }
+        if (!cancelled) {
+          setProjects([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingProjects(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handleCreateProject = async (project: ProjectItem) => {
+    const color = PROJECT_COLOR_OPTIONS.find((option) => option.color === project.themeColor);
+
+    try {
+      const saved = await createProject({
+        project_name: project.name,
+        description: project.description,
+        theme_color_id: color?.id,
+        domain: project.domain,
+        intended_outcome: project.intendedOutcome,
+        business_process: project.businessProcess,
+        owner: project.owner,
+        linked_project_ids: project.linkedProjectIds,
+      });
+      setProjects((current) => [projectRecordToItem(saved), ...current]);
+      router.push(`/mappings?project=${encodeURIComponent(saved.project_id)}`);
+    } catch (error) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Project creation failed; backend did not persist the project.", error);
+      }
+    }
   };
 
   return (
     <>
-      <Box
+      <AiaBox
         sx={{
           display: "flex",
+          position: "relative",
           flex: 1,
           minHeight: 0,
           flexDirection: "column",
@@ -35,7 +86,7 @@ export default function ProjectsPage() {
           bgcolor: "#F7F8FA",
         }}
       >
-        <Box
+        <AiaBox
           sx={{
             flex: 1,
             minHeight: 0,
@@ -50,7 +101,7 @@ export default function ProjectsPage() {
             onNewProject={() => setIsNewProjectOpen(true)}
           />
 
-          <Box
+          <AiaBox
             sx={{
               mt: 2.5,
               display: "flex",
@@ -60,23 +111,41 @@ export default function ProjectsPage() {
               pb: 2,
             }}
           >
-            {projects.map((project) => (
-              <Box
-                key={project.id}
+            {projects.length === 0 ? (
+              <AiaBox
                 sx={{
-                  flex: "0 0 auto",
-                  width: { xs: "100%", sm: PROJECT_CARD_WIDTH },
-                  maxWidth: { xs: "100%", sm: PROJECT_CARD_WIDTH },
+                  width: "100%",
+                  border: "1px dashed #D1D5DB",
+                  borderRadius: 3,
+                  bgcolor: "#FFFFFF",
+                  color: "#6B7280",
+                  px: 3,
+                  py: 6,
+                  textAlign: "center",
+                  fontSize: 14,
                 }}
               >
-                <ProjectCard
-                  project={project}
-                  onClick={() => router.push(buildMappingsUrl(project.id))}
-                />
-              </Box>
-            ))}
-          </Box>
-        </Box>
+                No saved projects found. Create a project to start saving STTMs.
+              </AiaBox>
+            ) : (
+              projects.map((project) => (
+                <AiaBox
+                  key={project.id}
+                  sx={{
+                    flex: "0 0 auto",
+                    width: { xs: "100%", sm: PROJECT_CARD_WIDTH },
+                    maxWidth: { xs: "100%", sm: PROJECT_CARD_WIDTH },
+                  }}
+                >
+                  <ProjectCard
+                    project={project}
+                    onClick={() => router.push(`/mappings?project=${encodeURIComponent(project.id)}`)}
+                  />
+                </AiaBox>
+              ))
+            )}
+          </AiaBox>
+        </AiaBox>
 
         <ProjectsSummaryFooter
           projectCount={summary.projectCount}
@@ -84,12 +153,14 @@ export default function ProjectsPage() {
           complete={summary.complete}
           inProgress={summary.inProgress}
         />
-      </Box>
+        <AiaLoadingOverlay open={isLoadingProjects} label="Loading projects…" />
+      </AiaBox>
 
       <NewProjectModal
         open={isNewProjectOpen}
         onClose={() => setIsNewProjectOpen(false)}
         onCreate={handleCreateProject}
+        availableProjects={projects}
       />
     </>
   );

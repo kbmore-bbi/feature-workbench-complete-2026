@@ -1,0 +1,6 @@
+Release: 20260727-workbench-latest-client-avd-r8
+Baseline: 20260724-warehouse-cost-rollover-client-avd-r7
+ZIP: bbi-mig-ai-workbench-20260727-workbench-latest-client-avd-r8.zip
+Files: 56
+Size: 409748 bytes
+SHA-256: 407456c30c6f9d3cfcf69079de9f25ebd03f892bd1913993c20112827608e11d

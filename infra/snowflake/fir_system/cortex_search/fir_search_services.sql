@@ -1,0 +1,411 @@
+-- ============================================================
+-- FIR Cortex Search Services
+-- Enables semantic search over FIR inferences, recommendations,
+-- and curated semantic view versions.
+-- ============================================================
+
+-- ============================================================
+-- View for FIR 360 Inferences Search
+-- ============================================================
+CREATE OR REPLACE VIEW __STTM_METADATA_NAMESPACE__.VW_FIR_INFERENCES_SEARCH AS
+SELECT
+    FIR_RECORD_ID,
+    INFERENCE_ID,
+    SOURCE_TYPE,
+    SOURCE_EVENT_TYPE,
+    ENTITY_TYPE,
+    PROJECT_ID,
+    STTM_ID,
+    SEMANTIC_BUNDLE_ID,
+    CONTEXT_KEY,
+    MILESTONE,
+    CURRENT_CONFIDENCE,
+    TARGET_AGENTS,
+    PROCESSING_STAGE,
+    CREATED_AT,
+    -- Composite search text for semantic matching
+    COALESCE(INFERENCE_PAYLOAD:summary::STRING, '') || ' ' ||
+    COALESCE(INFERENCE_PAYLOAD:inference_type::STRING, '') || ' ' ||
+    COALESCE(SOURCE_EVENT_TYPE, '') || ' ' ||
+    COALESCE(ENTITY_TYPE, '') || ' ' ||
+    COALESCE(INFERENCE_PAYLOAD:business_understanding:column_relationship:source::STRING, '') || ' ' ||
+    COALESCE(INFERENCE_PAYLOAD:business_understanding:column_relationship:target::STRING, '') || ' ' ||
+    COALESCE(INFERENCE_PAYLOAD:business_understanding:column_relationship:rationale::STRING, '') || ' ' ||
+    COALESCE(INFERENCE_PAYLOAD:business_understanding:derived_source:name::STRING, '') || ' ' ||
+    COALESCE(INFERENCE_PAYLOAD:business_understanding:derived_source:purpose::STRING, '') || ' ' ||
+    COALESCE(INFERENCE_PAYLOAD:business_understanding:derived_source:business_description::STRING, '')
+    AS SEARCH_TEXT
+FROM __STTM_METADATA_NAMESPACE__.TBL_AGENT_FIR_360
+WHERE PROCESSING_STAGE = 'completed'
+  AND INFERENCE_ID IS NOT NULL;
+
+-- ============================================================
+-- CSS_FIR_INFERENCES_360 - FIR Inferences Search Service
+-- ============================================================
+CREATE OR REPLACE CORTEX SEARCH SERVICE __STTM_METADATA_NAMESPACE__.CSS_FIR_INFERENCES_360
+ON SEARCH_TEXT
+ATTRIBUTES
+    FIR_RECORD_ID,
+    INFERENCE_ID,
+    SOURCE_TYPE,
+    SOURCE_EVENT_TYPE,
+    ENTITY_TYPE,
+    PROJECT_ID,
+    CONTEXT_KEY,
+    MILESTONE,
+    CURRENT_CONFIDENCE,
+    CREATED_AT
+WAREHOUSE = __WAREHOUSE_NAME__
+TARGET_LAG = '1 hour'
+AS (
+    SELECT * FROM __STTM_METADATA_NAMESPACE__.VW_FIR_INFERENCES_SEARCH
+);
+
+
+-- ============================================================
+-- View for Agent Recommendations Search
+-- ============================================================
+CREATE OR REPLACE VIEW __STTM_METADATA_NAMESPACE__.VW_FIR_RECOMMENDATIONS_SEARCH AS
+SELECT
+    AGENT_RECOMMENDATION_ID,
+    FIR_RECORD_ID,
+    TARGET_AGENT,
+    TRIGGER_TYPE,
+    RECOMMENDATION_TYPE,
+    RECOMMENDATION_PRIORITY,
+    CONFIDENCE,
+    USAGE_COUNT,
+    SUCCESS_COUNT,
+    STATUS,
+    CONTEXT_KEY,
+    SOURCE_SET_HASH,
+    TARGET_FQN,
+    DERIVED_SET_HASH,
+    MILESTONE,
+    QUESTION_ID,
+    VALIDATION_STATUS,
+    CREATED_AT,
+    -- Composite search text
+    COALESCE(RECOMMENDATION_TYPE, '') || ' ' ||
+    COALESCE(TARGET_AGENT, '') || ' ' ||
+    COALESCE(TRIGGER_TYPE, '') || ' ' ||
+    COALESCE(AGENT_PAYLOAD:inference_summary::STRING, '') || ' ' ||
+    COALESCE(AGENT_PAYLOAD:mapping_pattern:source_column::STRING, '') || ' ' ||
+    COALESCE(AGENT_PAYLOAD:mapping_pattern:target_column::STRING, '') || ' ' ||
+    COALESCE(AGENT_PAYLOAD:mapping_pattern:rationale::STRING, '') || ' ' ||
+    COALESCE(AGENT_PAYLOAD:suggested_derived_source:name::STRING, '') || ' ' ||
+    COALESCE(AGENT_PAYLOAD:suggested_derived_source:purpose::STRING, '') || ' ' ||
+    COALESCE(AGENT_PAYLOAD:transformation_pattern:expression::STRING, '')
+    AS SEARCH_TEXT
+FROM __STTM_METADATA_NAMESPACE__.TBL_FIR_AGENT_RECOMMENDATIONS
+WHERE STATUS = 'active';
+
+-- ============================================================
+-- CSS_FIR_AGENT_RECOMMENDATIONS - Recommendations Search Service
+-- ============================================================
+CREATE OR REPLACE CORTEX SEARCH SERVICE __STTM_METADATA_NAMESPACE__.CSS_FIR_AGENT_RECOMMENDATIONS
+ON SEARCH_TEXT
+ATTRIBUTES
+    AGENT_RECOMMENDATION_ID,
+    TARGET_AGENT,
+    TRIGGER_TYPE,
+    RECOMMENDATION_TYPE,
+    RECOMMENDATION_PRIORITY,
+    CONFIDENCE,
+    USAGE_COUNT,
+    SUCCESS_COUNT,
+    CONTEXT_KEY,
+    SOURCE_SET_HASH,
+    TARGET_FQN,
+    DERIVED_SET_HASH,
+    MILESTONE,
+    QUESTION_ID,
+    VALIDATION_STATUS,
+    CREATED_AT
+WAREHOUSE = __WAREHOUSE_NAME__
+TARGET_LAG = '1 hour'
+AS (
+    SELECT * FROM __STTM_METADATA_NAMESPACE__.VW_FIR_RECOMMENDATIONS_SEARCH
+);
+
+
+-- ============================================================
+-- View for Semantic View Versions Search
+-- ============================================================
+CREATE OR REPLACE VIEW __STTM_METADATA_NAMESPACE__.VW_FIR_SEMANTIC_VERSIONS_SEARCH AS
+SELECT
+    VERSION_ID,
+    SEMANTIC_VIEW_FQN,
+    VERSION_NUMBER,
+    VERSION_LABEL,
+    PARENT_VERSION_ID,
+    CONFIDENCE,
+    VALIDATION_STATUS,
+    STATUS,
+    CREATED_AT,
+    -- Composite search text from semantic content.
+    -- Subquery expressions with change tracking are unsupported; cast VARIANT to STRING instead.
+    COALESCE(SEMANTIC_VIEW_FQN, '') || ' ' ||
+    COALESCE(VERSION_LABEL, '') || ' ' ||
+    COALESCE(PROMOTION_REASON, '') || ' ' ||
+    COALESCE(BUSINESS_GLOSSARY::STRING, '') || ' ' ||
+    COALESCE(COLUMN_SEMANTICS::STRING, '') || ' ' ||
+    COALESCE(TRANSFORMATION_PATTERNS::STRING, '') || ' ' ||
+    COALESCE(RELATIONSHIP_RULES::STRING, '') || ' ' ||
+    COALESCE(DERIVED_SOURCE_PATTERNS::STRING, '')
+    AS SEARCH_TEXT
+FROM __STTM_METADATA_NAMESPACE__.TBL_SEMANTIC_VIEW_VERSIONS
+WHERE STATUS = 'active';
+
+-- ============================================================
+-- CSS_FIR_SEMANTIC_VERSIONS - Semantic Versions Search Service
+-- ============================================================
+CREATE OR REPLACE CORTEX SEARCH SERVICE __STTM_METADATA_NAMESPACE__.CSS_FIR_SEMANTIC_VERSIONS
+ON SEARCH_TEXT
+ATTRIBUTES
+    VERSION_ID,
+    SEMANTIC_VIEW_FQN,
+    VERSION_NUMBER,
+    VERSION_LABEL,
+    CONFIDENCE,
+    VALIDATION_STATUS,
+    CREATED_AT
+WAREHOUSE = __WAREHOUSE_NAME__
+TARGET_LAG = '1 hour'
+AS (
+    SELECT * FROM __STTM_METADATA_NAMESPACE__.VW_FIR_SEMANTIC_VERSIONS_SEARCH
+);
+
+-- ============================================================
+-- Unified, authoritative FIR knowledge search.
+-- Exact context/scope lookup remains the primary retrieval path.
+-- This service is only the compatible similar-context fallback.
+-- ============================================================
+CREATE OR REPLACE VIEW __STTM_METADATA_NAMESPACE__.VW_FIR_KNOWLEDGE_SEARCH AS
+SELECT
+    r.AGENT_RECOMMENDATION_ID AS KNOWLEDGE_ID,
+    'recommendation' AS KNOWLEDGE_TYPE,
+    COALESCE(r.DISPLAY_MESSAGE, '') || ' ' ||
+    COALESCE(r.EVIDENCE_SUMMARY, '') || ' ' ||
+    COALESCE(r.AGENT_NOTES, '') || ' ' ||
+    COALESCE(r.AGENT_PAYLOAD::STRING, '') || ' ' ||
+    COALESCE(r.APPLICABLE_TABLES::STRING, '') || ' ' ||
+    COALESCE(r.APPLICABLE_COLUMNS::STRING, '') AS SEARCH_TEXT,
+    r.TARGET_AGENT,
+    r.MILESTONE AS CHECKPOINT,
+    r.QUESTION_ID,
+    r.RECOMMENDATION_CATEGORY,
+    COALESCE(r.APPLICABLE_PROJECTS[0]::STRING, '') AS PROJECT_ID,
+    r.TARGET_FQN,
+    r.SOURCE_SET_HASH,
+    r.CONTEXT_KEY,
+    r.CONFIDENCE,
+    r.VALIDATION_STATUS,
+    r.AGENT_PAYLOAD:domain::STRING AS DOMAIN,
+    r.AGENT_PAYLOAD:mapping_lifecycle::STRING AS MAPPING_LIFECYCLE,
+    r.AGENT_PAYLOAD:grain::STRING AS GRAIN,
+    r.AGENT_PAYLOAD:semantic_role::STRING AS SEMANTIC_ROLE,
+    COALESCE(ARRAY_SIZE(r.AGENT_PAYLOAD:derived_sources), 0) > 0
+        AS DERIVED_SOURCE_PRESENT,
+    r.AGENT_PAYLOAD:contradiction_status::STRING AS CONTRADICTION_STATUS,
+    r.STATUS,
+    r.CREATED_AT
+FROM __STTM_METADATA_NAMESPACE__.TBL_FIR_AGENT_RECOMMENDATIONS r
+WHERE r.STATUS = 'active'
+  AND COALESCE(r.VALIDATION_STATUS, 'unvalidated') NOT IN ('rejected', 'contradicted')
+
+UNION ALL
+
+SELECT
+    i.INFERENCE_ID AS KNOWLEDGE_ID,
+    'inference' AS KNOWLEDGE_TYPE,
+    COALESCE(i.SUMMARY, '') || ' ' ||
+    COALESCE(i.STRUCTURED_ANSWER::STRING, '') || ' ' ||
+    COALESCE(i.PROVENANCE::STRING, '') AS SEARCH_TEXT,
+    NULL AS TARGET_AGENT,
+    NULL AS CHECKPOINT,
+    i.INFERENCE_GOAL_ID AS QUESTION_ID,
+    'inference' AS RECOMMENDATION_CATEGORY,
+    i.PROJECT_ID,
+    NULL AS TARGET_FQN,
+    NULL AS SOURCE_SET_HASH,
+    i.CONTEXT_KEY,
+    i.CONFIDENCE,
+    i.VALIDATION_STATUS,
+    i.STRUCTURED_ANSWER:domain::STRING AS DOMAIN,
+    i.PROVENANCE:mapping_lifecycle::STRING AS MAPPING_LIFECYCLE,
+    i.STRUCTURED_ANSWER:grain::STRING AS GRAIN,
+    i.STRUCTURED_ANSWER:semantic_role::STRING AS SEMANTIC_ROLE,
+    COALESCE(ARRAY_SIZE(i.STRUCTURED_ANSWER:derived_sources), 0) > 0
+        AS DERIVED_SOURCE_PRESENT,
+    IFF(COALESCE(i.CONTRADICTION_COUNT, 0) > 0, 'contradicted', NULL)
+        AS CONTRADICTION_STATUS,
+    i.STATUS,
+    i.CREATED_AT
+FROM __STTM_METADATA_NAMESPACE__.TBL_WORKBENCH_INFERENCES i
+WHERE i.STATUS = 'active'
+  AND COALESCE(i.VALIDATION_STATUS, 'unvalidated') NOT IN ('rejected', 'contradicted')
+
+UNION ALL
+
+SELECT
+    l.LEARNING_ID AS KNOWLEDGE_ID,
+    'agent_learning' AS KNOWLEDGE_TYPE,
+    COALESCE(l.SUMMARY, '') || ' ' ||
+    COALESCE(l.ATTRIBUTES::STRING, '') || ' ' ||
+    COALESCE(l.TAGS::STRING, '') AS SEARCH_TEXT,
+    'AGT_' || l.AGENT_TYPE AS TARGET_AGENT,
+    NULL AS CHECKPOINT,
+    NULL AS QUESTION_ID,
+    l.LEARNING_TYPE AS RECOMMENDATION_CATEGORY,
+    l.ENTITY_IDS:project_id::STRING AS PROJECT_ID,
+    l.ATTRIBUTES:target_table::STRING AS TARGET_FQN,
+    NULL AS SOURCE_SET_HASH,
+    l.ATTRIBUTES:context_key::STRING AS CONTEXT_KEY,
+    l.CONFIDENCE,
+    'validated' AS VALIDATION_STATUS,
+    l.ATTRIBUTES:domain::STRING AS DOMAIN,
+    l.ATTRIBUTES:mapping_lifecycle::STRING AS MAPPING_LIFECYCLE,
+    l.ATTRIBUTES:grain::STRING AS GRAIN,
+    l.ATTRIBUTES:semantic_role::STRING AS SEMANTIC_ROLE,
+    COALESCE(ARRAY_SIZE(l.ATTRIBUTES:derived_sources), 0) > 0
+        AS DERIVED_SOURCE_PRESENT,
+    l.ATTRIBUTES:contradiction_status::STRING AS CONTRADICTION_STATUS,
+    l.STATUS,
+    l.CREATED_AT
+FROM __STTM_METADATA_NAMESPACE__.TBL_AGENT_LEARNINGS l
+WHERE l.STATUS = 'active'
+
+UNION ALL
+
+SELECT
+    'sttm_version_' || v.VERSION_ID::STRING AS KNOWLEDGE_ID,
+    'published_mapping' AS KNOWLEDGE_TYPE,
+    COALESCE(s.STTM_NAME, '') || ' ' ||
+    COALESCE(s.DESCRIPTION, '') || ' ' ||
+    COALESCE(s.TARGET_TABLE, '') || ' ' ||
+    COALESCE(v.REVISION_NOTE, '') || ' ' ||
+    COALESCE(v.VERSION_PAYLOAD::STRING, '') AS SEARCH_TEXT,
+    'AGT_SOURCE_MAPPING' AS TARGET_AGENT,
+    'sttm_published' AS CHECKPOINT,
+    NULL AS QUESTION_ID,
+    'column_mapping' AS RECOMMENDATION_CATEGORY,
+    s.PROJECT_ID::STRING AS PROJECT_ID,
+    s.TARGET_TABLE AS TARGET_FQN,
+    v.VERSION_PAYLOAD:source_set_hash::STRING AS SOURCE_SET_HASH,
+    v.VERSION_PAYLOAD:context_key::STRING AS CONTEXT_KEY,
+    0.98 AS CONFIDENCE,
+    'published' AS VALIDATION_STATUS,
+    v.VERSION_PAYLOAD:domain::STRING AS DOMAIN,
+    v.VERSION_PAYLOAD:mapping_lifecycle::STRING AS MAPPING_LIFECYCLE,
+    v.VERSION_PAYLOAD:target_grain::STRING AS GRAIN,
+    'mapping' AS SEMANTIC_ROLE,
+    COALESCE(ARRAY_SIZE(v.VERSION_PAYLOAD:derived_sources), 0) > 0
+        AS DERIVED_SOURCE_PRESENT,
+    NULL AS CONTRADICTION_STATUS,
+    'active' AS STATUS,
+    v.PUBLISHED_DATETIME AS CREATED_AT
+FROM __STTM_METADATA_NAMESPACE__.TBL_STTM_VERSIONS v
+JOIN __STTM_METADATA_NAMESPACE__.TBL_STTM s
+  ON s.STTM_ID = v.STTM_ID
+
+UNION ALL
+
+SELECT
+    a.ARTIFACT_ID AS KNOWLEDGE_ID,
+    'validated_agent_artifact' AS KNOWLEDGE_TYPE,
+    COALESCE(a.SUMMARY, '') || ' ' ||
+    COALESCE(a.PAYLOAD::STRING, '') || ' ' ||
+    COALESCE(a.ENTITY_IDS::STRING, '') AS SEARCH_TEXT,
+    a.AGENT_NAME AS TARGET_AGENT,
+    a.PAYLOAD:checkpoint::STRING AS CHECKPOINT,
+    NULL AS QUESTION_ID,
+    a.ARTIFACT_TYPE AS RECOMMENDATION_CATEGORY,
+    a.ENTITY_IDS:project_id::STRING AS PROJECT_ID,
+    a.PAYLOAD:target_table::STRING AS TARGET_FQN,
+    a.PAYLOAD:source_set_hash::STRING AS SOURCE_SET_HASH,
+    a.CONTEXT_KEY,
+    0.9 AS CONFIDENCE,
+    a.ARTIFACT_STATUS AS VALIDATION_STATUS,
+    a.PAYLOAD:domain::STRING AS DOMAIN,
+    a.PAYLOAD:mapping_lifecycle::STRING AS MAPPING_LIFECYCLE,
+    a.PAYLOAD:target_grain::STRING AS GRAIN,
+    a.PAYLOAD:semantic_role::STRING AS SEMANTIC_ROLE,
+    COALESCE(ARRAY_SIZE(a.PAYLOAD:derived_sources), 0) > 0
+        AS DERIVED_SOURCE_PRESENT,
+    a.PAYLOAD:contradiction_status::STRING AS CONTRADICTION_STATUS,
+    'active' AS STATUS,
+    a.CREATED_AT
+FROM __STTM_METADATA_NAMESPACE__.TBL_AGENT_ARTIFACTS a
+WHERE LOWER(COALESCE(a.ARTIFACT_STATUS, '')) IN (
+    'accepted', 'validated', 'published', 'completed'
+)
+
+UNION ALL
+
+SELECT
+    v.VERSION_ID AS KNOWLEDGE_ID,
+    'semantic_version' AS KNOWLEDGE_TYPE,
+    COALESCE(v.SEMANTIC_VIEW_FQN, '') || ' ' ||
+    COALESCE(v.VERSION_LABEL, '') || ' ' ||
+    COALESCE(v.BUSINESS_GLOSSARY::STRING, '') || ' ' ||
+    COALESCE(v.COLUMN_SEMANTICS::STRING, '') || ' ' ||
+    COALESCE(v.RELATIONSHIP_RULES::STRING, '') || ' ' ||
+    COALESCE(v.TRANSFORMATION_PATTERNS::STRING, '') || ' ' ||
+    COALESCE(v.QA_PAIRS::STRING, '') AS SEARCH_TEXT,
+    'AGT_SEMANTIC_MODEL' AS TARGET_AGENT,
+    'semantic_refresh' AS CHECKPOINT,
+    NULL AS QUESTION_ID,
+    'semantic' AS RECOMMENDATION_CATEGORY,
+    COALESCE(v.PROJECT_IDS[0]::STRING, '') AS PROJECT_ID,
+    v.SEMANTIC_VIEW_FQN AS TARGET_FQN,
+    NULL AS SOURCE_SET_HASH,
+    NULL AS CONTEXT_KEY,
+    v.CONFIDENCE,
+    v.VALIDATION_STATUS,
+    v.BUSINESS_GLOSSARY:domain::STRING AS DOMAIN,
+    NULL AS MAPPING_LIFECYCLE,
+    v.BUSINESS_GLOSSARY:grain::STRING AS GRAIN,
+    'semantic_view' AS SEMANTIC_ROLE,
+    v.DERIVED_SOURCE_PATTERNS IS NOT NULL AS DERIVED_SOURCE_PRESENT,
+    NULL AS CONTRADICTION_STATUS,
+    v.STATUS,
+    v.CREATED_AT
+FROM __STTM_METADATA_NAMESPACE__.TBL_SEMANTIC_VIEW_VERSIONS v
+WHERE v.STATUS = 'active'
+  AND v.VALIDATION_STATUS <> 'rejected';
+
+CREATE OR REPLACE CORTEX SEARCH SERVICE __STTM_METADATA_NAMESPACE__.CSS_FIR_KNOWLEDGE
+ON SEARCH_TEXT
+ATTRIBUTES
+    KNOWLEDGE_ID,
+    KNOWLEDGE_TYPE,
+    TARGET_AGENT,
+    CHECKPOINT,
+    QUESTION_ID,
+    RECOMMENDATION_CATEGORY,
+    PROJECT_ID,
+    TARGET_FQN,
+    SOURCE_SET_HASH,
+    CONTEXT_KEY,
+    CONFIDENCE,
+    VALIDATION_STATUS,
+    DOMAIN,
+    MAPPING_LIFECYCLE,
+    GRAIN,
+    SEMANTIC_ROLE,
+    DERIVED_SOURCE_PRESENT,
+    CONTRADICTION_STATUS,
+    STATUS,
+    CREATED_AT
+WAREHOUSE = __WAREHOUSE_NAME__
+TARGET_LAG = '5 minutes'
+AS (
+    SELECT * FROM __STTM_METADATA_NAMESPACE__.VW_FIR_KNOWLEDGE_SEARCH
+);
+
+-- CSS_FIR_KNOWLEDGE is the single authoritative FIR similarity index.
+-- Exact context and scope retrieval remains table-backed in the application.
+DROP CORTEX SEARCH SERVICE IF EXISTS __STTM_METADATA_NAMESPACE__.CSS_FIR_INFERENCES_360;
+DROP CORTEX SEARCH SERVICE IF EXISTS __STTM_METADATA_NAMESPACE__.CSS_FIR_AGENT_RECOMMENDATIONS;
+DROP CORTEX SEARCH SERVICE IF EXISTS __STTM_METADATA_NAMESPACE__.CSS_FIR_SEMANTIC_VERSIONS;

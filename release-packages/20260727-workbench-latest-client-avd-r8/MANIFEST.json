@@ -1,0 +1,290 @@
+{
+  "release": "20260727-workbench-latest-client-avd-r8",
+  "baseline": "20260724-warehouse-cost-rollover-client-avd-r7",
+  "zip": "bbi-mig-ai-workbench-20260727-workbench-latest-client-avd-r8.zip",
+  "file_count": 56,
+  "size_bytes": 409748,
+  "sha256": "407456c30c6f9d3cfcf69079de9f25ebd03f892bd1913993c20112827608e11d",
+  "files": [
+    {
+      "path": "frontend/src/api/routes.ts",
+      "size_bytes": 2648,
+      "sha256": "5fe67c449d5f4611500062db14293c617db81abc3db7fb58cd32c73fc4b71af1"
+    },
+    {
+      "path": "frontend/src/features/ai-agent/ai-agent-panel.tsx",
+      "size_bytes": 103104,
+      "sha256": "4f2fa902606c76a7bdfce888673bc0e0d6698c524fbefa2276639be386e610b0"
+    },
+    {
+      "path": "frontend/src/features/dashboard/NewMappingDialog.tsx",
+      "size_bytes": 29597,
+      "sha256": "b9500fc5e0bd4c1032fc4bc2ad1ee8b5ae360cf84604c69285912b9092ecd531"
+    },
+    {
+      "path": "frontend/src/features/sttm/context/sttm-builder-context.tsx",
+      "size_bytes": 61632,
+      "sha256": "2a4ecf7e1c26f36b11bf55746a174c08ba02c5a247007849c653da63847032a6"
+    },
+    {
+      "path": "frontend/src/features/sttm/store/sttm-builder-slice.ts",
+      "size_bytes": 216128,
+      "sha256": "f1286fda3f466996a2dc823fb5c0d205fe49c8e6a2f977acb1ae5658a0049b0b"
+    },
+    {
+      "path": "frontend/src/features/sttm/types/sttm.types.ts",
+      "size_bytes": 15357,
+      "sha256": "5948825d9945a3fccab394aba8a2576b2579f0e8e101fd8b2c0fe70dd727aea6"
+    },
+    {
+      "path": "frontend/src/services/conversationService.ts",
+      "size_bytes": 14435,
+      "sha256": "61d3c71d856c5eb04123f81bc8580df2800518ec2a2b8f500cf76c79ee31d2c8"
+    },
+    {
+      "path": "frontend/src/services/preparedContextService.ts",
+      "size_bytes": 3484,
+      "sha256": "a4116c545f56881c2daf841a4f827fb4b6ff82143c492aa8d555717958dd32d4"
+    },
+    {
+      "path": "frontend/src/services/workbenchService.ts",
+      "size_bytes": 17405,
+      "sha256": "3a76f56ee134029d9640fb1be2f5f7494986f82b44a5d55c4d88ccb94fab952b"
+    },
+    {
+      "path": "frontend/src/types/api-contract.ts",
+      "size_bytes": 29346,
+      "sha256": "0104ae318eb19ca53b54943dce314de7c3a286a05137ddf6292d2b754d1f5a8c"
+    },
+    {
+      "path": "infra/snowflake/agents/agent_spec_manifest.json",
+      "size_bytes": 554,
+      "sha256": "65fca7a35936b80df3c09d54445a3a25f33d581d18c72cd556a0eb9bae32ee53"
+    },
+    {
+      "path": "infra/snowflake/agents/agent_spec_source_mapping.yaml",
+      "size_bytes": 21902,
+      "sha256": "b3a312d41aeff743a62522e7595098f9e61d9c0fd3735deb530feceb8cac91b3"
+    },
+    {
+      "path": "infra/snowflake/agents/agent_spec_sttm_builder.yaml",
+      "size_bytes": 43436,
+      "sha256": "0db48c6f0d0192c3a5e3e653352181870762a2ae6cf970db0a44067b944c80f7"
+    },
+    {
+      "path": "infra/snowflake/agents/agent_spec_transformation_rule.yaml",
+      "size_bytes": 10079,
+      "sha256": "216ce641971e55b921462f26e117ec08479505d232f64bb1107fc926c3b4a999"
+    },
+    {
+      "path": "infra/snowflake/create-table-ddl.sql",
+      "size_bytes": 49684,
+      "sha256": "014eeeb98e8b525a54218c468d43ae95e8a85496e4e4541877f419e9672d1d32"
+    },
+    {
+      "path": "infra/snowflake/env/client.env.example",
+      "size_bytes": 8632,
+      "sha256": "3d4d761288433cfaf2128c5b1428093b9f99822e28f3d53a009e33de397e3f50"
+    },
+    {
+      "path": "infra/snowflake/env/dev.env.example",
+      "size_bytes": 5809,
+      "sha256": "d05c6ddbc243731c4574bada2f5118d445413d2c8b4232decff385cbe8c56e06"
+    },
+    {
+      "path": "infra/snowflake/fir_system/tables/fir_v2_schema.sql",
+      "size_bytes": 56615,
+      "sha256": "deeb58933e7c39a196ed10cbdfff8ccc7b9ca98f20451ee65235193012ade47b"
+    },
+    {
+      "path": "infra/snowflake/service-specs/automap-worker.yaml.tmpl",
+      "size_bytes": 6775,
+      "sha256": "55a7c537500773a848a59f84fed36a223dfa76ff481bc0c0c3fde9ae1c61bab3"
+    },
+    {
+      "path": "infra/snowflake/service-specs/sttm-builder.yaml.tmpl",
+      "size_bytes": 6836,
+      "sha256": "09c4eb0768db2a8bf1aa5bd71b84ad8a0926488d662946c295650bfeeeaed582"
+    },
+    {
+      "path": "scripts/deploy_spcs_client_snow.ps1",
+      "size_bytes": 37113,
+      "sha256": "a7cfedb95b4fcbe8b6d36a05f093fe1cd939d31d248fd0c8af8ac6aaff4c2188"
+    },
+    {
+      "path": "scripts/deploy_spcs_client_snow.sh",
+      "size_bytes": 30840,
+      "sha256": "324b5f4da4055f3059939cfc17d63c3a59c4518de81b06f95a03b101d8565ea1"
+    },
+    {
+      "path": "scripts/deploy_spcs_client_snow_safe.ps1",
+      "size_bytes": 39788,
+      "sha256": "340908cfa0eca5ed099e04ffc392bd81fc78f294554d92fd8871ebcc503ebd71"
+    },
+    {
+      "path": "scripts/deploy_spcs_client_snow_single_service.ps1",
+      "size_bytes": 32039,
+      "sha256": "79776df4418888c89cae05600eacb9a03197d16fa36aa0c5a14f63ff2970d038"
+    },
+    {
+      "path": "scripts/render_spcs_spec.py",
+      "size_bytes": 2282,
+      "sha256": "da539f957368b2411108731a071e9356a440382bfe5ec55b04b0cec7e0c0de64"
+    },
+    {
+      "path": "services/sttm-builder/.env.example",
+      "size_bytes": 4646,
+      "sha256": "fd5f570a357ca8377c38c247ab65943f1b39684e7fa938d4dd949dc487c8d957"
+    },
+    {
+      "path": "services/sttm-builder/app/api/__init__.py",
+      "size_bytes": 3597,
+      "sha256": "da82457f061aa0565f184f6e9a049c47cf1c5c85b0476902b1fbfe096e2e8a38"
+    },
+    {
+      "path": "services/sttm-builder/app/api/deps.py",
+      "size_bytes": 18997,
+      "sha256": "06c691b4de46cf16b6c090bc89c3873dfd261dff26b72fadcf4bca210eda623e"
+    },
+    {
+      "path": "services/sttm-builder/app/core/agent_execution_context.py",
+      "size_bytes": 9782,
+      "sha256": "68bc41ec7f15f8cddd292bc6a82be2b25ea4f8a7be220799ff35c46d68752d76"
+    },
+    {
+      "path": "services/sttm-builder/app/core/config.py",
+      "size_bytes": 37639,
+      "sha256": "d9fd28d8193e9e7884d8acc0e4f354cc441303472a4322119d88762da38b4179"
+    },
+    {
+      "path": "services/sttm-builder/app/core/conversation.py",
+      "size_bytes": 147411,
+      "sha256": "24826e59961f96880da7338b85bf99347f240383417bf2b7d8d8f34e674c322f"
+    },
+    {
+      "path": "services/sttm-builder/app/core/conversation_continuity.py",
+      "size_bytes": 11860,
+      "sha256": "18addf56c02f7a2e03342b0232a8aa52dae341261f919f2465c3d80f7deec0e3"
+    },
+    {
+      "path": "services/sttm-builder/app/core/conversation_memory.py",
+      "size_bytes": 175734,
+      "sha256": "7eea0dddd9006f77bd61daa842a9c721535bad5bd44688ed52448ef5bd88d149"
+    },
+    {
+      "path": "services/sttm-builder/app/core/learning_retrieval.py",
+      "size_bytes": 70098,
+      "sha256": "0253f1115d4d826e42e085f3d04ac628c7aeb795f47c4376f785f58a827c2fd2"
+    },
+    {
+      "path": "services/sttm-builder/app/core/prepared_context.py",
+      "size_bytes": 23613,
+      "sha256": "363ddbce4cfa9fa44f1876dfd61dd92cecedac6c4de45ae2215ac54fd58669ec"
+    },
+    {
+      "path": "services/sttm-builder/app/core/project_service.py",
+      "size_bytes": 103628,
+      "sha256": "a807cc0ef530edd6cfc3308d5d5829fa15d49df228798cdd4617a2c1b3d597f6"
+    },
+    {
+      "path": "services/sttm-builder/app/core/semantic_context.py",
+      "size_bytes": 170892,
+      "sha256": "e894d2ef2c9b1e1c3ba124e45715a588e19319af29c33ed73d695d6b22cb94ee"
+    },
+    {
+      "path": "services/sttm-builder/app/core/snowflake_analyst.py",
+      "size_bytes": 9442,
+      "sha256": "d0943c6fb210e0c77142590ad7d5eaa42371667276ed943f5937f635c35bdf3c"
+    },
+    {
+      "path": "services/sttm-builder/app/core/sttm_builder.py",
+      "size_bytes": 210409,
+      "sha256": "27428840e33889451879988ef57123924809b6a9c6952b576962672f99568252"
+    },
+    {
+      "path": "services/sttm-builder/app/core/target_mapping_patterns.py",
+      "size_bytes": 40721,
+      "sha256": "3a572856b8de6158f468006e0155fb99fe84187b592c776e71aec148f0a3008c"
+    },
+    {
+      "path": "services/sttm-builder/app/routers/conversation.py",
+      "size_bytes": 10257,
+      "sha256": "05fb98811d696eb9b27a399669470f14bcf4e9a9d85426d293b9d2bf14855da3"
+    },
+    {
+      "path": "services/sttm-builder/app/routers/fir_learning.py",
+      "size_bytes": 7251,
+      "sha256": "0c12aaacbe8a794b5b69450eb4dd9557cdad47af9b8c8bdb873b4ba587cdead6"
+    },
+    {
+      "path": "services/sttm-builder/app/routers/prepared_context.py",
+      "size_bytes": 2095,
+      "sha256": "526e78f5b5dbdbf7a89f672dea0b6b32ea8f3d7486f66af4703766ac98ef0ff5"
+    },
+    {
+      "path": "services/sttm-builder/app/routers/sttm_builder.py",
+      "size_bytes": 7569,
+      "sha256": "8fb8304278f5f09d55cddb65eee0a94f863c8dc74b901faf9c19e87b64d1f054"
+    },
+    {
+      "path": "services/sttm-builder/app/routers/upload.py",
+      "size_bytes": 10268,
+      "sha256": "76b700375dcf5ffd7f05dbab46b95ea8a4219e2413b6b9574f9971a5572a0983"
+    },
+    {
+      "path": "services/sttm-builder/app/schema/conversation.py",
+      "size_bytes": 15774,
+      "sha256": "b8d5e284a6a5b13ed9ba261f7cab5a598e9eba35db2cefa286d70bc9a2bda130"
+    },
+    {
+      "path": "services/sttm-builder/app/schema/fir_patterns.py",
+      "size_bytes": 2589,
+      "sha256": "19df2c159a3d4529ce33826fc007c21b50da3dde2cce646c739e4963fe048686"
+    },
+    {
+      "path": "services/sttm-builder/app/schema/prepared_context.py",
+      "size_bytes": 1786,
+      "sha256": "47fe3b6f9c1cc7a4045b126828b3f9d6f5838de2bdb50359971fbed8b001cf05"
+    },
+    {
+      "path": "services/sttm-builder/app/schema/sttm_builder.py",
+      "size_bytes": 47412,
+      "sha256": "b112ec8e371134772eadfacd76c2cdc36f78843129d63152c6f43d754bb0d30d"
+    },
+    {
+      "path": "services/sttm-builder/tests/unit/core/test_prepared_context.py",
+      "size_bytes": 4494,
+      "sha256": "5d52a81c363592609eebd7c3128ad1649e5cd10194da8fce04a5fd3554e7a2e9"
+    },
+    {
+      "path": "services/sttm-builder/tests/unit/core/test_stream_text_delta.py",
+      "size_bytes": 1082,
+      "sha256": "74ef613bda7ca83bae64994391d16aebdb748491431dd51aa7d8e9164c77300a"
+    },
+    {
+      "path": "services/sttm-builder/tests/unit/core/test_sttm_payload_contract.py",
+      "size_bytes": 44003,
+      "sha256": "ef9f2fd215a7c5c27ae5ce2725e993a9a13e7541a7a62f5a78dafbe3e722076a"
+    },
+    {
+      "path": "services/sttm-builder/tests/unit/core/test_target_mapping_patterns.py",
+      "size_bytes": 2824,
+      "sha256": "ad4c88b063ffa317c8582d8ed25bb8c1427823ced3c6101114061263a0d06556"
+    },
+    {
+      "path": "services/sttm-builder/tests/unit/guardrails/test_settings.py",
+      "size_bytes": 789,
+      "sha256": "f2086a3db0fb66c75c69b3f1cd4cbfe88dec8eb106b4402900bd12665ed20e85"
+    },
+    {
+      "path": "README_CLIENT_AVD.md",
+      "size_bytes": 1348,
+      "sha256": "55d34d91e6d44e5993f75fcfd0a7f76c4f81228cd6d468ef8efe631905ecc0b8"
+    },
+    {
+      "path": "CLIENT_ENV_DELTA.md",
+      "size_bytes": 1316,
+      "sha256": "6224be9faa6434b272b7cf3271d7bba01198d7ff79b1215525b2ed2859b43f23"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+-- =============================================================================
+-- SPCS Layered OAuth Network Policy Setup
+-- =============================================================================
+-- Run with ACCOUNTADMIN or a role that can create network rules and alter the
+-- account/user network policy that applies to Snowflake OAuth token exchange and
+-- REST connections from Snowpark Container Services.
+--
+-- Why this is needed:
+--   When a Snowflake account/user network policy is active, SPCS containers that
+--   exchange custom OAuth tokens or use OAuth bearer tokens against Snowflake REST
+--   must be allowed by COMPUTE_POOL network rules. If the public webapp and
+--   private auto-map worker use different compute pools, both pools must be in
+--   the policy.
+--
+-- Replace the __...__ placeholders for the target environment.
+-- =============================================================================
+
+CREATE NETWORK RULE IF NOT EXISTS __DATABASE__.__SCHEMA__.STTM_BUILDER_OAUTH_WEBAPP_POOL_RULE
+  MODE = INGRESS
+  TYPE = COMPUTE_POOL
+  VALUE_LIST = ('__WEBAPP_COMPUTE_POOL__')
+  COMMENT = 'Allow layered Snowflake OAuth and REST calls from the workbench webapp SPCS compute pool';
+
+CREATE NETWORK RULE IF NOT EXISTS __DATABASE__.__SCHEMA__.STTM_BUILDER_OAUTH_AUTOMAP_POOL_RULE
+  MODE = INGRESS
+  TYPE = COMPUTE_POOL
+  VALUE_LIST = ('__AUTOMAP_COMPUTE_POOL__')
+  COMMENT = 'Allow layered Snowflake OAuth and REST calls from the private auto-map SPCS compute pool';
+
+ALTER NETWORK POLICY __NETWORK_POLICY__
+  ADD ALLOWED_NETWORK_RULE_LIST = (
+    '__DATABASE__.__SCHEMA__.STTM_BUILDER_OAUTH_WEBAPP_POOL_RULE',
+    '__DATABASE__.__SCHEMA__.STTM_BUILDER_OAUTH_AUTOMAP_POOL_RULE'
+  );

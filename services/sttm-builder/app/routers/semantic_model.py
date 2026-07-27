@@ -1,9 +1,9 @@
 from typing import Annotated, Literal, Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request
 
 from app.api.deps import get_semantic_model_service, get_snowflake_client
-from app.core.exceptions import NotFoundError
+from app.core.exceptions import AuthorizationError, NotFoundError
 from app.core.semantic_model import SemanticModelService
 from app.core.snowflake import SnowflakeClient
 from app.schema.contracts import ApiRequestEnvelope, ApiResponseEnvelope, build_response_envelope
@@ -16,59 +16,23 @@ from app.schema.semantic_model import (
 
 router = APIRouter(prefix="/semantic-model", tags=["Semantic Model"])
 
-_SPCS_USER_TOKEN_HEADER = "sf-context-current-user-token"
-
-
 @router.post(
     "/generate",
     response_model=ApiResponseEnvelope[GenerateResponse],
-    summary="Generate semantic models for a set of tables",
+    summary="Legacy semantic generation endpoint (pipeline-owned)",
     description=(
-        "Queues a background job that generates semantic models for the selected tables.\n\n"
-        "For each **unique schema** in the list, a `SCHEMA`-scope model is generated.\n"
-        "For each **table**, both a `TABLE`-scope and `ATTRIBUTE`-scope model are generated.\n\n"
-        "Staleness is checked before each task — if the DDL hash matches what was stored at "
-        "last generation, that task is skipped.\n\n"
-        "Poll `GET /semantic-model/jobs/{job_id}` to track progress."
+        "Semantic generation is owned by AGT_SEMANTIC_MODEL_V2 and the scheduled "
+        "publication pipeline. The application is a read-only registry consumer."
     ),
 )
 def generate(
     body: ApiRequestEnvelope[GenerateRequest] | GenerateRequest,
-    background_tasks: BackgroundTasks,
     request: Request,
-    service: Annotated[SemanticModelService, Depends(get_semantic_model_service)],
 ) -> ApiResponseEnvelope[GenerateResponse]:
-    user_token = request.headers.get(_SPCS_USER_TOKEN_HEADER, "")
-    if isinstance(body, GenerateRequest):
-        payload = body
-        request_id = None
-        actor = None
-        context: dict[str, object] = {}
-        warnings = []
-        meta: dict[str, object] = {}
-    else:
-        payload = body.data
-        request_id = body.request_id
-        actor = body.actor
-        context = body.context
-        warnings = body.warnings
-        meta = body.meta
-
-    job_id, total = service.submit(payload)
-    background_tasks.add_task(service.run_generation, job_id, payload, user_token)
-    return build_response_envelope(
-        operation="semantic_model.generate",
-        request=request,
-        request_id=request_id,
-        actor=actor,
-        context=context,
-        warnings=warnings,
-        meta=meta,
-        data=GenerateResponse(
-            job_id=job_id,
-            total=total,
-            message=f"Queued {total} tasks for {len(payload.tables)} table(s)",
-        ),
+    _ = (body, request)
+    raise AuthorizationError(
+        "Semantic generation is pipeline-owned. Invoke AGT_SEMANTIC_MODEL_V2 through "
+        "the scheduled semantic publication pipeline instead."
     )
 
 

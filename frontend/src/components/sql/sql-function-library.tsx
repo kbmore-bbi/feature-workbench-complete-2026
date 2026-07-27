@@ -1,16 +1,18 @@
 'use client';
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useCallback, useMemo, useState } from 'react';
-import { Box, Typography } from '@mui/material';
+
 import { MenuRoundedIcon } from '@/utils/icons';
-import { FocusChip } from '@/components/ui/focus-chip';
+import { AiaChip } from '@/components/ui/aia-chip';
 import {
   SQL_FUNCTION_CATEGORIES,
   SQL_FUNCTIONS_BY_CATEGORY,
   SQL_QUICK_ACTIONS,
 } from './function-library.config';
 import {
-  SQL_FUNCTION_CHIP_SX,
+  SQL_MONO_FONT,
   SQL_PANEL_SCROLL_SX,
 } from './sql-styles';
 import type {
@@ -47,6 +49,12 @@ export type SqlFunctionLibraryProps = {
   categories?: SqlFunctionCategory[];
   functionsByCategory?: Record<SqlFunctionCategoryId, string[]>;
   defaultCategory?: SqlFunctionCategoryId;
+  /** `data-tour` value for the library header and category tabs. */
+  libraryTourTarget?: string;
+  /** `data-tour` value for the category tabs container. */
+  tabsTourTarget?: string;
+  /** `data-tour` value for the clickable function chips panel. */
+  panelTourTarget?: string;
 };
 
 export function SqlFunctionLibrary({
@@ -57,6 +65,9 @@ export function SqlFunctionLibrary({
   categories = SQL_FUNCTION_CATEGORIES,
   functionsByCategory = SQL_FUNCTIONS_BY_CATEGORY,
   defaultCategory = 'string',
+  libraryTourTarget,
+  tabsTourTarget,
+  panelTourTarget,
 }: SqlFunctionLibraryProps) {
   const [internalCategory, setInternalCategory] = useState<SqlFunctionCategoryId>(defaultCategory);
   const selectedCategory = activeCategory ?? internalCategory;
@@ -92,7 +103,7 @@ export function SqlFunctionLibrary({
   );
 
   return (
-    <Box
+    <AiaBox
       sx={{
         width: '100%',
         height: '100%',
@@ -103,54 +114,57 @@ export function SqlFunctionLibrary({
         overflow: 'hidden',
       }}
     >
-      <Box
-        sx={{
-          px: 2,
-          py: 1.25,
-          borderBottom: '1px solid #e2e8f0',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 0.75,
-          flexShrink: 0,
-        }}
-      >
-        <MenuRoundedIcon sx={{ fontSize: 16, color: '#374151' }} />
-        <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827' }}>
-          Function Library
-        </Typography>
-      </Box>
-
-      <Box
-        sx={{
-          px: 1.5,
-          pt: 1.25,
-          pb: 1,
-          flexShrink: 0,
-        }}
-      >
-        <Box
+      <AiaBox data-tour={libraryTourTarget}>
+        <AiaBox
           sx={{
+            px: 2,
+            py: 1.25,
+            borderBottom: '1px solid #e2e8f0',
             display: 'flex',
-            flexWrap: 'wrap',
-            gap: 0.5,
-            p: 0.5,
-            bgcolor: '#f3f4f6',
-            borderRadius: '10px',
+            alignItems: 'center',
+            gap: 0.75,
+            flexShrink: 0,
           }}
         >
-          {categories.map((tab) => (
-            <Box
-              key={tab.id}
-              onClick={() => handleCategoryChange(tab.id)}
-              sx={categoryTabSx(selectedCategory === tab.id)}
-            >
-              {tab.label}
-            </Box>
-          ))}
-        </Box>
-      </Box>
+          <MenuRoundedIcon sx={{ fontSize: 16, color: '#374151' }} />
+          <AiaText sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827' }}>
+            Function Library
+          </AiaText>
+        </AiaBox>
 
-      <Box
+        <AiaBox
+          sx={{
+            px: 1.5,
+            pt: 1.25,
+            pb: 1,
+            flexShrink: 0,
+          }}
+        >
+        <AiaBox
+          data-tour={tabsTourTarget}
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 0.5,
+              p: 0.5,
+              bgcolor: '#f3f4f6',
+              borderRadius: '10px',
+            }}
+          >
+            {categories.map((tab) => (
+              <AiaBox
+                key={tab.id}
+                onClick={() => handleCategoryChange(tab.id)}
+                sx={categoryTabSx(selectedCategory === tab.id)}
+              >
+                {tab.label}
+              </AiaBox>
+            ))}
+          </AiaBox>
+        </AiaBox>
+      </AiaBox>
+
+      <AiaBox
         sx={{
           px: 1.5,
           py: 1.25,
@@ -164,19 +178,20 @@ export function SqlFunctionLibrary({
         }}
       >
         {quickActions.map((action) => (
-          <FocusChip
+          <AiaChip
             key={action.id}
             label={action.label}
             size="small"
             color="default"
-            variant="outlined"
+            clickable
             onClick={() => handleQuickAction(action)}
-            sx={SQL_FUNCTION_CHIP_SX}
+            sx={{ fontFamily: SQL_MONO_FONT, fontSize: '0.72rem' }}
           />
         ))}
-      </Box>
+      </AiaBox>
 
-      <Box
+      <AiaBox
+        data-tour={panelTourTarget}
         sx={{
           flex: 1,
           minHeight: 0,
@@ -190,17 +205,17 @@ export function SqlFunctionLibrary({
         }}
       >
         {categoryFunctions.map((fn) => (
-          <FocusChip
+          <AiaChip
             key={fn}
             label={fn}
             size="small"
             color="default"
-            variant="outlined"
+            clickable
             onClick={() => handleFunctionClick(fn)}
-            sx={SQL_FUNCTION_CHIP_SX}
+            sx={{ fontFamily: SQL_MONO_FONT, fontSize: '0.72rem' }}
           />
         ))}
-      </Box>
-    </Box>
+      </AiaBox>
+    </AiaBox>
   );
 }

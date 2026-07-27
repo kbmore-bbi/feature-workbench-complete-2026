@@ -1,10 +1,11 @@
 "use client";
+import { AiaBox, AiaIconButton, AiaTooltip } from '@/components/ui';
 
 import {
   KeyboardDoubleArrowLeftRoundedIcon,
   KeyboardDoubleArrowRightRoundedIcon,
 } from "@/utils/icons";
-import { Box, IconButton, Tooltip } from "@mui/material";
+
 
 const toggleButtonSx = {
   width: 32,
@@ -37,7 +38,7 @@ export function SttmSidebarCollapseFooter({
   const label = collapsed ? expandLabel : collapseLabel;
 
   const button = (
-    <IconButton
+    <AiaIconButton
       size="small"
       aria-label={label}
       onClick={onToggle}
@@ -48,11 +49,11 @@ export function SttmSidebarCollapseFooter({
       ) : (
         <KeyboardDoubleArrowLeftRoundedIcon sx={{ fontSize: 18 }} />
       )}
-    </IconButton>
+    </AiaIconButton>
   );
 
   return (
-    <Box
+    <AiaBox
       sx={{
         px: centered ? 1 : 1.5,
         py: 1,
@@ -65,12 +66,12 @@ export function SttmSidebarCollapseFooter({
       }}
     >
       {collapsed ? (
-        <Tooltip title={expandLabel} placement="right">
+        <AiaTooltip title={expandLabel} placement="right" arrow>
           {button}
-        </Tooltip>
+        </AiaTooltip>
       ) : (
         button
       )}
-    </Box>
+    </AiaBox>
   );
 }

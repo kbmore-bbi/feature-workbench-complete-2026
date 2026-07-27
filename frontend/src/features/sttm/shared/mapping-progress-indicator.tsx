@@ -1,6 +1,7 @@
 "use client";
-
-import { Box, LinearProgress, Typography } from "@mui/material";
+import { AiaBox, AiaLinearProgress } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 
 type MappingProgressIndicatorProps = {
   mappedCount: number;
@@ -11,8 +12,11 @@ export function MappingProgressIndicator({ mappedCount, totalCount }: MappingPro
   const progressValue = totalCount > 0 ? (mappedCount / totalCount) * 100 : 0;
 
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0, flexShrink: 0 }}>
-      <Typography
+    <AiaBox
+      data-tour={TOUR_TARGETS.sttmMappingProgress}
+      sx={{ display: "flex", alignItems: "center", gap: 1, minWidth: 0, flexShrink: 0 }}
+    >
+      <AiaText
         sx={{
           fontSize: "0.76rem",
           fontWeight: 700,
@@ -21,9 +25,9 @@ export function MappingProgressIndicator({ mappedCount, totalCount }: MappingPro
         }}
       >
         Mapping progress:
-      </Typography>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-        <Typography
+      </AiaText>
+      <AiaBox sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+        <AiaText
           sx={{
             fontSize: "0.76rem",
             color: "#64748b",
@@ -32,8 +36,8 @@ export function MappingProgressIndicator({ mappedCount, totalCount }: MappingPro
           }}
         >
           {mappedCount}/{totalCount} rows
-        </Typography>
-        <LinearProgress
+        </AiaText>
+        <AiaLinearProgress
           variant="determinate"
           value={progressValue}
           sx={{
@@ -47,10 +51,10 @@ export function MappingProgressIndicator({ mappedCount, totalCount }: MappingPro
             },
           }}
         />
-        <Typography sx={{ fontSize: "0.76rem", color: "#64748b", whiteSpace: "nowrap" }}>
+        <AiaText sx={{ fontSize: "0.76rem", color: "#64748b", whiteSpace: "nowrap" }}>
           {totalCount > 0 ? `${Math.round(progressValue)}%` : "0%"}
-        </Typography>
-      </Box>
-    </Box>
+        </AiaText>
+      </AiaBox>
+    </AiaBox>
   );
 }

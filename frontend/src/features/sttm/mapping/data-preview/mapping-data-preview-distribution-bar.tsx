@@ -1,4 +1,5 @@
-import { Box } from '@mui/material';
+import { AiaBox } from '@/components/ui';
+
 import {
   DATA_PREVIEW_DISTRIBUTION_BAR_FILL_SX,
   DATA_PREVIEW_DISTRIBUTION_BAR_TRACK_SX,
@@ -14,8 +15,8 @@ export function MappingDataPreviewDistributionBar({
   const width = `${Math.min(100, 28 + (value.length * 9) % 62)}%`;
 
   return (
-    <Box sx={DATA_PREVIEW_DISTRIBUTION_BAR_TRACK_SX}>
-      <Box sx={{ ...DATA_PREVIEW_DISTRIBUTION_BAR_FILL_SX, width }} />
-    </Box>
+    <AiaBox sx={DATA_PREVIEW_DISTRIBUTION_BAR_TRACK_SX}>
+      <AiaBox sx={{ ...DATA_PREVIEW_DISTRIBUTION_BAR_FILL_SX, width }} />
+    </AiaBox>
   );
 }

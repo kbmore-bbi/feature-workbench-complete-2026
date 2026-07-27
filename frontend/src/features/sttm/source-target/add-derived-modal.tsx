@@ -1,6 +1,11 @@
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
-import { AddCircleOutlineRoundedIcon, CheckCircleRoundedIcon, CloseRoundedIcon, RadioButtonUncheckedRoundedIcon, TableChartOutlinedIcon } from '@/utils/icons';
+import { AiaBox, AiaCheckbox, AiaDialog, AiaIconButton, AiaInput, AiaMenu, AiaMenuItem, AiaResizeHandle } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import AddCircleIcon from '@mui/icons-material/AddCircle';
+import { AIA_RESIZE_HANDLE_THICKNESS } from '@/components/ui/aia-resize-handle';
+import { AddIcon, AllInclusiveIcon, CheckIcon, KeyIcon, LinkIcon, MoreVertIcon } from '@/utils/icons';
+import { BODY_SX, CAPTION_SX, SECONDARY_TEXT_SX, TYPOGRAPHY_TOKENS, textStyleCssVars } from '@/config/typography-tokens';
 import {
   MarkerType,
   type Connection,
@@ -8,16 +13,13 @@ import {
   useEdgesState,
   useNodesState,
 } from "@xyflow/react";
-import {
-  Box,
-  Dialog,
-  IconButton,
-  InputBase,
-  Typography,
-} from "@mui/material";
+
 import { dbService } from "@/services/dbService";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
+import { resolveSelectedSourceTables } from "@/features/sttm/shared/sttm-selection-utils";
+import { useAiChatLayout } from "@/features/ai-agent/ai-chat-layout-context";
 import { AiaButton } from "@/components/ui/aia-button";
+import { AiaChip } from "@/components/ui/aia-chip";
 import { AiaTable } from "@/components/ui/aia-table/aia-table";
 import { SqlEditor, SQL_EDITOR_DERIVED_HEIGHT } from "@/components/sql";
 import { FilterConditions, type RuleGroup } from "./filter-conditions";
@@ -30,10 +32,16 @@ import {
 } from "./sql-hydration";
 import { TableNode, type TableNodeData } from "./table-node";
 import { RelationshipFlowView } from "./relationship-flow-view";
+import { useTour } from "@/features/tour/engine/tour-context";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+import {
+  isTableHeaderHandle,
+  resolveTableHeaderHandleId,
+} from "./relationship-handles";
 import {
   buildRelationshipLayout,
   mergeRelationshipNodePositions,
-  RELATIONSHIP_LAYOUT_COMPACT,
+  RELATIONSHIP_LAYOUT_FULL,
 } from "./relationship-layout";
 import type {
   Column,
@@ -42,26 +50,6 @@ import type {
   PendingDerivedSourceDraft,
   TableMeta,
 } from "@/features/sttm/types/sttm.types";
-
-function buildRelationshipHandleId(
-  table: { database?: string; schema?: string; name?: string },
-  columnName: string,
-  _index: number,
-  kind: "source" | "target"
-) {
-  return `${table.database}.${table.schema}.${table.name}.${columnName}-${kind}`;
-}
-
-function resolveRelationshipHandleId(
-  table: TableMeta | undefined,
-  columnName: string | undefined,
-  kind: "source" | "target"
-) {
-  if (!table || !columnName) return undefined;
-  const index = (table.columns ?? []).findIndex((column) => column.name === columnName);
-  if (index === -1) return undefined;
-  return buildRelationshipHandleId(table, columnName, index, kind);
-}
 
 function parseRelationshipHandleId(
   handleId: string | null | undefined,
@@ -91,6 +79,197 @@ function tagChipPalette(tag?: string) {
 
 function isDerivedTableMeta(table: TableMeta | undefined) {
   return table?.tag?.toLowerCase().includes("derived") ?? false;
+}
+
+const DERIVED_SIDEBAR_SECTION_LABEL_SX = {
+  ...SECONDARY_TEXT_SX,
+  textTransform: "uppercase" as const,
+  letterSpacing: "0.08em",
+  display: "block",
+} as const;
+
+const DERIVED_MODAL_CANVAS_AREA_MIN_HEIGHT = 420;
+const DERIVED_MODAL_FLOW_HOST_DEFAULT_HEIGHT = 320;
+
+const JOIN_LEGEND = [
+  { label: "INNER JOIN", bg: "#111827" },
+  { label: "LEFT JOIN", bg: "#1e40af" },
+  { label: "RIGHT JOIN", bg: "#0d9488" },
+  { label: "FULL JOIN", bg: "#9333ea" },
+] as const;
+
+interface AvailableTableRowProps {
+  table: TableMeta;
+  isActive: boolean;
+  isDriving: boolean;
+  selectedCount: number;
+  onToggle: () => void;
+  onSetDriving: () => void;
+}
+
+function AvailableTableRow({
+  table,
+  isActive,
+  isDriving,
+  selectedCount,
+  onToggle,
+  onSetDriving,
+}: AvailableTableRowProps) {
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const open = Boolean(anchorEl);
+  const totalCols = table.colCount ?? table.columns?.length ?? 0;
+
+  const handleMenuClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+  };
+
+  const handleMakeDrivingTable = (event: React.MouseEvent) => {
+    event.stopPropagation();
+    if (!isActive) return;
+    onSetDriving();
+    setAnchorEl(null);
+  };
+
+  return (
+    <AiaBox
+      sx={{
+        borderBottom: "1px solid #e2e8f0",
+        py: 0.75,
+      }}
+    >
+      <AiaBox
+        sx={{
+          display: "flex",
+          alignItems: "flex-start",
+          gap: 1,
+        }}
+      >
+        <AiaCheckbox
+          checked={isActive}
+          checkHandler={onToggle}
+          uncheckedColor="var(--aia-primary-bg-color)"
+          checkedColor="var(--aia-primary-bg-color)"
+        />
+        <AiaBox sx={{ flex: 1, minWidth: 0 }}>
+          <AiaBox
+            sx={{
+              display: "flex",
+              flexWrap: "wrap",
+              alignItems: "center",
+              gap: 0.75,
+              minWidth: 0,
+            }}
+          >
+            <AiaBox
+              sx={{
+                display: "flex",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 0.75,
+                minWidth: 0,
+              }}
+            >
+              <AiaText
+                component="span"
+                sx={{
+                  ...BODY_SX,
+                  color: TYPOGRAPHY_TOKENS.body.color,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  whiteSpace: "normal",
+                  overflowWrap: "anywhere",
+                  wordBreak: "break-word",
+                  minWidth: 0,
+                }}
+              >
+                {table.name}
+              </AiaText>
+              {isDriving ? (
+                <AiaChip
+                  label="Driving"
+                  size="small"
+                  color="warning"
+                  customBackgroundColor="#fef08a"
+                  customColor="#854d0e"
+                  customBorderColor="#fde047"
+                  sx={{
+                    height: 22,
+                    fontSize: 10,
+                    fontWeight: 700,
+                    flexShrink: 0,
+                    alignSelf: "center",
+                    "& .MuiChip-label": { px: 0.75, py: 0 },
+                  }}
+                />
+              ) : null}
+            </AiaBox>
+            {isDerivedTableMeta(table) ? (
+              <AiaChip label="Derived" size="small" color="success" sx={{ alignSelf: "center" }} />
+            ) : null}
+          </AiaBox>
+          <AiaText
+            sx={{
+              ...SECONDARY_TEXT_SX,
+              color: TYPOGRAPHY_TOKENS.secondaryText.color,
+              mt: 0,
+              whiteSpace: "normal",
+              overflowWrap: "anywhere",
+              wordBreak: "break-word",
+            }}
+          >
+            {table.database} · {table.schema}
+          </AiaText>
+          <AiaText sx={{ ...CAPTION_SX, mt: 0 }}>
+            {selectedCount}/{totalCols} cols selected for sql
+          </AiaText>
+        </AiaBox>
+        <AiaBox sx={{ ml: 0.5, flexShrink: 0 }} onClick={(e) => e.stopPropagation()}>
+          <AiaIconButton size="small" onClick={handleMenuClick} sx={{ color: "text.secondary" }}>
+            <MoreVertIcon fontSize="small" />
+          </AiaIconButton>
+          <AiaMenu
+            anchorEl={anchorEl}
+            open={open}
+            onClose={handleMenuClose}
+            onClick={(e) => e.stopPropagation()}
+            slotProps={{
+              paper: {
+                sx: {
+                  minWidth: 160,
+                  boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+                  borderRadius: "8px",
+                },
+              },
+            }}
+            transformOrigin={{ horizontal: "right", vertical: "top" }}
+            anchorOrigin={{ horizontal: "right", vertical: "bottom" }}
+          >
+            <AiaMenuItem
+              onClick={handleMakeDrivingTable}
+              disabled={!isActive}
+              sx={{
+                fontSize: "13px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                opacity: !isActive ? 0.5 : 1,
+                filter: !isActive ? "blur(0.5px)" : "none",
+                textTransform: !isActive ? "uppercase" : "none",
+              }}
+            >
+              Mark as driving table
+              {isDriving ? <CheckIcon fontSize="small" sx={{ ml: 2, color: "primary.main" }} /> : null}
+            </AiaMenuItem>
+          </AiaMenu>
+        </AiaBox>
+      </AiaBox>
+    </AiaBox>
+  );
 }
 
 function buildAlias(table: TableMeta, index: number) {
@@ -181,7 +360,23 @@ export function AddDerivedModal({
   draftSource,
   onConfirm,
 }: AddDerivedModalProps) {
-  const { fullData, drivingTableId, relationships, sourceAttributeGroups, derivedSources } = useSttmBuilderContext();
+  const { fullData, sources, drivingTableId, relationships, sourceAttributeGroups, derivedSources, refreshAssistantSignals } = useSttmBuilderContext();
+  const {
+    isOpen: isAssistantOpen,
+    effectiveSidebarWidth,
+    isMobile,
+    isTablet,
+  } = useAiChatLayout();
+  const { registerModalTour, startTour } = useTour();
+
+  useEffect(() => {
+    if (!isOpen) {
+      registerModalTour(null);
+      return;
+    }
+    registerModalTour("sttm-derived-table");
+    return () => registerModalTour(null);
+  }, [isOpen, registerModalTour]);
 
   const availableTables = useMemo<TableMeta[]>(() => {
     const groupsByQualifiedName = new Map(
@@ -189,32 +384,31 @@ export function AddDerivedModal({
     );
     const selectedTables: TableMeta[] = [];
 
-    for (const db of fullData?.sources ?? []) {
-      for (const schema of db.schemas ?? []) {
-        for (const table of schema.tables ?? []) {
-          if (!table.isSelected) continue;
-          const qualifiedName = table.qualifiedName;
-          const columns = normalizeColumns(
-            table.columnItems?.length ? table.columnItems : groupsByQualifiedName.get(qualifiedName),
-            {
-              id: table.tableId,
-              name: table.tableName,
-              schema: schema.schemaName,
-              database: db.dbName,
-            }
-          );
-          selectedTables.push({
-            id: table.tableId,
-            name: table.tableName,
-            schema: schema.schemaName,
-            database: db.dbName,
-            rowCount: table.rows ?? "—",
-            colCount: columns.length || table.columns || 0,
-            columns,
-            tag: "Source",
-          });
+    for (const table of resolveSelectedSourceTables({
+      sourceDatabases: fullData?.sources ?? [],
+      sources,
+    })) {
+      const qualifiedName = table.qualifiedName;
+      const [database = "", schema = ""] = qualifiedName.split(".");
+      const columns = normalizeColumns(
+        table.columnItems?.length ? table.columnItems : groupsByQualifiedName.get(qualifiedName),
+        {
+          id: table.tableId,
+          name: table.tableName,
+          schema,
+          database,
         }
-      }
+      );
+      selectedTables.push({
+        id: table.tableId,
+        name: table.tableName,
+        schema,
+        database,
+        rowCount: table.rows ?? "—",
+        colCount: columns.length || table.columns || 0,
+        columns,
+        tag: "Source",
+      });
     }
 
     const derivedTables: TableMeta[] = (derivedSources ?? [])
@@ -236,7 +430,7 @@ export function AddDerivedModal({
       }));
 
     return [...selectedTables, ...derivedTables];
-  }, [derivedSources, fullData, sourceAttributeGroups]);
+  }, [derivedSources, fullData, sourceAttributeGroups, sources]);
 
   const derivedSourceMap = useMemo(
     () => new Map((derivedSources ?? []).map((source) => [source.id, source])),
@@ -309,6 +503,45 @@ export function AddDerivedModal({
     type: "success" | "error";
     message: string;
   } | null>(null);
+  const [flowHostHeight, setFlowHostHeight] = useState(DERIVED_MODAL_FLOW_HOST_DEFAULT_HEIGHT);
+  const relationshipHeaderRef = useRef<HTMLDivElement>(null);
+  const relationshipLegendRef = useRef<HTMLDivElement>(null);
+
+  const resolveMinFlowHostHeight = useCallback(() => {
+    const headerHeight = relationshipHeaderRef.current?.offsetHeight ?? 48;
+    const legendHeight = relationshipLegendRef.current?.offsetHeight ?? 58;
+    return Math.max(
+      160,
+      DERIVED_MODAL_CANVAS_AREA_MIN_HEIGHT - headerHeight - legendHeight - AIA_RESIZE_HANDLE_THICKNESS,
+    );
+  }, []);
+
+  const handleCanvasResizeMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = flowHostHeight;
+      const minHeight = resolveMinFlowHostHeight();
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const nextHeight = startHeight + (moveEvent.clientY - startY);
+        setFlowHostHeight(Math.max(minHeight, nextHeight));
+      };
+
+      const handleMouseUp = () => {
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+        document.body.style.removeProperty("cursor");
+        document.body.style.removeProperty("user-select");
+      };
+
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    },
+    [flowHostHeight, resolveMinFlowHostHeight],
+  );
 
   const applySqlHydration = (
     sqlText: string,
@@ -575,7 +808,7 @@ export function AddDerivedModal({
         selectedTables.map((table) => table.id as string),
         drivingTable,
         joins,
-        RELATIONSHIP_LAYOUT_COMPACT,
+        RELATIONSHIP_LAYOUT_FULL,
       ),
     [drivingTable, joins, selectedTables],
   );
@@ -584,21 +817,20 @@ export function AddDerivedModal({
     return selectedTables.map((table) => ({
       id: table.id as string,
       type: "tableNode",
-      position: layoutPositions[table.id as string] ?? { x: 32, y: 40 },
+      position: layoutPositions[table.id as string] ?? { x: 48, y: 48 },
       data: {
         label: table.name ?? "—",
         schema: table.schema ?? "—",
         database: table.database ?? "—",
         tag: table.id === drivingTable ? "Driving" : table.tag ?? "Source",
-        tagBg: table.id === drivingTable ? "#fef3c7" : tagChipPalette(table.tag).tagBg,
-        tagFg: table.id === drivingTable ? "#854d0e" : tagChipPalette(table.tag).tagFg,
+        tagBg: tagChipPalette(table.tag ?? "Source").tagBg,
+        tagFg: tagChipPalette(table.tag ?? "Source").tagFg,
         secondaryTag: isDerivedTableMeta(table) ? "Derived" : undefined,
         secondaryTagBg: "#dcfce7",
         secondaryTagFg: "#166534",
         rowCount: table.rowCount ?? "—",
         colCount: table.colCount ?? table.columns?.length ?? 0,
         columns: table.columns ?? [],
-        compact: true,
         selectableColumns: true,
         selectedColumns: selectedColumnsByTable[table.id as string] ?? [],
         showColumnSearch: true,
@@ -622,7 +854,7 @@ export function AddDerivedModal({
         relationshipNodes,
         previousNodes,
         layoutPositions,
-        RELATIONSHIP_LAYOUT_COMPACT,
+        RELATIONSHIP_LAYOUT_FULL,
         {
           joins,
           drivingTableId: drivingTable,
@@ -639,8 +871,8 @@ export function AddDerivedModal({
         if (!first.leftColumn || !first.rightColumn) return null;
         const leftTable = selectedTables.find((table) => table.id === join.leftTableId);
         const rightTable = selectedTables.find((table) => table.id === join.rightTableId);
-        const sourceHandle = resolveRelationshipHandleId(leftTable, first.leftColumn, "source");
-        const targetHandle = resolveRelationshipHandleId(rightTable, first.rightColumn, "target");
+        const sourceHandle = resolveTableHeaderHandleId(leftTable, "source");
+        const targetHandle = resolveTableHeaderHandleId(rightTable, "target");
         if (!sourceHandle || !targetHandle) return null;
         return {
           id: join.id,
@@ -701,8 +933,11 @@ export function AddDerivedModal({
     const rightTableId = params.target;
     const leftColumn = parseRelationshipHandleId(params.sourceHandle, "source");
     const rightColumn = parseRelationshipHandleId(params.targetHandle, "target");
+    const fromHeader =
+      isTableHeaderHandle(params.sourceHandle) || isTableHeaderHandle(params.targetHandle);
 
-    if (!leftTableId || !rightTableId || !leftColumn || !rightColumn) return;
+    if (!leftTableId || !rightTableId) return;
+    if (!fromHeader && (!leftColumn || !rightColumn)) return;
 
     const existing = joins.find(
       (join) => join.leftTableId === leftTableId && join.rightTableId === rightTableId
@@ -713,7 +948,10 @@ export function AddDerivedModal({
         leftTableId,
         rightTableId,
         joinType: "INNER",
-        conditions: [{ leftColumn, operator: "=", rightColumn }],
+        conditions:
+          leftColumn && rightColumn
+            ? [{ leftColumn, operator: "=", rightColumn }]
+            : [{ leftColumn: "", operator: "=", rightColumn: "" }],
       }
     );
     setIsJoinModalOpen(true);
@@ -771,13 +1009,13 @@ export function AddDerivedModal({
       ...previewColumnsState.map((column) => ({
         key: column.name,
         label: (
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
-            <Typography sx={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>
+          <AiaBox sx={{ display: "flex", flexDirection: "column", gap: 0.25 }}>
+            <AiaText sx={{ fontSize: 12, fontWeight: 800, color: "#0f172a" }}>
               {column.name}
-            </Typography>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
+            </AiaText>
+            <AiaBox sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
               {column.isPrimaryKey ? (
-                <Box
+                <AiaBox
                   sx={{
                     px: 0.75,
                     py: 0.15,
@@ -789,9 +1027,9 @@ export function AddDerivedModal({
                   }}
                 >
                   PK
-                </Box>
+                </AiaBox>
               ) : null}
-              <Box
+              <AiaBox
                 sx={{
                   px: 0.75,
                   py: 0.15,
@@ -803,9 +1041,9 @@ export function AddDerivedModal({
                 }}
               >
                 {column.dataType}
-              </Box>
-            </Box>
-          </Box>
+              </AiaBox>
+            </AiaBox>
+          </AiaBox>
         ),
       })),
     ];
@@ -922,6 +1160,26 @@ export function AddDerivedModal({
     relationships: joins.map(toRelationshipPayload),
     filters: filterGroups,
     selected_columns_by_table: selectedColumnsByTable,
+    purpose:
+      draftSource?.purpose ??
+      draftSource?.requestSummary ??
+      `Reusable source relation for ${sourceName.trim()}`,
+    business_description:
+      draftSource?.businessDescription ??
+      draftSource?.requestSummary ??
+      `Derived relation ${sourceName.trim()} generated from the selected source graph.`,
+    grain: draftSource?.grain ?? editingSource?.grain ?? null,
+    keys: draftSource?.keys ?? editingSource?.keys ?? [],
+    output_columns:
+      draftSource?.outputColumns?.length
+        ? draftSource.outputColumns
+        : previewColumnsState.map((column) => ({
+            name: column.name,
+            data_type: column.dataType,
+            is_primary_key: column.isPrimaryKey ?? false,
+          })),
+    column_semantics: draftSource?.columnSemantics ?? editingSource?.columnSemantics ?? [],
+    generated_by_request_id: draftSource?.generatedByRequestId ?? null,
   });
 
   const handleValidateSql = async () => {
@@ -945,6 +1203,9 @@ export function AddDerivedModal({
     try {
       setIsValidating(true);
       const result = await dbService.validateDerivedSource(buildDerivedPayload());
+      if (result.sql_text?.trim() && result.sql_text.trim() !== effectiveSqlExpression.trim()) {
+        setCustomSql(result.sql_text);
+      }
       setPreviewColumnsState(
         (result.preview_columns ?? []).map((column: { name: string; data_type: string; is_primary_key?: boolean }) => ({
           name: column.name,
@@ -1026,6 +1287,16 @@ export function AddDerivedModal({
         semanticViewName: result.semantic_view_name ?? null,
         semanticLevel: result.semantic_level ?? null,
         upstreamHash: result.upstream_hash ?? null,
+        sourceDependencyHash: result.source_dependency_hash ?? null,
+        physicalViewName: result.physical_view_name ?? null,
+        purpose: result.purpose ?? null,
+        businessDescription: result.business_description ?? null,
+        grain: result.grain ?? null,
+        keys: result.keys ?? [],
+        outputColumns: result.output_columns ?? [],
+        columnSemantics: result.column_semantics ?? [],
+        semanticProjection: result.semantic_projection ?? {},
+        semanticQuality: result.semantic_quality ?? null,
         lineageDepth: result.lineage_depth ?? 0,
         drivingTableId: drivingTable ?? undefined,
         tableIds: selectedTableIds,
@@ -1050,6 +1321,7 @@ export function AddDerivedModal({
         previewRows: previewRowsState,
       };
       onConfirm(finalSource);
+      window.setTimeout(() => refreshAssistantSignals("derived_source_saved"), 0);
       onClose();
     } catch (error) {
       const fallback = "Unable to save the derived source right now.";
@@ -1073,15 +1345,47 @@ export function AddDerivedModal({
     { label: "Columns", active: selectedColumnEntries.length > 0 || computedColumns.length > 0 },
   ];
 
+  const derivedCloseButtonSx = {
+    minWidth: 28,
+    width: 28,
+    height: 28,
+    p: 0,
+    fontSize: 14,
+    lineHeight: 1,
+    boxShadow: "none",
+    color: "var(--aia-button-color)",
+    border: "none",
+    backgroundColor: "transparent",
+    "&:hover": {
+      color: "var(--aia-button-color)",
+      border: "none",
+      backgroundColor: "color-mix(in srgb, var(--aia-button-color) 6%, transparent)",
+    },
+  } as const;
+
+  const derivedPrimaryButtonColors = {
+    customBackgroundColor: "var(--aia-primary-bg-color)",
+    customColor: "var(--aia-primary-bg-text-color)",
+    customBorderColor: "var(--aia-primary-bg-color)",
+    customHoverBackgroundColor: "var(--aia-primary-bg-hover-color)",
+  } as const;
+  const assistantDockWidth =
+    isAssistantOpen && !isMobile && !isTablet ? effectiveSidebarWidth : 0;
+
   return (
-    <Dialog
+    <AiaDialog
       open={isOpen}
       onClose={onClose}
       maxWidth="xl"
       fullWidth
       sx={{
+        right: `${assistantDockWidth}px`,
+        transition: "right 220ms ease",
         "& .MuiDialog-paper": {
           height: "90vh",
+          maxWidth: assistantDockWidth
+            ? `min(1536px, calc(100vw - ${assistantDockWidth + 48}px))`
+            : undefined,
           borderRadius: "16px",
           overflow: "hidden",
           display: "flex",
@@ -1089,64 +1393,90 @@ export function AddDerivedModal({
         },
       }}
     >
-      <Box
-        sx={{
-          px: 3,
-          py: 2,
-          borderBottom: "1px solid #e5e7eb",
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-        }}
-      >
-        <Box sx={{ display: "flex", alignItems: "center", gap: 2 }}>
-          <Box
-            sx={{
-              width: 40,
-              height: 40,
-              borderRadius: "50%",
-              backgroundColor: "#065f46",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <AddCircleOutlineRoundedIcon sx={{ color: "white" }} />
-          </Box>
-          <Box>
-            <Typography sx={{ fontSize: 18, fontWeight: 800, color: "#0f172a" }}>
-              Add Derived Table
-            </Typography>
-            <Typography sx={{ fontSize: 13, color: "#64748b" }}>
-              Build a derived source from selected tables, joins, and chosen columns.
-            </Typography>
-          </Box>
-          <Box sx={{ display: "flex", gap: 1, ml: 3, flexWrap: "wrap" }}>
-            {statusItems.map((item) => (
-              <Box
-                key={item.label}
+      <AiaBox sx={{ p: 3, borderBottom: "1px solid #f1f5f9" }}>
+        <AiaBox sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 2 }}>
+          <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1.5, minWidth: 0, flex: 1 }}>
+            <AddCircleIcon
+              sx={{
+                fontSize: "calc(var(--aia-card-title-font-size) + 8px)",
+                color: "var(--aia-card-title-color)",
+                flexShrink: 0,
+              }}
+              aria-hidden
+            />
+            <AiaBox sx={{ minWidth: 0 }}>
+              <AiaText
                 sx={{
-                  px: 1.5,
-                  py: 0.5,
-                  borderRadius: "16px",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  backgroundColor: item.active ? "#ecfdf5" : "#f1f5f9",
-                  color: item.active ? "#059669" : "#64748b",
+                  ...textStyleCssVars("cardTitle"),
+                  textTransform: "capitalize",
+                  letterSpacing: "-0.01em",
                 }}
               >
-                {item.label}
-              </Box>
-            ))}
-          </Box>
-        </Box>
-        <IconButton onClick={onClose}>
-          <CloseRoundedIcon />
-        </IconButton>
-      </Box>
+                Add Derived Table
+              </AiaText>
+              <AiaText
+                sx={{
+                  ...textStyleCssVars("secondaryText"),
+                  mt: 0.25,
+                  display: "block",
+                }}
+              >
+                Build a derived source from selected tables, joins, and chosen columns.
+              </AiaText>
+            </AiaBox>
+            <AiaBox sx={{ display: "flex", gap: 1, ml: 3, flexWrap: "wrap", flexShrink: 0 }}>
+              {statusItems.map((item) => (
+                <AiaChip
+                  key={item.label}
+                  label={item.label}
+                  size="small"
+                  color={item.active ? "success" : "secondary"}
+                  customBackgroundColor={item.active ? "#ecfdf5" : "#f1f5f9"}
+                  customColor={item.active ? "#059669" : "#64748b"}
+                  customBorderColor={item.active ? "#bbf7d0" : "#e2e8f0"}
+                />
+              ))}
+            </AiaBox>
+          </AiaBox>
+          <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1, flexShrink: 0 }}>
+            <AiaButton
+              variant="contained"
+              size="small"
+              onClick={() => startTour("sttm-derived-table")}
+              aria-label="Start Add Derived Table tour guide"
+              sx={{
+                textTransform: "none",
+                fontWeight: 700,
+                fontSize: 13,
+                borderRadius: "10px",
+                px: 1.5,
+                py: 0.6,
+                minHeight: 34,
+                backgroundColor: "var(--aia-primary-bg-color)",
+                color: "var(--aia-primary-bg-text-color)",
+                boxShadow: "none",
+                "&:hover": {
+                  backgroundColor: "var(--aia-primary-bg-hover-color)",
+                },
+              }}
+            >
+              Tour Guide
+            </AiaButton>
+            <AiaButton
+              variant="text"
+              size="small"
+              onClick={onClose}
+              sx={derivedCloseButtonSx}
+              aria-label="Close"
+            >
+              ✕
+            </AiaButton>
+          </AiaBox>
+        </AiaBox>
+      </AiaBox>
 
-      <Box sx={{ display: "flex", flex: 1, minHeight: 0 }}>
-        <Box
+      <AiaBox sx={{ display: "flex", flex: 1, minHeight: 0 }}>
+        <AiaBox
           sx={{
             width: 300,
             borderRight: "1px solid #e2e8f0",
@@ -1156,182 +1486,82 @@ export function AddDerivedModal({
             overflowX: "hidden",
           }}
         >
-          <Box sx={{ p: 2, borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", mb: 1 }}>
-              DERIVED SOURCE NAME
-            </Typography>
-            <InputBase
+          <AiaBox
+            sx={{ p: 2, borderBottom: "1px solid #e2e8f0", flexShrink: 0 }}
+            data-tour={TOUR_TARGETS.derivedSourceName}
+          >
+            <AiaText sx={{ ...DERIVED_SIDEBAR_SECTION_LABEL_SX, mb: 0.75 }}>Derived Source Name</AiaText>
+            <AiaInput
               fullWidth
               value={sourceName}
-              onChange={(event) => setSourceName(event.target.value)}
+              onChange={setSourceName}
               placeholder="e.g. vw_customer_orders"
-              sx={{
-                border: "1px solid #e2e8f0",
-                borderRadius: 1,
-                px: 1.5,
-                py: 0.9,
-                fontSize: 14,
-                backgroundColor: "#ffffff",
-              }}
             />
-          </Box>
+          </AiaBox>
 
-          <Box sx={{ p: 2, flex: 1, overflowY: "auto", overflowX: "hidden", minWidth: 0 }}>
-            <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#94a3b8", mb: 1.5 }}>
-              AVAILABLE TABLES
-            </Typography>
-            <Box sx={{ display: "flex", flexDirection: "column", gap: 1.25 }}>
+          <AiaBox
+            sx={{ p: 2, flex: 1, overflowY: "auto", overflowX: "hidden", minWidth: 0 }}
+            data-tour={TOUR_TARGETS.derivedAvailableTables}
+          >
+            <AiaText sx={{ ...DERIVED_SIDEBAR_SECTION_LABEL_SX, mb: 0.75 }}>Available Tables</AiaText>
+            <AiaBox>
               {availableTables.map((table) => {
                 const isActive = selectedTableIds.includes(table.id as string);
                 const isDriving = drivingTable === table.id;
+                const selectedCount = selectedColumnsByTable[table.id as string]?.length ?? 0;
                 return (
-                  <Box
+                  <AvailableTableRow
                     key={table.id}
-                    onClick={() => toggleTableSelection(table.id as string)}
-                    sx={{
-                      border: "1px solid",
-                      borderColor: isActive ? "#2563eb" : "#e2e8f0",
-                      borderRadius: 2,
-                      px: 1.5,
-                      py: 1.25,
-                      backgroundColor: isActive ? "#eff6ff" : "#ffffff",
-                      cursor: "pointer",
-                      minWidth: 0,
-                      overflow: "hidden",
-                    }}
-                  >
-                    <Box sx={{ display: "flex", gap: 1.25, alignItems: "flex-start" }}>
-                      {isActive ? (
-                        <CheckCircleRoundedIcon sx={{ color: "#2563eb", fontSize: 18, mt: 0.2 }} />
-                      ) : (
-                        <RadioButtonUncheckedRoundedIcon sx={{ color: "#94a3b8", fontSize: 18, mt: 0.2 }} />
-                      )}
-                      <TableChartOutlinedIcon sx={{ color: "#64748b", fontSize: 18, mt: 0.2 }} />
-                      <Box sx={{ minWidth: 0, flex: 1 }}>
-                        <Box
-                          sx={{
-                            display: "flex",
-                            alignItems: "flex-start",
-                            justifyContent: "space-between",
-                            gap: 1,
-                          }}
-                        >
-                          <Typography
-                            sx={{
-                              fontSize: 13,
-                              fontWeight: 700,
-                              color: "#1f2937",
-                              whiteSpace: "normal",
-                              overflowWrap: "anywhere",
-                              wordBreak: "break-word",
-                              lineHeight: 1.2,
-                              minWidth: 0,
-                              flex: 1,
-                            }}
-                          >
-                            {table.name}
-                          </Typography>
-                          {isDerivedTableMeta(table) ? (
-                            <Box
-                              sx={{
-                                px: 0.85,
-                                py: 0.2,
-                                borderRadius: "999px",
-                                backgroundColor: "#dcfce7",
-                                color: "#166534",
-                                fontSize: 10,
-                                fontWeight: 800,
-                                lineHeight: 1.2,
-                                flexShrink: 0,
-                              }}
-                            >
-                              Derived
-                            </Box>
-                          ) : null}
-                        </Box>
-                        <Typography
-                          sx={{
-                            fontSize: 11,
-                            color: "#6b7280",
-                            whiteSpace: "normal",
-                            overflowWrap: "anywhere",
-                            wordBreak: "break-word",
-                            lineHeight: 1.35,
-                          }}
-                        >
-                          {table.schema} · {table.database}
-                        </Typography>
-                        <Typography sx={{ fontSize: 11, color: "#94a3b8", mt: 0.25 }}>
-                          {table.colCount} cols
-                        </Typography>
-                      </Box>
-                    </Box>
-                    {isActive ? (
-                      <Box sx={{ display: "flex", justifyContent: "space-between", mt: 1.25 }}>
-                        <Typography sx={{ fontSize: 10, color: "#64748b" }}>
-                          {selectedColumnsByTable[table.id as string]?.length ?? 0} selected for SQL
-                        </Typography>
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            setDrivingTable(table.id as string);
-                          }}
-                          style={{
-                            border: "none",
-                            background: "none",
-                            color: isDriving ? "#b45309" : "#2563eb",
-                            fontSize: 10,
-                            fontWeight: 700,
-                            cursor: "pointer",
-                          }}
-                        >
-                          {isDriving ? "Driving table" : "Set driving"}
-                        </button>
-                      </Box>
-                    ) : null}
-                  </Box>
+                    table={table}
+                    isActive={isActive}
+                    isDriving={isDriving}
+                    selectedCount={selectedCount}
+                    onToggle={() => toggleTableSelection(table.id as string)}
+                    onSetDriving={() => setDrivingTable(table.id as string)}
+                  />
                 );
               })}
-            </Box>
-          </Box>
-        </Box>
+            </AiaBox>
+          </AiaBox>
+        </AiaBox>
 
-        <Box sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
-          <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-          <Box sx={{ display: "flex", flexDirection: "column", bgcolor: "#ffffff", borderBottom: "1px solid #e2e8f0" }}>
-            <Box sx={{ display: "flex", borderBottom: "1px solid #e2e8f0", px: 3, pt: 2, gap: 3, bgcolor: "#ffffff" }}>
-              <Box
+        <AiaBox sx={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+          <AiaBox sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+          <AiaBox sx={{ display: "flex", flexDirection: "column", bgcolor: "#ffffff", borderBottom: "1px solid #e2e8f0" }}>
+            <AiaBox sx={{ display: "flex", borderBottom: "1px solid #e2e8f0", px: 3, pt: 2, gap: 3, bgcolor: "#ffffff" }}>
+              <AiaBox
                 onClick={() => setActiveTab("SQL")}
+                data-tour={TOUR_TARGETS.derivedSqlViewTab}
                 sx={{
                   pb: 1.5,
                   borderBottom: activeTab === "SQL" ? "2px solid #22c55e" : "2px solid transparent",
                   cursor: "pointer",
                 }}
               >
-                <Typography sx={{ fontSize: 13, fontWeight: 700, color: activeTab === "SQL" ? "#0f172a" : "#64748b" }}>
+                <AiaText sx={{ fontSize: 13, fontWeight: 700, color: activeTab === "SQL" ? "#0f172a" : "#64748b" }}>
                   SQL View
-                </Typography>
-              </Box>
-              <Box
+                </AiaText>
+              </AiaBox>
+              <AiaBox
                 onClick={() => setActiveTab("Preview")}
+                data-tour={TOUR_TARGETS.derivedColumnsPreviewTab}
                 sx={{
                   pb: 1.5,
                   borderBottom: activeTab === "Preview" ? "2px solid #22c55e" : "2px solid transparent",
                   cursor: "pointer",
                 }}
               >
-                <Typography sx={{ fontSize: 13, fontWeight: 700, color: activeTab === "Preview" ? "#0f172a" : "#64748b" }}>
+                <AiaText sx={{ fontSize: 13, fontWeight: 700, color: activeTab === "Preview" ? "#0f172a" : "#64748b" }}>
                   Resulting Columns Preview
-                </Typography>
-              </Box>
-            </Box>
+                </AiaText>
+              </AiaBox>
+            </AiaBox>
 
-            <Box sx={{ flex: 1, minHeight: 0, p: 3, width: "100%" }}>
+            <AiaBox sx={{ flex: 1, minHeight: 0, p: 3, width: "100%" }}>
               {activeTab === "SQL" ? (
-                <Box sx={{ display: "flex", flexDirection: "column", gap: 1.5, width: "100%" }}>
+                <AiaBox sx={{ display: "flex", flexDirection: "column", gap: 1.5, width: "100%" }}>
                   {validationState ? (
-                    <Box
+                    <AiaBox
                       sx={{
                         px: 1.5,
                         py: 1,
@@ -1343,19 +1573,21 @@ export function AddDerivedModal({
                       }}
                     >
                       {validationState.message}
-                    </Box>
+                    </AiaBox>
                   ) : null}
-                  <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
+                  <AiaBox sx={{ display: "flex", gap: 1, flexWrap: "wrap", alignItems: "center" }}>
                     <AiaButton
-                      variant="contained"
+                      variant="outlined"
                       size="small"
-                      rounded="full"
+                      color="primary"
                       onClick={handleApplySqlToBuilder}
+                      customBorderColor="var(--aia-primary-bg-color)"
+                      customColor="var(--aia-primary-bg-color)"
                     >
                       Apply To Builder
                     </AiaButton>
-                  </Box>
-                  <Box sx={{ width: '100%', flexShrink: 0 }}>
+                  </AiaBox>
+                  <AiaBox sx={{ width: '100%', flexShrink: 0 }}>
                     <SqlEditor
                       value={effectiveSqlExpression}
                       onChange={setCustomSql}
@@ -1364,6 +1596,10 @@ export function AddDerivedModal({
                       showCopy
                       showUpload
                       showFunctionLibrary
+                      functionLibraryTourTargets={{
+                        library: TOUR_TARGETS.derivedFunctionLibrary,
+                        panel: TOUR_TARGETS.derivedFunctionPanel,
+                      }}
                       minHeight={SQL_EDITOR_DERIVED_HEIGHT}
                       maxHeight={SQL_EDITOR_DERIVED_HEIGHT}
                       sx={{ width: '100%' }}
@@ -1394,15 +1630,15 @@ export function AddDerivedModal({
                         });
                       }}
                     />
-                  </Box>
-                  <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                  </AiaBox>
+                  <AiaBox sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
                     {detectedFunctions.length > 0 ? (
-                      <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                        <Typography sx={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>
+                      <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                        <AiaText sx={{ fontSize: 11, color: "#94a3b8", fontWeight: 700 }}>
                           FUNCTIONS
-                        </Typography>
+                        </AiaText>
                         {detectedFunctions.map((fn) => (
-                          <Box
+                          <AiaBox
                             key={`${fn.category}-${fn.name}`}
                             sx={{
                               px: 1,
@@ -1415,33 +1651,33 @@ export function AddDerivedModal({
                             }}
                           >
                             {fn.name}
-                          </Box>
+                          </AiaBox>
                         ))}
-                      </Box>
+                      </AiaBox>
                     ) : null}
                     {(queryClauses.groupBy.length > 0 || queryClauses.orderBy.length > 0 || queryClauses.having) ? (
-                      <Box sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
+                      <AiaBox sx={{ display: "flex", gap: 2, flexWrap: "wrap" }}>
                         {queryClauses.groupBy.length > 0 ? (
-                          <Typography sx={{ fontSize: 11, color: "#cbd5e1" }}>
+                          <AiaText sx={{ fontSize: 11, color: "#cbd5e1" }}>
                             <strong>GROUP BY:</strong> {queryClauses.groupBy.join(", ")}
-                          </Typography>
+                          </AiaText>
                         ) : null}
                         {queryClauses.having ? (
-                          <Typography sx={{ fontSize: 11, color: "#cbd5e1" }}>
+                          <AiaText sx={{ fontSize: 11, color: "#cbd5e1" }}>
                             <strong>HAVING:</strong> {queryClauses.having}
-                          </Typography>
+                          </AiaText>
                         ) : null}
                         {queryClauses.orderBy.length > 0 ? (
-                          <Typography sx={{ fontSize: 11, color: "#cbd5e1" }}>
+                          <AiaText sx={{ fontSize: 11, color: "#cbd5e1" }}>
                             <strong>ORDER BY:</strong> {queryClauses.orderBy.join(", ")}
-                          </Typography>
+                          </AiaText>
                         ) : null}
-                      </Box>
+                      </AiaBox>
                     ) : null}
                     {computedColumns.length > 0 ? (
-                      <Box sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
+                      <AiaBox sx={{ display: "flex", gap: 1, flexWrap: "wrap" }}>
                         {computedColumns.map((column) => (
-                          <Box
+                          <AiaBox
                             key={column.alias}
                             sx={{
                               px: 1,
@@ -1455,14 +1691,14 @@ export function AddDerivedModal({
                             title={column.expression}
                           >
                             {column.alias}
-                          </Box>
+                          </AiaBox>
                         ))}
-                      </Box>
+                      </AiaBox>
                     ) : null}
-                  </Box>
-                </Box>
+                  </AiaBox>
+                </AiaBox>
               ) : (
-                <Box
+                <AiaBox
                   sx={{
                     height: "100%",
                     bgcolor: "#ffffff",
@@ -1474,14 +1710,14 @@ export function AddDerivedModal({
                   }}
                 >
                   {previewColumnsState.length === 0 ? (
-                    <Box sx={{ p: 2.5 }}>
-                      <Typography sx={{ fontSize: 13, color: "#94a3b8" }}>
+                    <AiaBox sx={{ p: 2.5 }}>
+                      <AiaText sx={{ fontSize: 13, color: "#94a3b8" }}>
                         Validate the SQL to preview the resulting schema and sample rows from Snowflake.
-                      </Typography>
-                    </Box>
+                      </AiaText>
+                    </AiaBox>
                   ) : (
                     <>
-                      <Box
+                      <AiaBox
                         sx={{
                           px: 2,
                           py: 1.5,
@@ -1493,8 +1729,8 @@ export function AddDerivedModal({
                           flexWrap: "wrap",
                         }}
                       >
-                        <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
-                          <Typography
+                        <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap" }}>
+                          <AiaText
                             sx={{
                               fontSize: 11,
                               fontWeight: 700,
@@ -1503,9 +1739,9 @@ export function AddDerivedModal({
                             }}
                           >
                             SOURCES:
-                          </Typography>
+                          </AiaText>
                           {selectedTables.map((table) => (
-                            <Box
+                            <AiaBox
                               key={table.id}
                               sx={{
                                 px: 1.5,
@@ -1518,15 +1754,15 @@ export function AddDerivedModal({
                               }}
                             >
                               {table.name}
-                            </Box>
+                            </AiaBox>
                           ))}
-                        </Box>
-                        <Typography sx={{ fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>
+                        </AiaBox>
+                        <AiaText sx={{ fontSize: 11, color: "#94a3b8", fontWeight: 600 }}>
                           {previewColumnsState.length} columns · {previewRowsState.length} sample rows
-                        </Typography>
-                      </Box>
+                        </AiaText>
+                      </AiaBox>
 
-                      <Box sx={{ flex: 1, overflow: "auto" }}>
+                      <AiaBox sx={{ flex: 1, overflow: "auto" }}>
                           <AiaTable columns={previewColumns}>
                             {previewRows.map((row) => (
                               <tr key={row.index} style={{ borderBottom: "1px solid #f1f5f9" }}>
@@ -1556,66 +1792,67 @@ export function AddDerivedModal({
                             </tr>
                           ))}
                         </AiaTable>
-                      </Box>
+                      </AiaBox>
                     </>
                   )}
-                </Box>
+                </AiaBox>
               )}
-            </Box>
-          </Box>
+            </AiaBox>
+          </AiaBox>
 
-          <Box sx={{ p: 3, borderBottom: "1px solid #e2e8f0" }}>
-            <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center", mb: 2 }}>
-              <Box>
-                <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
-                  Table Relationships
-                </Typography>
-                <Typography sx={{ fontSize: 12, color: "#64748b", mt: 0.5 }}>
-                  Add tables from the left, connect matching columns, and choose the columns that should appear in the derived source.
-                </Typography>
-              </Box>
-              <AiaButton
-                variant="outlined"
-                size="small"
-                rounded="full"
-                onClick={() => {
-                  setEditingJoin(null);
-                  setIsJoinModalOpen(true);
-                }}
-                disabled={selectedTables.length < 2}
-              >
-                + Add Join
-              </AiaButton>
-            </Box>
-
-            <Box
-              sx={{
-                height: 400,
-                border: "1px solid #e2e8f0",
-                borderRadius: "12px",
-                overflow: "hidden",
-                bgcolor: "#ffffff",
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              {selectedTables.length === 0 ? (
-                <Box
-                  sx={{
-                    height: "100%",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    color: "#94a3b8",
-                    fontSize: 14,
-                    px: 4,
-                    textAlign: "center",
+          <AiaBox sx={{ px: 3, py: 3, borderBottom: "1px solid #e2e8f0" }}>
+            <div className="canvas-area">
+              <div ref={relationshipHeaderRef} className="canvas-area__header">
+                <div className="canvas-area__title">
+                  <AllInclusiveIcon
+                    sx={{
+                      fontSize: "calc(var(--aia-card-title-font-size) + 2px)",
+                      color: "var(--aia-card-title-color)",
+                      flexShrink: 0,
+                    }}
+                    aria-hidden
+                  />
+                  <AiaText
+                    sx={{
+                      ...textStyleCssVars("cardTitle"),
+                      textTransform: "capitalize",
+                      letterSpacing: "-0.01em",
+                    }}
+                  >
+                    Table relationships
+                  </AiaText>
+                  <AiaChip
+                    size="small"
+                    color="primary"
+                    label={joins.length === 1 ? "1 join" : `${joins.length} joins`}
+                  />
+                </div>
+                <AiaButton
+                  size="small"
+                  variant="outlined"
+                  startIcon={<AddIcon sx={{ fontSize: 18 }} />}
+                  onClick={() => {
+                    setEditingJoin(null);
+                    setIsJoinModalOpen(true);
                   }}
+                  disabled={selectedTables.length === 0}
+                  sx={{ minWidth: 0, boxShadow: "none" }}
+                  customBorderColor="var(--aia-state-success-color)"
+                  customColor="var(--aia-state-success-color)"
+                  customHoverBackgroundColor="var(--aia-state-success-hover-bg)"
                 >
-                  Select one or more source tables from the left. They will appear here for join design and column selection.
-                </Box>
-              ) : (
-                <Box sx={{ flex: 1, minHeight: 0 }}>
+                  Add Join
+                </AiaButton>
+              </div>
+
+              <div className="canvas-area__flow-host" style={{ height: flowHostHeight }}>
+                {nodes.length === 0 ? (
+                  <div className="canvas-area__empty" aria-hidden>
+                    <div className="canvas-area__empty-inner">
+                      Select one or more source tables from the left. They will appear here for join design and column selection.
+                    </div>
+                  </div>
+                ) : null}
                 <RelationshipFlowView
                   nodes={nodes}
                   edges={edges}
@@ -1623,99 +1860,106 @@ export function AddDerivedModal({
                   onEdgesChange={onEdgesChange}
                   onConnect={onConnect}
                 />
-                </Box>
-              )}
-            </Box>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1, flexWrap: "wrap", mt: 1.5 }}>
-              <Typography sx={{ fontSize: 11, fontWeight: 800, color: "#111827", letterSpacing: "0.08em" }}>
-                LEGEND:
-              </Typography>
-              {[
-                ["INNER JOIN", "#111827"],
-                ["LEFT JOIN", "#1d4ed8"],
-                ["RIGHT JOIN", "#0f766e"],
-                ["FULL JOIN", "#7c3aed"],
-              ].map(([label, backgroundColor]) => (
-                <Box
-                  key={label}
-                  sx={{
-                    px: 1.25,
-                    py: 0.4,
-                    borderRadius: 1,
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: "#ffffff",
-                    backgroundColor,
-                  }}
-                >
-                  {label}
-                </Box>
-              ))}
-            </Box>
-          </Box>
+              </div>
 
-          <Box sx={{ p: 3, borderBottom: "1px solid #e2e8f0" }}>
+              <AiaResizeHandle
+                className="canvas-area__resize-handle"
+                direction="vertical"
+                onMouseDown={handleCanvasResizeMouseDown}
+              />
+
+              <div ref={relationshipLegendRef} className="canvas-legend">
+                <div className="canvas-legend__row">
+                  <span className="canvas-legend__label">LEGEND:</span>
+                  {JOIN_LEGEND.map((item) => (
+                    <AiaChip
+                      key={item.label}
+                      label={item.label}
+                      size="small"
+                      customColor={item.bg}
+                      customBackgroundColor={`color-mix(in srgb, ${item.bg} 12%, #ffffff)`}
+                      customBorderColor={`color-mix(in srgb, ${item.bg} 30%, #ffffff)`}
+                    />
+                  ))}
+                  <span className="canvas-legend__hint">
+                    <span className="canvas-legend__dash" />
+                    No join — click + Add Join or connect column handles
+                  </span>
+                  <span className="canvas-legend__key">
+                    <KeyIcon sx={{ fontSize: 18, color: "#ca8a04" }} />
+                    Primary Key
+                  </span>
+                  <span className="canvas-legend__key">
+                    <LinkIcon sx={{ fontSize: 18, color: "#9ca3af" }} />
+                    Foreign Key
+                  </span>
+                </div>
+              </div>
+            </div>
+          </AiaBox>
+
+          <AiaBox sx={{ p: 3, borderBottom: "1px solid #e2e8f0" }}>
             <FilterConditions
               tables={selectedTables}
               initialGroups={filterGroups}
-              initialGroupBy={queryClauses.groupBy}
-              initialOrderBy={queryClauses.orderBy}
               previewSql={effectiveSqlExpression}
               previewLabel="DERIVED SOURCE SQL PREVIEW"
               showPreview={false}
-              onQueryChange={({ groups, whereSql, groupBy, orderBy, groupBySql, orderBySql }) => {
+              onQueryChange={({ groups, whereSql }) => {
                 setFilterGroups(groups);
                 setFilterSql(whereSql);
-                setQueryClauses({
-                  groupBy: groupBy.map((item) => item.field).filter(Boolean),
-                  having: queryClauses.having,
-                  orderBy: orderBy
-                    .filter((item) => item.field)
-                    .map((item) => `${item.field} ${item.direction}`),
-                });
-                if (!whereSql && !groupBySql && !orderBySql) {
+                if (!whereSql) {
                   setValidationState((prev) =>
                     prev?.type === "success" ? { type: "success", message: "Query builder updated." } : prev
                   );
                 }
               }}
             />
-          </Box>
-          </Box>
-        </Box>
-      </Box>
+          </AiaBox>
+          </AiaBox>
+        </AiaBox>
+      </AiaBox>
 
-      <Box
+      <AiaBox
         sx={{
           px: 3,
-          py: 2,
-          borderTop: "1px solid #e5e7eb",
+          py: 2.25,
+          borderTop: "1px solid #f1f5f9",
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
         }}
       >
-        <Typography sx={{ fontSize: 12, color: "#64748b" }}>
+        <AiaText sx={{ fontSize: 12, color: "#64748b" }}>
           {selectedColumnEntries.length} columns selected · {joins.length} joins configured
-        </Typography>
-        <Box sx={{ display: "flex", gap: 1 }}>
-          <AiaButton variant="text" size="small" rounded="full" onClick={onClose} customColor="#64748b">
+        </AiaText>
+        <AiaBox sx={{ display: "flex", gap: 1.5 }}>
+          <AiaButton
+            variant="outlined"
+            size="large"
+            onClick={onClose}
+            customBorderColor="var(--aia-primary-bg-color)"
+            customColor="var(--aia-primary-bg-color)"
+          >
             Cancel
           </AiaButton>
           <AiaButton
-            variant="outlined"
-            size="small"
-            rounded="full"
+            variant="contained"
+            size="large"
+            color="primary"
             onClick={handleValidateSql}
             disabled={!selectedTableIds.length || isValidating}
+            data-tour={TOUR_TARGETS.derivedValidateSql}
+            {...derivedPrimaryButtonColors}
           >
             {isValidating ? "Validating..." : "Validate SQL"}
           </AiaButton>
           <AiaButton
             variant="contained"
-            size="small"
-            rounded="full"
+            size="large"
+            color="primary"
             onClick={handleConfirm}
+            data-tour={TOUR_TARGETS.derivedAddTable}
             disabled={
               !sourceName.trim() ||
               selectedTableIds.length === 0 ||
@@ -1724,11 +1968,12 @@ export function AddDerivedModal({
                 previewColumnsState.length === 0) ||
               isSaving
             }
+            {...derivedPrimaryButtonColors}
           >
             {isSaving ? "Saving..." : "Add Derived Table"}
           </AiaButton>
-        </Box>
-      </Box>
+        </AiaBox>
+      </AiaBox>
 
       <JoinModal
         isOpen={isJoinModalOpen}
@@ -1747,6 +1992,6 @@ export function AddDerivedModal({
           });
         }}
       />
-    </Dialog>
+    </AiaDialog>
   );
 }

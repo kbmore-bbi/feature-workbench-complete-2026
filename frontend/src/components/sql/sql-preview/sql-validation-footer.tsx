@@ -1,6 +1,7 @@
 'use client';
+import { AiaBox, AiaButton } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { Box, Button, Typography } from '@mui/material';
 import { SQL_PREVIEW_VALIDATION_FOOTER_SX } from './sql-preview-styles';
 
 export type SqlValidationFooterProps = {
@@ -19,14 +20,14 @@ export function SqlValidationFooter({
   validateDisabled = false,
 }: SqlValidationFooterProps) {
   return (
-    <Box sx={SQL_PREVIEW_VALIDATION_FOOTER_SX}>
-      <Box sx={{ minWidth: 0 }}>
-        <Typography sx={{ fontSize: '0.8rem', fontWeight: 700, color: '#f8fafc' }}>
+    <AiaBox sx={SQL_PREVIEW_VALIDATION_FOOTER_SX}>
+      <AiaBox sx={{ minWidth: 0 }}>
+        <AiaText sx={{ fontSize: '0.8rem', fontWeight: 700, color: '#f8fafc' }}>
           {title}
-        </Typography>
-        <Typography sx={{ fontSize: '0.74rem', color: '#94a3b8' }}>{message}</Typography>
-      </Box>
-      <Button
+        </AiaText>
+        <AiaText sx={{ fontSize: '0.74rem', color: '#94a3b8' }}>{message}</AiaText>
+      </AiaBox>
+      <AiaButton
         variant="contained"
         size="small"
         disabled={validateDisabled}
@@ -45,7 +46,7 @@ export function SqlValidationFooter({
         }}
       >
         {actionLabel}
-      </Button>
-    </Box>
+      </AiaButton>
+    </AiaBox>
   );
 }

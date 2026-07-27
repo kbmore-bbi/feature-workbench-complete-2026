@@ -10,6 +10,8 @@ from app.schema.sttm_builder import RelationshipContextItem, SemanticContextItem
 
 
 class DbtConversionRequest(BaseModel):
+    project_id: str | None = None
+    sttm_id: str | None = None
     project_name: str | None = None
     domain_name: str | None = None
     target_layer: Literal["raw", "curated", "mart"] | str | None = None
@@ -62,4 +64,7 @@ class DbtConversionResponse(BaseModel):
     domain_name: str | None = None
     target_layer: str | None = None
     branch: str = "main"
-
+    retrieved_inference_ids: list[str] = Field(default_factory=list)
+    retrieved_recommendation_ids: list[str] = Field(default_factory=list)
+    used_inference_ids: list[str] = Field(default_factory=list)
+    used_recommendation_ids: list[str] = Field(default_factory=list)

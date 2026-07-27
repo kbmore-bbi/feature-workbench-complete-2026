@@ -1,8 +1,11 @@
-import { Box, TableCell, Typography } from '@mui/material';
+import { AiaBox, AiaTableCellPrimitive } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+
 import type { SxProps, Theme } from '@mui/material/styles';
 import { aiaTableCellSx } from '@/components/ui/aia-table';
 import type { MappingState } from '@/features/sttm/types/sttm.types';
 import { buildMappingDataPreview } from '../mapping-utils';
+import { MAPPING_TABLE_BODY_TEXT_SX } from '../mapping-table-styles';
 import { MappingDataPreviewValuePill } from './mapping-data-preview-value-pill';
 
 type MappingDataPreviewCellProps = {
@@ -22,15 +25,15 @@ export function MappingDataPreviewCell({
 
   if (!preview.displayValue || mapping.status !== 'MAPPED') {
     return (
-      <TableCell sx={aiaTableCellSx({ width, minWidth, sx })}>
-        <Typography sx={{ fontSize: '0.78rem', color: '#94a3b8' }}>—</Typography>
-      </TableCell>
+      <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx })}>
+        <AiaText sx={{ ...MAPPING_TABLE_BODY_TEXT_SX, color: '#94a3b8' }}>—</AiaText>
+      </AiaTableCellPrimitive>
     );
   }
 
   return (
-    <TableCell sx={aiaTableCellSx({ width, minWidth, sx })}>
-      <Box sx={{ minWidth: 0 }}>
+    <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx })}>
+      <AiaBox sx={{ minWidth: 0 }}>
         {preview.hasTransform ? (
           <MappingDataPreviewValuePill
             value={preview.transformedValue}
@@ -43,7 +46,7 @@ export function MappingDataPreviewCell({
             variant="mapped"
           />
         )}
-      </Box>
-    </TableCell>
+      </AiaBox>
+    </AiaTableCellPrimitive>
   );
 }

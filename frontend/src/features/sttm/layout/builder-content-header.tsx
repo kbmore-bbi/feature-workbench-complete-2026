@@ -1,9 +1,12 @@
 "use client";
+import { AiaBox } from '@/components/ui';
 
-import { Box, Button } from "@mui/material";
+import { AiaButton } from "@/components/ui/aia-button";
+import { CLIENT_CONFIG as config } from "@/config/client.config";
 import { EastRoundedIcon, PublishRoundedIcon } from '@/utils/icons';
 import { BuilderHeaderStatsPill } from "./builder-header-stats-pill";
 import { BuilderStepNav, type BuilderStepId } from "./builder-step-nav";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
 
 type BuilderContentHeaderProps = {
   currentStep: BuilderStepId;
@@ -18,33 +21,21 @@ type BuilderContentHeaderProps = {
   nextDisabled?: boolean;
 };
 
-const nextButtonSx = {
-  height: 36,
+const headerActionStrokeColor = config.branding.colors.button.secondary;
+
+export const builderHeaderActionStrokeColor = headerActionStrokeColor;
+
+export const builderHeaderActionButtonSx = {
   minWidth: 0,
-  px: 2,
-  borderRadius: "5px",
-  backgroundColor: "#0f172a",
-  border: "1px solid #0f172a",
-  color: "#ffffff",
-  fontSize: "12px",
-  fontWeight: 700,
-  whiteSpace: "nowrap",
-  textTransform: "none",
-  boxShadow: "none",
   gap: 0.5,
   flexShrink: 0,
-  "&:hover": {
-    backgroundColor: "#1e293b",
-    borderColor: "#1e293b",
-    boxShadow: "none",
-  },
-  "&.Mui-disabled": {
-    color: "#ffffff",
-    backgroundColor: "#64748b",
-    borderColor: "#64748b",
-    opacity: 0.7,
+  transition: "transform 0.15s ease",
+  "&:hover:not(.Mui-disabled)": {
+    transform: "scale(0.96)",
   },
 } as const;
+
+const nextButtonSx = builderHeaderActionButtonSx;
 
 export default function BuilderContentHeader({
   currentStep,
@@ -76,7 +67,7 @@ export default function BuilderContentHeader({
     );
 
   return (
-    <Box
+    <AiaBox
       sx={{
         width: "100%",
         minHeight: embedded ? 44 : 54,
@@ -89,9 +80,13 @@ export default function BuilderContentHeader({
         backgroundColor: embedded ? "transparent" : "var(--color-surface)",
       }}
     >
-      <BuilderStepNav currentStep={currentStep} onStepChange={onStepChange} />
+      <BuilderStepNav
+        currentStep={currentStep}
+        onStepChange={onStepChange}
+        tone={embedded ? "header" : "default"}
+      />
 
-      <Box
+      <AiaBox
         sx={{
           display: "flex",
           alignItems: "center",
@@ -103,36 +98,48 @@ export default function BuilderContentHeader({
       >
         {statsPill}
         {currentStep === 1 ? (
-          <Button
-            variant="contained"
+          <AiaButton
+            data-tour={TOUR_TARGETS.sttmNextButton}
+            variant="outlined"
+            rounded="sm"
+            size="large"
+            customColor={headerActionStrokeColor}
             endIcon={<EastRoundedIcon sx={{ fontSize: 14 }} />}
             onClick={onNext}
             disabled={nextDisabled}
             sx={nextButtonSx}
           >
             Next
-          </Button>
+          </AiaButton>
         ) : currentStep === 2 ? (
-          <Button
-            variant="contained"
+          <AiaButton
+            data-tour={TOUR_TARGETS.sttmNextButton}
+            variant="outlined"
+            rounded="sm"
+            size="large"
+            customColor={headerActionStrokeColor}
             endIcon={<EastRoundedIcon sx={{ fontSize: 14 }} />}
             onClick={onNext}
             sx={nextButtonSx}
           >
             Next
-          </Button>
+          </AiaButton>
         ) : (
-          <Button
-            variant="contained"
+          <AiaButton
+            data-tour={TOUR_TARGETS.sttmSummaryPublishMapping}
+            variant="outlined"
+            rounded="sm"
+            size="large"
+            customColor={headerActionStrokeColor}
             endIcon={<PublishRoundedIcon sx={{ fontSize: 14 }} />}
             onClick={onPublish}
             sx={nextButtonSx}
           >
             Publish Mapping
-          </Button>
+          </AiaButton>
         )}
-      </Box>
-    </Box>
+      </AiaBox>
+    </AiaBox>
   );
 }
 

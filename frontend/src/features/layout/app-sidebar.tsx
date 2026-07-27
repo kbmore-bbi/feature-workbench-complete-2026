@@ -1,25 +1,30 @@
 "use client";
+import { AiaBox, AiaIconButton, AiaTooltip } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   AccountTreeRoundedIcon,
-  AddRoundedIcon,
+  AdminPanelSettingsRoundedIcon,
   DashboardRoundedIcon,
   FolderRoundedIcon,
-  KeyboardArrowDownRoundedIcon,
   KeyboardDoubleArrowLeftRoundedIcon,
   KeyboardDoubleArrowRightRoundedIcon,
 } from "@/utils/icons";
-import { Box, Button, IconButton, Tooltip, Typography } from "@mui/material";
 import NewMappingDialog from "@/features/dashboard/NewMappingDialog";
 import type { AppNavItem } from "./app-sidebar-types";
 import { APP_NAV_ROUTES, resolveAppNavItem } from "./app-sidebar-types";
 import { useAppSidebar } from "./app-sidebar-context";
+import { SIDEBAR_NAV_TOKENS } from "@/config/sidebar-nav-tokens";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+import { useAppDispatch } from "@/store/hooks";
+import { resetBuilderForNewMapping } from "@/features/sttm/store/sttm-builder-slice";
+import { markExplicitNewDraftIntent } from "@/features/sttm/context/sttm-session-intent";
 
 export const EXPANDED_APP_SIDEBAR_WIDTH = 260;
-export const COLLAPSED_APP_SIDEBAR_WIDTH = 54;
+export const COLLAPSED_APP_SIDEBAR_WIDTH = 70;
 
 const navItems: Array<{
   label: AppNavItem;
@@ -30,6 +35,11 @@ const navItems: Array<{
     label: "Dashboard",
     href: APP_NAV_ROUTES.Dashboard,
     icon: DashboardRoundedIcon,
+  },
+  {
+    label: "Administration",
+    href: APP_NAV_ROUTES.Administration,
+    icon: AdminPanelSettingsRoundedIcon,
   },
   {
     label: "Projects",
@@ -71,40 +81,60 @@ type SidebarNavItemProps = {
 
 function SidebarNavItem({ href, label, icon: Icon, isActive, collapsed }: SidebarNavItemProps) {
   const linkBody = (
-    <Box
-      className={`flex h-[42px] w-full items-center rounded-xl ${
-        collapsed ? "justify-center px-0" : "px-3"
+    <AiaBox
+      className={`flex w-full items-center rounded-xl ${
+        collapsed ? "justify-center px-0" : ""
       }`}
       sx={{
+        height: "var(--aia-sidebar-nav-item-height)",
+        px: collapsed ? 0 : "var(--aia-sidebar-nav-padding-x)",
         backgroundColor: isActive ? "#F8FAFC" : "transparent",
         "&:hover": {
           backgroundColor: isActive ? "#F8FAFC" : "#F9FAFB",
         },
       }}
     >
-      <Box className={`flex min-w-0 items-center ${collapsed ? "justify-center" : "gap-3"}`}>
+      <AiaBox
+        className={`flex min-w-0 items-center ${collapsed ? "justify-center" : ""}`}
+        sx={{ gap: collapsed ? 0 : "var(--aia-sidebar-nav-icon-gap)" }}
+      >
         <Icon
           sx={{
-            fontSize: 18,
-            color: isActive ? "#111827" : "#6B7280",
+            fontSize: "var(--aia-sidebar-nav-icon-size)",
+            color: isActive
+              ? "var(--aia-sidebar-nav-active-icon-color)"
+              : "var(--aia-sidebar-nav-icon-color)",
           }}
         />
         {!collapsed ? (
-          <Typography
-            className={`text-[14px] ${
-              isActive ? "font-semibold text-[#111827]" : "font-medium text-[#374151]"
-            }`}
+          <AiaText
+            sx={{
+              fontSize: "var(--aia-sidebar-nav-font-size)",
+              fontWeight: SIDEBAR_NAV_TOKENS.fontWeight,
+              lineHeight: "var(--aia-sidebar-nav-line-height)",
+              color: isActive
+                ? "var(--aia-sidebar-nav-active-text-color)"
+                : "var(--aia-sidebar-nav-text-color)",
+            }}
           >
             {label}
-          </Typography>
+          </AiaText>
         ) : null}
-      </Box>
-    </Box>
+      </AiaBox>
+    </AiaBox>
   );
+
+  const dataTour =
+    label === "Dashboard"
+      ? TOUR_TARGETS.sidebarDashboard
+      : label === "Projects"
+        ? TOUR_TARGETS.sidebarProjects
+        : TOUR_TARGETS.sidebarMappings;
 
   const link = (
     <Link
       href={href}
+      data-tour={dataTour}
       aria-current={isActive ? "page" : undefined}
       style={{
         textDecoration: "none",
@@ -122,11 +152,11 @@ function SidebarNavItem({ href, label, icon: Icon, isActive, collapsed }: Sideba
   }
 
   return (
-    <Tooltip title={label} placement="right">
-      <Box component="span" sx={{ display: "inline-flex", width: "100%" }}>
+    <AiaTooltip title={label} placement="right" arrow>
+      <AiaBox component="span" sx={{ display: "inline-flex", width: "100%" }}>
         {link}
-      </Box>
-    </Tooltip>
+      </AiaBox>
+    </AiaTooltip>
   );
 }
 
@@ -134,6 +164,7 @@ export default function AppSidebar({
   activeNav,
   initialNewMappingOpen = false,
 }: AppSidebarProps) {
+  const dispatch = useAppDispatch();
   const router = useRouter();
   const pathname = usePathname();
   const { collapsed, setCollapsed, hydrated } = useAppSidebar();
@@ -144,7 +175,8 @@ export default function AppSidebar({
 
   return (
     <>
-      <Box
+      <AiaBox
+        data-tour={TOUR_TARGETS.sidebar}
         sx={{
           display: "flex",
           width: hydrated ? sidebarWidth : EXPANDED_APP_SIDEBAR_WIDTH,
@@ -159,25 +191,20 @@ export default function AppSidebar({
           overflow: "hidden",
         }}
       >
-        <Box
+        <AiaBox
           sx={{
             flex: 1,
             minHeight: 0,
             display: "flex",
             flexDirection: "column",
-            px: collapsed ? 1 : 2.5,
+            alignItems: collapsed ? "center" : "stretch",
+            px: collapsed ? 0 : 2.5,
             py: collapsed ? 2 : 3,
             overflow: "hidden",
+            width: "100%",
           }}
         >
-          {!collapsed ? (
-            <Box className="flex h-[38px] items-center justify-between rounded-full bg-[#F3F4F6] px-4">
-              <Typography className="text-[13px] font-medium text-[#111827]">Cortex</Typography>
-              <KeyboardArrowDownRoundedIcon sx={{ fontSize: 18, color: "#4B5563" }} />
-            </Box>
-          ) : null}
-
-          <Box className="flex flex-col gap-1" sx={{ mt: collapsed ? 0 : 4 }}>
+          <AiaBox className="flex flex-col gap-1">
             {navItems.map((item) => (
               <SidebarNavItem
                 key={item.label}
@@ -188,64 +215,17 @@ export default function AppSidebar({
                 collapsed={collapsed}
               />
             ))}
-          </Box>
+          </AiaBox>
 
-          <Box sx={{ mt: 2, display: "flex", justifyContent: collapsed ? "center" : "stretch" }}>
-            {collapsed ? (
-              <Tooltip title="New Mapping" placement="right">
-                <IconButton
-                  aria-label="New Mapping"
-                  onClick={() => setIsNewMappingOpen(true)}
-                  sx={{
-                    width: 36,
-                    height: 36,
-                    bgcolor: "#111827",
-                    color: "#FFFFFF",
-                    border: "1px solid #111827",
-                    "&:hover": {
-                      bgcolor: "#1F2937",
-                      borderColor: "#1F2937",
-                    },
-                  }}
-                >
-                  <AddRoundedIcon sx={{ fontSize: 18 }} />
-                </IconButton>
-              </Tooltip>
-            ) : (
-              <Button
-                variant="contained"
-                fullWidth
-                startIcon={<AddRoundedIcon sx={{ fontSize: 18, color: "#FFFFFF" }} />}
-                onClick={() => setIsNewMappingOpen(true)}
-                sx={{
-                  bgcolor: "#111827",
-                  color: "#FFFFFF",
-                  border: "1px solid #111827",
-                  textTransform: "none",
-                  py: 1.25,
-                  borderRadius: "10px",
-                  fontWeight: 700,
-                  fontSize: "0.875rem",
-                  boxShadow: "none",
-                  "&:hover": {
-                    bgcolor: "#1F2937",
-                    borderColor: "#1F2937",
-                    boxShadow: "none",
-                  },
-                }}
-              >
-                New Mapping
-              </Button>
-            )}
-          </Box>
-        </Box>
+        </AiaBox>
 
-        <Box
+        <AiaBox
           sx={{
-            px: collapsed ? 1 : 1.5,
+            px: collapsed ? 0 : 1.5,
             py: 1,
             display: "flex",
             justifyContent: collapsed ? "center" : "flex-start",
+            width: "100%",
             alignItems: "center",
             flexShrink: 0,
             borderTop: "1px solid #EEF2F7",
@@ -253,26 +233,26 @@ export default function AppSidebar({
           }}
         >
           {collapsed ? (
-            <Tooltip title="Expand sidebar" placement="right">
-              <IconButton
+            <AiaTooltip title="Expand sidebar" placement="right" arrow>
+              <AiaIconButton
                 aria-label="Expand sidebar"
                 onClick={() => setCollapsed(false)}
                 sx={sidebarToggleButtonSx}
               >
                 <KeyboardDoubleArrowRightRoundedIcon sx={{ fontSize: 18 }} />
-              </IconButton>
-            </Tooltip>
+              </AiaIconButton>
+            </AiaTooltip>
           ) : (
-            <IconButton
+            <AiaIconButton
               aria-label="Collapse sidebar"
               onClick={() => setCollapsed(true)}
               sx={sidebarToggleButtonSx}
             >
               <KeyboardDoubleArrowLeftRoundedIcon sx={{ fontSize: 18 }} />
-            </IconButton>
+            </AiaIconButton>
           )}
-        </Box>
-      </Box>
+        </AiaBox>
+      </AiaBox>
 
       <NewMappingDialog
         open={isNewMappingOpen}
@@ -282,8 +262,10 @@ export default function AppSidebar({
             router.replace(APP_NAV_ROUTES.Dashboard);
           }
         }}
-        onBuildManually={() => {
+        onBuildManually={(_details) => {
           setIsNewMappingOpen(false);
+          markExplicitNewDraftIntent();
+          dispatch(resetBuilderForNewMapping());
           router.push("/sttm/builder/new");
         }}
       />

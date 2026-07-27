@@ -1,14 +1,9 @@
 "use client";
+import { AiaBox, AiaButton, AiaLinearProgress, AiaChip, AiaPaper } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useMemo, useState, type ReactNode } from "react";
-import {
-  Box,
-  Button,
-  Chip,
-  LinearProgress,
-  Paper,
-  Typography,
-} from "@mui/material";
+
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 
 const TOKEN_RE =
@@ -69,7 +64,7 @@ function highlightSqlLine(line: string): ReactNode {
 function SqlHighlightedBlock({ sql }: { sql: string }) {
   const lines = sql.split("\n");
   return (
-    <Box
+    <AiaBox
       component="pre"
       sx={{
         m: 0,
@@ -88,7 +83,7 @@ function SqlHighlightedBlock({ sql }: { sql: string }) {
           {idx < lines.length - 1 ? "\n" : null}
         </span>
       ))}
-    </Box>
+    </AiaBox>
   );
 }
 
@@ -173,7 +168,7 @@ export default function MappingQualityPanel({
   const progressValue = totalCount > 0 ? (mappedCount / totalCount) * 100 : 0;
 
   return (
-    <Paper
+    <AiaPaper
       elevation={0}
       sx={{
         height: "100%",
@@ -185,8 +180,8 @@ export default function MappingQualityPanel({
         overflow: "hidden",
       }}
     >
-      <Box sx={{ px: 2, py: 2, borderBottom: "1px solid var(--color-soft-border)" }}>
-        <Typography
+      <AiaBox sx={{ px: 2, py: 2, borderBottom: "1px solid var(--color-soft-border)" }}>
+        <AiaText
           sx={{
             fontSize: "13px",
             fontWeight: 700,
@@ -194,10 +189,10 @@ export default function MappingQualityPanel({
           }}
         >
           Mapping Quality
-        </Typography>
+        </AiaText>
 
-        <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 1, mb: 0.75 }}>
-          <Typography
+        <AiaBox sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", mt: 1, mb: 0.75 }}>
+          <AiaText
             sx={{
               fontSize: "11px",
               fontWeight: 600,
@@ -206,22 +201,11 @@ export default function MappingQualityPanel({
           >
             {mappedCount}/{totalCount}{" "}
             {totalCount > 0 ? `${Math.round((mappedCount / totalCount) * 100)}%` : "0%"}
-          </Typography>
-          <Chip
-            label="Clean"
-            size="small"
-            sx={{
-              height: 20,
-              fontSize: "0.65rem",
-              fontWeight: 700,
-              bgcolor: "#ecfdf5",
-              color: "#059669",
-              border: "1px solid #a7f3d0",
-            }}
-          />
-        </Box>
+          </AiaText>
+          <AiaChip label="Clean" size="small" color="success" />
+        </AiaBox>
 
-        <LinearProgress
+        <AiaLinearProgress
           variant="determinate"
           value={progressValue}
           sx={{
@@ -234,9 +218,9 @@ export default function MappingQualityPanel({
             },
           }}
         />
-      </Box>
+      </AiaBox>
 
-      <Box
+      <AiaBox
         sx={{
           display: "flex",
           gap: 0.75,
@@ -254,7 +238,7 @@ export default function MappingQualityPanel({
           const selected = activeTab === tab.key;
 
           return (
-            <Box
+            <AiaBox
               key={tab.key}
               onClick={() => setActiveTab(tab.key as TabKey)}
               sx={{
@@ -275,15 +259,15 @@ export default function MappingQualityPanel({
               }}
             >
               {tab.label}
-            </Box>
+            </AiaBox>
           );
         })}
-      </Box>
+      </AiaBox>
 
-      <Box sx={{ p: 2, flex: 1 }}>
+      <AiaBox sx={{ p: 2, flex: 1 }}>
         {activeTab === "validate" && (
-          <Box>
-            <Typography
+          <AiaBox>
+            <AiaText
               sx={{
                 fontSize: "11px",
                 color: "var(--color-muted)",
@@ -292,9 +276,9 @@ export default function MappingQualityPanel({
               }}
             >
               Click Run Validation to check type compatibility &amp; mapping coverage.
-            </Typography>
+            </AiaText>
 
-            <Button
+            <AiaButton
               variant="contained"
               fullWidth
               onClick={onRunValidation}
@@ -303,7 +287,7 @@ export default function MappingQualityPanel({
                 borderRadius: "4px",
                 backgroundColor: "var(--aia-mapping-button-color)",
                 border: "1px solid var(--aia-mapping-button-color)",
-                color: "#ffffff",
+                color: "var(--aia-mapping-button-text-color)",
                 fontSize: "12px",
                 fontWeight: 700,
                 textTransform: "none",
@@ -311,17 +295,18 @@ export default function MappingQualityPanel({
                 "&:hover": {
                   backgroundColor: "var(--aia-mapping-button-hoverColor)",
                   borderColor: "var(--aia-mapping-button-hoverColor)",
+                  color: "var(--aia-mapping-button-text-color)",
                   boxShadow: "none",
                 },
               }}
             >
               Run Validation
-            </Button>
-          </Box>
+            </AiaButton>
+          </AiaBox>
         )}
         {activeTab === "sql" && (
-          <Box>
-            <Box
+          <AiaBox>
+            <AiaBox
               sx={{
                 mb: 1.5,
                 display: "flex",
@@ -330,10 +315,10 @@ export default function MappingQualityPanel({
                 gap: 1,
               }}
             >
-              <Typography sx={{ fontSize: "11px", color: "var(--color-muted)" }}>
+              <AiaText sx={{ fontSize: "11px", color: "var(--color-muted)" }}>
                 Generated SQL
-              </Typography>
-              <Button
+              </AiaText>
+              <AiaButton
                 variant="outlined"
                 size="small"
                 onClick={async () => {
@@ -349,10 +334,10 @@ export default function MappingQualityPanel({
                 }}
               >
                 Copy
-              </Button>
-            </Box>
+              </AiaButton>
+            </AiaBox>
 
-            <Box
+            <AiaBox
               sx={{
                 borderRadius: "10px",
                 border: "1px solid rgba(255,255,255,0.08)",
@@ -364,25 +349,25 @@ export default function MappingQualityPanel({
               }}
             >
               <SqlHighlightedBlock sql={generatedSql} />
-            </Box>
-          </Box>
+            </AiaBox>
+          </AiaBox>
         )}
 
         {activeTab === "preview" && (
-          <Box>
-            <Typography
+          <AiaBox>
+            <AiaText
               sx={{
                 fontSize: "11px",
                 color: "var(--color-muted)",
               }}
             >
               Preview content will appear here.
-            </Typography>
-          </Box>
+            </AiaText>
+          </AiaBox>
         )}
 
         
-      </Box>
-    </Paper>
+      </AiaBox>
+    </AiaPaper>
   );
 }

@@ -1,4 +1,6 @@
-import { Box, Typography } from '@mui/material';
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+
 import {
   DATA_PREVIEW_MAPPED_PILL_SX,
   DATA_PREVIEW_RULE_LABEL_SX,
@@ -23,9 +25,9 @@ export function MappingDataPreviewValuePill({
 
   if (!displayValue) {
     return (
-      <Typography sx={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600 }}>
+      <AiaText sx={{ fontSize: '0.78rem', color: '#94a3b8', fontWeight: 600 }}>
         {emptyLabel}
-      </Typography>
+      </AiaText>
     );
   }
 
@@ -37,13 +39,13 @@ export function MappingDataPreviewValuePill({
         : DATA_PREVIEW_TRANSFORMED_PILL_SX;
 
   return (
-    <Box sx={{ minWidth: 0 }}>
-      <Box component="span" sx={pillSx} title={displayValue}>
+    <AiaBox sx={{ minWidth: 0 }}>
+      <AiaBox component="span" sx={pillSx} title={displayValue}>
         {displayValue}
-      </Box>
+      </AiaBox>
       {variant === 'transformed' && ruleLabel ? (
-        <Typography sx={DATA_PREVIEW_RULE_LABEL_SX}>{String(ruleLabel)}</Typography>
+        <AiaText sx={DATA_PREVIEW_RULE_LABEL_SX}>{String(ruleLabel)}</AiaText>
       ) : null}
-    </Box>
+    </AiaBox>
   );
 }

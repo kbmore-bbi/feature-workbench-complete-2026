@@ -1,0 +1,215 @@
+-- ============================================================
+-- FIR (Flywheel Intelligence & Recommendations) CORTEX SEARCH DDL
+-- Views and Cortex Search services for inferences, recommendations,
+-- and specialized agent learnings
+-- ============================================================
+
+-- Database: FFP_HDP_CRM_MIG_DB_DEV
+-- Schema: SCH_STTM_METADATA
+-- Warehouse: FFP_HDP_CRM_MIG_WH_DEV
+
+-- ============================================================
+-- VIEWS FOR CORTEX SEARCH SERVICES
+-- ============================================================
+
+-- ============================================================
+-- V_FIR_INFERENCES: Active inferences from the workbench
+-- ============================================================
+CREATE OR REPLACE VIEW FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.V_FIR_INFERENCES AS
+SELECT
+    INFERENCE_ID,
+    INFERENCE_TYPE,
+    SUMMARY,
+    ENTITY_TYPE,
+    ENTITY_IDS::VARCHAR AS ENTITY_IDS_TEXT,
+    CONFIDENCE,
+    ATTRIBUTES::VARCHAR AS ATTRIBUTES_TEXT,
+    SOURCE,
+    STATUS,
+    CREATED_AT,
+    UPDATED_AT,
+    -- Composite search text for semantic search
+    COALESCE(SUMMARY, '') || ' ' ||
+    COALESCE(INFERENCE_TYPE, '') || ' ' ||
+    COALESCE(ENTITY_TYPE, '') || ' ' ||
+    COALESCE(SOURCE, '') AS SEARCH_TEXT,
+    -- Relevance score based on confidence and recency
+    CONFIDENCE * 0.6 +
+    (1 - LEAST(DATEDIFF('day', CREATED_AT, CURRENT_TIMESTAMP()) / 365.0, 1)) * 0.4 AS RELEVANCE_SCORE
+FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_INFERENCES
+WHERE STATUS = 'active';
+
+-- ============================================================
+-- V_FIR_RECOMMENDATIONS: Pending and approved recommendations
+-- ============================================================
+CREATE OR REPLACE VIEW FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.V_FIR_RECOMMENDATIONS AS
+SELECT
+    RECOMMENDATION_ID,
+    RECOMMENDATION_TYPE,
+    MESSAGE,
+    ENTITY_TYPE,
+    ENTITY_IDS::VARCHAR AS ENTITY_IDS_TEXT,
+    CONFIDENCE,
+    ATTRIBUTES::VARCHAR AS ATTRIBUTES_TEXT,
+    STATUS,
+    REVIEW_STATUS,
+    CREATED_AT,
+    UPDATED_AT,
+    -- Composite search text for semantic search
+    COALESCE(MESSAGE, '') || ' ' ||
+    COALESCE(RECOMMENDATION_TYPE, '') || ' ' ||
+    COALESCE(ENTITY_TYPE, '') AS SEARCH_TEXT,
+    -- Relevance score based on confidence, status, and recency
+    CONFIDENCE * 0.5 +
+    CASE WHEN STATUS = 'approved' THEN 0.3 ELSE 0.1 END +
+    (1 - LEAST(DATEDIFF('day', CREATED_AT, CURRENT_TIMESTAMP()) / 365.0, 1)) * 0.2 AS RELEVANCE_SCORE
+FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RECOMMENDATIONS
+WHERE STATUS IN ('pending', 'approved');
+
+-- ============================================================
+-- V_DBT_CONVERSION_LEARNINGS: DBT conversion agent learnings
+-- ============================================================
+CREATE OR REPLACE VIEW FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.V_DBT_CONVERSION_LEARNINGS AS
+SELECT
+    LEARNING_ID,
+    AGENT_TYPE,
+    LEARNING_TYPE,
+    LEARNING_KEY,
+    SUMMARY AS SEARCH_TEXT,
+    CONFIDENCE,
+    ENTITY_TYPE,
+    ENTITY_IDS::VARCHAR AS ENTITY_IDS_TEXT,
+    ATTRIBUTES::VARCHAR AS ATTRIBUTES_TEXT,
+    TAGS,
+    USAGE_COUNT,
+    SUCCESS_COUNT,
+    CASE WHEN USAGE_COUNT > 0 THEN SUCCESS_COUNT::FLOAT / USAGE_COUNT ELSE NULL END AS SUCCESS_RATE,
+    CREATED_AT,
+    LAST_USED_AT,
+    -- Composite score for ranking (confidence + success rate + recency)
+    CONFIDENCE * 0.4 +
+    COALESCE(CASE WHEN USAGE_COUNT > 0 THEN SUCCESS_COUNT::FLOAT / USAGE_COUNT ELSE 0.5 END, 0.5) * 0.4 +
+    (1 - LEAST(DATEDIFF('day', COALESCE(LAST_USED_AT, CREATED_AT), CURRENT_TIMESTAMP()) / 365.0, 1)) * 0.2 AS RELEVANCE_SCORE
+FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_AGENT_LEARNINGS
+WHERE AGENT_TYPE = 'DBT_CONVERSION'
+  AND STATUS = 'active';
+
+-- ============================================================
+-- V_TEST_GENERATION_LEARNINGS: Test generation agent learnings
+-- ============================================================
+CREATE OR REPLACE VIEW FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.V_TEST_GENERATION_LEARNINGS AS
+SELECT
+    LEARNING_ID,
+    AGENT_TYPE,
+    LEARNING_TYPE,
+    LEARNING_KEY,
+    SUMMARY AS SEARCH_TEXT,
+    CONFIDENCE,
+    ENTITY_TYPE,
+    ENTITY_IDS::VARCHAR AS ENTITY_IDS_TEXT,
+    ATTRIBUTES::VARCHAR AS ATTRIBUTES_TEXT,
+    TAGS,
+    USAGE_COUNT,
+    SUCCESS_COUNT,
+    CASE WHEN USAGE_COUNT > 0 THEN SUCCESS_COUNT::FLOAT / USAGE_COUNT ELSE NULL END AS SUCCESS_RATE,
+    CREATED_AT,
+    LAST_USED_AT,
+    -- Composite score for ranking (confidence + success rate + recency)
+    CONFIDENCE * 0.4 +
+    COALESCE(CASE WHEN USAGE_COUNT > 0 THEN SUCCESS_COUNT::FLOAT / USAGE_COUNT ELSE 0.5 END, 0.5) * 0.4 +
+    (1 - LEAST(DATEDIFF('day', COALESCE(LAST_USED_AT, CREATED_AT), CURRENT_TIMESTAMP()) / 365.0, 1)) * 0.2 AS RELEVANCE_SCORE
+FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_AGENT_LEARNINGS
+WHERE AGENT_TYPE = 'TEST_GENERATION'
+  AND STATUS = 'active';
+
+-- ============================================================
+-- CORTEX SEARCH SERVICES
+-- Note: Create these after the views exist
+-- ============================================================
+
+-- ============================================================
+-- CSS_FIR_INFERENCES: Search service for active inferences
+-- Note: RELEVANCE_SCORE removed from Cortex Search (uses CURRENT_TIMESTAMP)
+-- Compute relevance at query time if needed
+-- ============================================================
+CREATE OR REPLACE CORTEX SEARCH SERVICE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_FIR_INFERENCES
+ON SEARCH_TEXT
+ATTRIBUTES INFERENCE_ID, INFERENCE_TYPE, SUMMARY, ENTITY_TYPE, ENTITY_IDS_TEXT, CONFIDENCE, ATTRIBUTES_TEXT, SOURCE, STATUS, CREATED_AT
+WAREHOUSE = FFP_HDP_CRM_MIG_WH_DEV
+TARGET_LAG = '1 hour'
+AS (
+    SELECT
+        INFERENCE_ID, INFERENCE_TYPE, SUMMARY, ENTITY_TYPE,
+        ENTITY_IDS::VARCHAR AS ENTITY_IDS_TEXT, CONFIDENCE,
+        ATTRIBUTES::VARCHAR AS ATTRIBUTES_TEXT, SOURCE, STATUS, CREATED_AT,
+        COALESCE(SUMMARY, '') || ' ' || COALESCE(INFERENCE_TYPE, '') || ' ' ||
+        COALESCE(ENTITY_TYPE, '') || ' ' || COALESCE(SOURCE, '') AS SEARCH_TEXT
+    FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_INFERENCES
+    WHERE STATUS = 'active'
+);
+
+-- ============================================================
+-- CSS_FIR_RECOMMENDATIONS: Search service for recommendations
+-- Note: RELEVANCE_SCORE removed from Cortex Search (uses CURRENT_TIMESTAMP)
+-- ============================================================
+CREATE OR REPLACE CORTEX SEARCH SERVICE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_FIR_RECOMMENDATIONS
+ON SEARCH_TEXT
+ATTRIBUTES RECOMMENDATION_ID, RECOMMENDATION_TYPE, MESSAGE, ENTITY_TYPE, ENTITY_IDS_TEXT, CONFIDENCE, ATTRIBUTES_TEXT, STATUS, REVIEW_STATUS, CREATED_AT
+WAREHOUSE = FFP_HDP_CRM_MIG_WH_DEV
+TARGET_LAG = '1 hour'
+AS (
+    SELECT
+        RECOMMENDATION_ID, RECOMMENDATION_TYPE, MESSAGE, ENTITY_TYPE,
+        ENTITY_IDS::VARCHAR AS ENTITY_IDS_TEXT, CONFIDENCE,
+        ATTRIBUTES::VARCHAR AS ATTRIBUTES_TEXT, STATUS, REVIEW_STATUS, CREATED_AT,
+        COALESCE(MESSAGE, '') || ' ' || COALESCE(RECOMMENDATION_TYPE, '') || ' ' ||
+        COALESCE(ENTITY_TYPE, '') AS SEARCH_TEXT
+    FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_WORKBENCH_RECOMMENDATIONS
+    WHERE STATUS IN ('pending', 'approved')
+);
+
+-- ============================================================
+-- CSS_DBT_CONVERSION_LEARNINGS: Search service for DBT conversion learnings
+-- Note: RELEVANCE_SCORE removed (uses CURRENT_TIMESTAMP). Compute at query time.
+-- ============================================================
+CREATE OR REPLACE CORTEX SEARCH SERVICE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_DBT_CONVERSION_LEARNINGS
+ON SEARCH_TEXT
+ATTRIBUTES LEARNING_ID, AGENT_TYPE, LEARNING_TYPE, CONFIDENCE, USAGE_COUNT, TAGS, ATTRIBUTES_TEXT, CREATED_AT
+WAREHOUSE = FFP_HDP_CRM_MIG_WH_DEV
+TARGET_LAG = '1 hour'
+AS (
+    SELECT
+        LEARNING_ID, AGENT_TYPE, LEARNING_TYPE, CONFIDENCE, USAGE_COUNT,
+        TAGS, ATTRIBUTES::VARCHAR AS ATTRIBUTES_TEXT, CREATED_AT,
+        SUMMARY AS SEARCH_TEXT
+    FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_AGENT_LEARNINGS
+    WHERE AGENT_TYPE = 'DBT_CONVERSION' AND STATUS = 'active'
+);
+
+-- ============================================================
+-- CSS_TEST_GENERATION_LEARNINGS: Search service for test generation learnings
+-- Note: RELEVANCE_SCORE removed (uses CURRENT_TIMESTAMP). Compute at query time.
+-- ============================================================
+CREATE OR REPLACE CORTEX SEARCH SERVICE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_TEST_GENERATION_LEARNINGS
+ON SEARCH_TEXT
+ATTRIBUTES LEARNING_ID, AGENT_TYPE, LEARNING_TYPE, CONFIDENCE, USAGE_COUNT, TAGS, ATTRIBUTES_TEXT, CREATED_AT
+WAREHOUSE = FFP_HDP_CRM_MIG_WH_DEV
+TARGET_LAG = '1 hour'
+AS (
+    SELECT
+        LEARNING_ID, AGENT_TYPE, LEARNING_TYPE, CONFIDENCE, USAGE_COUNT,
+        TAGS, ATTRIBUTES::VARCHAR AS ATTRIBUTES_TEXT, CREATED_AT,
+        SUMMARY AS SEARCH_TEXT
+    FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_AGENT_LEARNINGS
+    WHERE AGENT_TYPE = 'TEST_GENERATION' AND STATUS = 'active'
+);
+
+-- ============================================================
+-- GRANTS (adjust roles as needed)
+-- ============================================================
+
+-- Grant usage on the Cortex Search services
+-- GRANT USAGE ON CORTEX SEARCH SERVICE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_FIR_INFERENCES TO ROLE <role_name>;
+-- GRANT USAGE ON CORTEX SEARCH SERVICE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_FIR_RECOMMENDATIONS TO ROLE <role_name>;
+-- GRANT USAGE ON CORTEX SEARCH SERVICE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_DBT_CONVERSION_LEARNINGS TO ROLE <role_name>;
+-- GRANT USAGE ON CORTEX SEARCH SERVICE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.CSS_TEST_GENERATION_LEARNINGS TO ROLE <role_name>;

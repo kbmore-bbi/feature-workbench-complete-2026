@@ -66,6 +66,12 @@ class AuthenticationError(AppError):
     status_code = 401
 
 
+class OAuthTokenExchangeError(AuthenticationError):
+    """Snowflake rejected an OAuth authorization-code or refresh exchange."""
+
+    code = ErrorCode.OAUTH_TOKEN_EXCHANGE_FAILED
+
+
 class AuthorizationError(AppError):
     """Identity is known but lacks permission for the requested resource."""
     code = ErrorCode.FORBIDDEN
@@ -82,6 +88,19 @@ class NotFoundError(AppError):
     status_code = 404
 
 
+class SemanticAssetNotFoundError(NotFoundError):
+    """A selected table has not been published to the canonical registry."""
+
+    code = ErrorCode.SEMANTIC_ASSET_NOT_FOUND
+
+
+class ContextPrecedentUnavailableError(InfrastructureError):
+    """An explicitly linked mapping could not be loaded safely."""
+
+    code = ErrorCode.CONTEXT_PRECEDENT_UNAVAILABLE
+    status_code = 503
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -93,3 +112,9 @@ class AppValidationError(AppError):
     """
     code = ErrorCode.VALIDATION_ERROR
     status_code = 422
+
+
+class SemanticRelationshipInvalidError(AppValidationError):
+    """A selected join cannot be represented safely in Cortex Analyst."""
+
+    code = ErrorCode.SEMANTIC_RELATIONSHIP_INVALID

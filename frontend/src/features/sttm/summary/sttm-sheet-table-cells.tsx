@@ -1,5 +1,7 @@
+import { AiaBox, AiaTableCellPrimitive } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import { ArrowBackRoundedIcon, FiberManualRecordRoundedIcon } from '@/utils/icons';
-import { Box, TableCell, Typography } from '@mui/material';
+
 import type { SxProps, Theme } from '@mui/material/styles';
 import { aiaTableCellSx } from '@/components/ui/aia-table';
 import { MappingDataPreviewValuePill } from '@/features/sttm/mapping/data-preview';
@@ -45,13 +47,13 @@ export function SttmSheetTransformRuleCell({
   const isDirect = !rule || rule === 'Direct';
 
   return (
-    <TableCell sx={aiaTableCellSx({ width, minWidth, sx })}>
+    <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx })}>
       {isDirect ? (
-        <Typography sx={{ fontSize: '0.8rem', color: '#64748b' }}>Direct</Typography>
+        <AiaText sx={{ fontSize: '0.8rem', color: '#64748b' }}>Direct</AiaText>
       ) : (
         <MappingDataPreviewValuePill value={rule} variant="transformed" />
       )}
-    </TableCell>
+    </AiaTableCellPrimitive>
   );
 }
 
@@ -73,9 +75,9 @@ export function SttmSheetSourceColumnCell({
   sx,
 }: SttmSheetSourceColumnCellProps) {
   return (
-    <TableCell sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'hidden' })}>
+    <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'hidden' })}>
       {mapped && value ? (
-        <Box
+        <AiaBox
           sx={{
             display: 'flex',
             alignItems: 'center',
@@ -92,7 +94,7 @@ export function SttmSheetSourceColumnCell({
             sx={{ fontSize: 8, color: '#22c55e', flexShrink: 0 }}
             aria-hidden
           />
-          <Typography
+          <AiaText
             sx={{
               fontSize: '0.78rem',
               fontWeight: 600,
@@ -103,15 +105,15 @@ export function SttmSheetSourceColumnCell({
             }}
           >
             {getSourceColumnName(value)}
-          </Typography>
+          </AiaText>
           {sourceType ? (
-            <Box component="span" sx={SOURCE_TYPE_PILL_SX}>
+            <AiaBox component="span" sx={SOURCE_TYPE_PILL_SX}>
               {formatSqlType(sourceType)}
-            </Box>
+            </AiaBox>
           ) : null}
-        </Box>
+        </AiaBox>
       ) : (
-        <Typography
+        <AiaText
           sx={{
             fontSize: '0.78rem',
             color: '#94a3b8',
@@ -119,9 +121,9 @@ export function SttmSheetSourceColumnCell({
           }}
         >
           — not mapped
-        </Typography>
+        </AiaText>
       )}
-    </TableCell>
+    </AiaTableCellPrimitive>
   );
 }
 
@@ -139,10 +141,10 @@ export function SttmSheetDescriptionCell({
   sx,
 }: SttmSheetDescriptionCellProps) {
   return (
-    <TableCell
+    <AiaTableCellPrimitive
       sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'hidden', maxWidth: width })}
     >
-      <Typography
+      <AiaText
         sx={{
           fontSize: '0.76rem',
           color: '#475569',
@@ -152,7 +154,7 @@ export function SttmSheetDescriptionCell({
         }}
       >
         {description || '—'}
-      </Typography>
-    </TableCell>
+      </AiaText>
+    </AiaTableCellPrimitive>
   );
 }

@@ -1,29 +1,49 @@
 'use client';
+import { AiaAccordion, AiaAccordionDetails, AiaAccordionSummary, AiaBox, AiaButton, AiaCheckbox, AiaChip, AiaDialog } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircleRoundedIcon, CloseRoundedIcon, ExpandMoreIcon, FiberManualRecordIcon, FunctionsRoundedIcon, StorageRoundedIcon, VpnKeyRoundedIcon } from '@/utils/icons';
-import {
-  Dialog,
-  Button,
-  Box,
-  Typography,
-  IconButton,
-  Chip,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-} from '@mui/material';
+import { ExpandMoreIcon, KeyIcon, LinkIcon, StorageRoundedIcon } from '@/utils/icons';
+
 import {
   SqlEditor,
-  SQL_FUNCTION_CATEGORIES,
-  SQL_FUNCTIONS_BY_CATEGORY,
-  SQL_QUICK_ACTIONS,
   SQL_EDITOR_PANEL_MIN_HEIGHT,
-  type SqlFunctionCategoryId,
 } from '@/components/sql';
 import { AiaSearchbox } from '@/components/ui/aia-searchbox';
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
+import { useAiChatLayout } from '@/features/ai-agent/ai-chat-layout-context';
+import { useTour } from '@/features/tour/engine/tour-context';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 import type { ColumnGroup } from '@/features/sttm/types/sttm.types';
-import { generateMappingDescription, parseSourceColumns } from './mapping-utils';
+import { formatSqlType, generateMappingDescription, parseSourceColumns } from './mapping-utils';
+import {
+  sttmSidebarBodyTextSx,
+  sttmSidebarColumnTypeSx,
+  sttmSidebarSearchInputSx,
+  sttmSidebarSecondaryTextSx,
+} from '@/features/sttm/layout/sttm-sidebar-text-styles';
+import { textStyleCssVars } from '@/config/typography-tokens';
+
+const modalCloseButtonSx = {
+  minWidth: 28,
+  width: 28,
+  height: 28,
+  p: 0,
+  fontSize: 14,
+  lineHeight: 1,
+  boxShadow: 'none',
+  color: 'var(--aia-button-color)',
+  '&:hover': {
+    bgcolor: 'transparent',
+    color: 'var(--aia-button-hover-color)',
+  },
+} as const;
+
+const modalPrimaryButtonColors = {
+  customBackgroundColor: 'var(--aia-primary-bg-color)',
+  customColor: 'var(--aia-primary-bg-text-color)',
+  customBorderColor: 'var(--aia-primary-bg-color)',
+  customHoverBackgroundColor: 'var(--aia-primary-bg-hover-color)',
+} as const;
 
 function tableAlias(tableName: string) {
   return tableName.toLowerCase();
@@ -43,16 +63,6 @@ function groupBySchema(groups: ColumnGroup[]) {
     map.set(key, bucket);
   }
   return Array.from(map.entries());
-}
-
-function formatSqlType(type?: string) {
-  if (!type) return 'VARCHAR';
-  const upper = type.toUpperCase();
-  if (upper.includes('NUMBER') || upper === 'INT') return 'BIGINT';
-  if (upper.includes('VARCHAR') || upper.includes('TEXT')) return 'VARCHAR';
-  if (upper.includes('DATE') && !upper.includes('TIME')) return 'DATE';
-  if (upper.includes('TIMESTAMP')) return 'TIMESTAMP';
-  return upper;
 }
 
 function looksLikeSqlExpression(value?: string | null) {
@@ -90,13 +100,20 @@ export default function PreProcessModal() {
     updateMapping,
     sourceAttributeGroups,
     relationships,
+    refreshAssistantSignals,
   } = useSttmBuilderContext();
+  const {
+    isOpen: isAssistantOpen,
+    effectiveSidebarWidth,
+    isMobile,
+    isTablet,
+  } = useAiChatLayout();
+  const { registerModalTour, startTour } = useTour();
 
   const [expression, setExpression] = useState('');
   const [selectedColumns, setSelectedColumns] = useState<string[]>([]);
   const [columnSearch, setColumnSearch] = useState('');
   const [expandedTables, setExpandedTables] = useState<Record<string, boolean>>({});
-  const [functionTab, setFunctionTab] = useState<SqlFunctionCategoryId>('string');
 
   const activeMapping = mappings.find((m) => m.id === activeMappingId);
   const joinCount = relationships.length;
@@ -136,6 +153,15 @@ export default function PreProcessModal() {
     );
   }, [isPreProcessModalOpen, sourceAttributeGroups]);
 
+  useEffect(() => {
+    if (!isPreProcessModalOpen) {
+      registerModalTour(null);
+      return;
+    }
+    registerModalTour('sttm-preprocess');
+    return () => registerModalTour(null);
+  }, [isPreProcessModalOpen, registerModalTour]);
+
   const handleClose = () => {
     setPreProcessModalOpen(false);
   };
@@ -162,6 +188,7 @@ export default function PreProcessModal() {
       status: hasContent ? 'MAPPED' : 'UNMAPPED',
       ...(activeMapping?.descriptionEdited ? {} : { description }),
     });
+    window.setTimeout(() => refreshAssistantSignals('on_transformation_review'), 0);
     handleClose();
   };
 
@@ -173,21 +200,21 @@ export default function PreProcessModal() {
     }
   };
 
-  const toggleColumnSelection = (group: ColumnGroup, columnName: string) => {
+  const toggleColumnSelection = (group: ColumnGroup, columnName: string, checked?: boolean) => {
     const fullValue = `${tableAlias(group.table)}.${columnName}`;
     const lower = fullValue.toLowerCase();
-    setSelectedColumns((prev) => {
-      const already = prev.find((item) => item.toLowerCase() === lower);
-      if (already) {
-        return prev.filter((item) => item.toLowerCase() !== lower);
-      }
-      return [...prev, fullValue];
-    });
-    insertText(fullValue);
-  };
+    const isCurrentlySelected = selectedColumns.some((item) => item.toLowerCase() === lower);
+    const shouldSelect = checked !== undefined ? checked : !isCurrentlySelected;
 
-  const removeSelectedColumn = (value: string) => {
-    const lower = value.toLowerCase();
+    if (shouldSelect) {
+      setSelectedColumns((prev) => {
+        if (prev.find((item) => item.toLowerCase() === lower)) return prev;
+        return [...prev, fullValue];
+      });
+      insertText(fullValue);
+      return;
+    }
+
     setSelectedColumns((prev) => prev.filter((item) => item.toLowerCase() !== lower));
     setExpression((prev) =>
       prev
@@ -197,10 +224,6 @@ export default function PreProcessModal() {
         .replace(/\s{2,}/g, ' ')
         .trim(),
     );
-  };
-
-  const clearSelectedColumns = () => {
-    setSelectedColumns([]);
   };
 
   const isColumnSelected = (group: ColumnGroup, columnName: string) => {
@@ -229,23 +252,25 @@ export default function PreProcessModal() {
       .filter(([, groups]) => groups.length > 0);
   }, [groupedSources, columnSearch]);
 
-  const sourceLabel =
-    selectedColumns.length > 0
-      ? selectedColumns.join(', ')
-      : activeMapping?.sourceColumn || 'not mapped';
-
   const joinSubtitle =
     joinCount > 0 ? `${joinCount} join${joinCount === 1 ? '' : 's'} from Step 1` : undefined;
+  const assistantDockWidth =
+    isAssistantOpen && !isMobile && !isTablet ? effectiveSidebarWidth : 0;
 
   return (
-    <Dialog
+    <AiaDialog
       open={isPreProcessModalOpen}
       onClose={handleClose}
       maxWidth="xl"
       fullWidth
       sx={{
+        right: `${assistantDockWidth}px`,
+        transition: 'right 220ms ease',
         '& .MuiDialog-paper': {
           height: '90vh',
+          maxWidth: assistantDockWidth
+            ? `min(1536px, calc(100vw - ${assistantDockWidth + 48}px))`
+            : undefined,
           borderRadius: '16px',
           overflow: 'hidden',
           display: 'flex',
@@ -253,129 +278,98 @@ export default function PreProcessModal() {
         },
       }}
     >
-      <Box
-        sx={{
-          px: 2.5,
-          py: 1.5,
-          borderBottom: '1px solid #e5e7eb',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 2,
-          bgcolor: '#fff',
-        }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0 }}>
-          <Box
-            sx={{
-              width: 36,
-              height: 36,
-              borderRadius: '50%',
-              bgcolor: '#111827',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              flexShrink: 0,
-            }}
-          >
-            <StorageRoundedIcon sx={{ fontSize: 18, color: '#fff' }} />
-          </Box>
+      <AiaBox sx={{ p: 3, borderBottom: '1px solid #f1f5f9' }}>
+        <AiaBox sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+          <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 1.5, minWidth: 0, flex: 1 }}>
+            <AiaBox
+              sx={{
+                width: 36,
+                height: 36,
+                borderRadius: '50%',
+                bgcolor: 'var(--color-primary)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+              }}
+            >
+              <StorageRoundedIcon sx={{ fontSize: 18, color: '#fff' }} />
+            </AiaBox>
+            <AiaBox sx={{ minWidth: 0 }}>
+              <AiaText
+                sx={{
+                  ...textStyleCssVars('cardTitle'),
+                  textTransform: 'capitalize',
+                  letterSpacing: '-0.01em',
+                }}
+              >
+                Pre-Processing Rule
+              </AiaText>
+              {activeMapping ? (
+                <AiaBox sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1.25, mt: 0.25 }}>
+                  <AiaText sx={{ ...textStyleCssVars('secondaryText') }}>
+                    Target:{' '}
+                    <AiaBox component="span" sx={{ fontWeight: 700, color: '#111827' }}>
+                      {activeMapping.targetColumn}
+                    </AiaBox>
+                  </AiaText>
+                  <AiaText sx={{ ...textStyleCssVars('secondaryText') }}>
+                    Type:{' '}
+                    <AiaBox component="span" sx={{ fontWeight: 600, color: '#374151' }}>
+                      {formatSqlType(activeMapping.targetType)}
+                    </AiaBox>
+                  </AiaText>
+                  {joinCount > 0 ? (
+                    <AiaChip
+                      size="small"
+                      color="success"
+                      label={`++ ${joinCount} join${joinCount === 1 ? '' : 's'} in FROM`}
+                    />
+                  ) : null}
+                </AiaBox>
+              ) : null}
+            </AiaBox>
+          </AiaBox>
+          <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
+            <AiaButton
+              variant="contained"
+              size="small"
+              onClick={() => startTour('sttm-preprocess')}
+              aria-label="Start Pre-Processing Rule tour guide"
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                fontSize: 13,
+                borderRadius: '10px',
+                px: 1.5,
+                py: 0.6,
+                minHeight: 34,
+                backgroundColor: 'var(--aia-primary-bg-color)',
+                color: 'var(--aia-primary-bg-text-color)',
+                boxShadow: 'none',
+                '&:hover': {
+                  backgroundColor: 'var(--aia-primary-bg-hover-color)',
+                },
+              }}
+            >
+              Tour Guide
+            </AiaButton>
+            <AiaButton
+              variant="text"
+              size="small"
+              onClick={handleClose}
+              sx={modalCloseButtonSx}
+              aria-label="Close"
+            >
+              ✕
+            </AiaButton>
+          </AiaBox>
+        </AiaBox>
+      </AiaBox>
 
-          <Box sx={{ minWidth: 0 }}>
-            <Typography sx={{ fontSize: '1rem', fontWeight: 700, color: '#111827', mb: 0.25 }}>
-              Pre-Processing Rule
-            </Typography>
-            {activeMapping && (
-              <Box sx={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1.25 }}>
-                <Typography sx={{ fontSize: '0.78rem', color: '#6b7280' }}>
-                  Target:{' '}
-                  <Box component="span" sx={{ fontWeight: 700, color: '#111827' }}>
-                    {activeMapping.targetColumn}
-                  </Box>
-                </Typography>
-                <Typography sx={{ fontSize: '0.78rem', color: '#6b7280' }}>
-                  Type:{' '}
-                  <Box component="span" sx={{ fontWeight: 600, color: '#374151' }}>
-                    {formatSqlType(activeMapping.targetType)}
-                  </Box>
-                </Typography>
-                <Typography sx={{ fontSize: '0.78rem', color: '#6b7280' }}>
-                  Source:{' '}
-                  <Box
-                    component="span"
-                    sx={{
-                      fontWeight: 600,
-                      color: '#374151',
-                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                    }}
-                  >
-                    {sourceLabel}
-                  </Box>
-                </Typography>
-                {joinCount > 0 && (
-                  <Chip
-                    size="small"
-                    label={`++ ${joinCount} join${joinCount === 1 ? '' : 's'} in FROM`}
-                    sx={{
-                      height: 22,
-                      fontSize: '0.7rem',
-                      fontWeight: 700,
-                      bgcolor: '#ecfdf5',
-                      color: '#047857',
-                      border: '1px solid #a7f3d0',
-                    }}
-                  />
-                )}
-              </Box>
-            )}
-          </Box>
-        </Box>
-
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
-          <Button
-            onClick={handleClose}
-            sx={{
-              color: '#4b5563',
-              textTransform: 'none',
-              fontWeight: 600,
-              fontSize: '0.85rem',
-              px: 1.5,
-              '&:hover': { bgcolor: '#f3f4f6' },
-            }}
-          >
-            Cancel
-          </Button>
-          <Button
-            onClick={handleApply}
-            variant="contained"
-            startIcon={<CheckCircleRoundedIcon sx={{ fontSize: 18, color: '#22c55e' }} />}
-            disabled={!expression.trim() && selectedColumns.length === 0}
-            sx={{
-              bgcolor: '#111827',
-              color: '#fff',
-              textTransform: 'none',
-              fontWeight: 700,
-              fontSize: '0.85rem',
-              borderRadius: '999px',
-              boxShadow: 'none',
-              px: 2,
-              '&:hover': { bgcolor: '#1f2937', boxShadow: 'none' },
-              '&.Mui-disabled': {
-                bgcolor: '#374151',
-                color: '#9ca3af',
-              },
-            }}
-          >
-            Apply Rule
-          </Button>
-          <IconButton onClick={handleClose} size="small" sx={{ color: '#6b7280' }}>
-            <CloseRoundedIcon />
-          </IconButton>
-        </Box>
-      </Box>
-
-      <Box sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
-        <Box
+      <AiaBox sx={{ display: 'flex', flex: 1, minHeight: 0 }}>
+        <AiaBox
+          data-tour={TOUR_TARGETS.preprocessSourceTables}
           sx={{
             width: 300,
             flexShrink: 0,
@@ -385,148 +379,46 @@ export default function PreProcessModal() {
             bgcolor: '#fff',
           }}
         >
-          <Box
+          <AiaBox
             sx={{
               px: 2,
               py: 1.25,
               borderBottom: '1px solid #e5e7eb',
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
             }}
           >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+            <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
               <StorageRoundedIcon sx={{ fontSize: 16, color: '#374151' }} />
-              <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827' }}>
-                Source Tables
-              </Typography>
-            </Box>
-            <Typography sx={{ fontSize: '0.68rem', color: '#9ca3af' }}>click to insert</Typography>
-          </Box>
+              <AiaText sx={{ ...sttmSidebarBodyTextSx, fontWeight: 600 }}>Source Tables</AiaText>
+            </AiaBox>
+          </AiaBox>
 
-          {selectedColumns.length > 0 && (
-            <Box
-              sx={{
-                px: 1.5,
-                py: 1.25,
-                borderBottom: '1px solid #e5e7eb',
-                bgcolor: '#f8fafc',
-              }}
-            >
-              <Box
-                sx={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  mb: 0.75,
-                }}
-              >
-                <Typography
-                  sx={{
-                    fontSize: '0.68rem',
-                    fontWeight: 700,
-                    color: '#0f172a',
-                    letterSpacing: '0.06em',
-                    textTransform: 'uppercase',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 0.5,
-                  }}
-                >
-                  <FiberManualRecordIcon sx={{ fontSize: 8, color: '#3b82f6' }} />
-                  {selectedColumns.length} columns selected
-                </Typography>
-                <Button
-                  size="small"
-                  onClick={clearSelectedColumns}
-                  sx={{
-                    color: '#3b82f6',
-                    textTransform: 'none',
-                    fontSize: '0.72rem',
-                    fontWeight: 600,
-                    minWidth: 0,
-                    px: 0.75,
-                    '&:hover': { bgcolor: 'transparent', color: '#2563eb' },
-                  }}
-                >
-                  Clear
-                </Button>
-              </Box>
-              <Box
-                sx={{
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  gap: 0.5,
-                  maxHeight: 96,
-                  overflowY: 'auto',
-                  pr: 0.5,
-                  '&::-webkit-scrollbar': { width: 6 },
-                  '&::-webkit-scrollbar-thumb': {
-                    bgcolor: '#cbd5e1',
-                    borderRadius: 3,
-                  },
-                }}
-              >
-                {selectedColumns.map((column) => (
-                  <Chip
-                    key={column}
-                    label={column}
-                    size="small"
-                    onDelete={() => removeSelectedColumn(column)}
-                    sx={{
-                      height: 22,
-                      fontSize: '0.7rem',
-                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                      fontWeight: 700,
-                      bgcolor: '#eef2ff',
-                      color: '#3730a3',
-                      border: '1px solid #c7d2fe',
-                      borderRadius: '6px',
-                      '& .MuiChip-deleteIcon': {
-                        color: '#6366f1',
-                        fontSize: 14,
-                        '&:hover': { color: '#3730a3' },
-                      },
-                    }}
-                  />
-                ))}
-              </Box>
-            </Box>
-          )}
-
-          <Box sx={{ p: 1.5, borderBottom: '1px solid #e5e7eb' }}>
+          <AiaBox sx={{ p: 1.5, borderBottom: '1px solid #e5e7eb' }}>
             <AiaSearchbox
               value={columnSearch}
               onChange={setColumnSearch}
               placeholder="Search columns..."
-              inputSx={{
-                '& .MuiInputBase-input': {
-                  fontSize: '0.8rem',
-                },
-              }}
+              inputSx={sttmSidebarSearchInputSx}
             />
-          </Box>
+          </AiaBox>
 
-          <Box sx={{ flex: 1, overflowY: 'auto', px: 1, py: 1 }}>
+          <AiaBox sx={{ flex: 1, overflowY: 'auto', px: 1, py: 1 }}>
             {filteredGroups.map(([category, groups]) => (
-              <Box key={category} sx={{ mb: 1.5 }}>
-                <Typography
+              <AiaBox key={category} sx={{ mb: 1.5 }}>
+                <AiaText
                   sx={{
                     px: 1,
                     py: 0.5,
-                    fontSize: '0.68rem',
-                    fontWeight: 700,
-                    color: '#9ca3af',
+                    ...sttmSidebarSecondaryTextSx,
                     letterSpacing: '0.08em',
                     textTransform: 'uppercase',
                   }}
                 >
                   {category}
-                </Typography>
+                </AiaText>
                 {groups.map((group) => {
                   const isExpanded = expandedTables[group.qualifiedName] ?? true;
                   return (
-                    <Accordion
+                    <AiaAccordion
                       key={group.qualifiedName}
                       expanded={isExpanded}
                       onChange={(_, expanded) =>
@@ -543,7 +435,7 @@ export default function PreProcessModal() {
                         boxShadow: 'none',
                       }}
                     >
-                      <AccordionSummary
+                      <AiaAccordionSummary
                         expandIcon={<ExpandMoreIcon sx={{ fontSize: 18, color: '#6b7280' }} />}
                         sx={{
                           minHeight: 34,
@@ -557,75 +449,94 @@ export default function PreProcessModal() {
                         }}
                       >
                         <StorageRoundedIcon sx={{ fontSize: 14, color: '#6b7280' }} />
-                        <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827' }}>
-                          {group.table}
-                        </Typography>
-                      </AccordionSummary>
-                      <AccordionDetails sx={{ p: 0, pb: 0.5 }}>
+                        <AiaText sx={{ ...sttmSidebarBodyTextSx, fontWeight: 400 }}>{group.table}</AiaText>
+                      </AiaAccordionSummary>
+                      <AiaAccordionDetails sx={{ p: 0, pb: 0.5 }}>
                         {group.columns.map((col) => {
                           const colName = col.name ?? '';
                           const isSelected = isColumnSelected(group, colName);
-                          const isKey = col.isPrimaryKey || col.isForeignKey;
+                          const typeLabel = (col.type ? formatSqlType(col.type) : '—').toLowerCase();
 
                           return (
-                            <Box
+                            <AiaBox
                               key={`${group.qualifiedName}-${colName}`}
                               onClick={() => toggleColumnSelection(group, colName)}
                               sx={{
                                 px: 1.25,
-                                py: 0.75,
+                                py: 0.45,
                                 display: 'flex',
                                 alignItems: 'center',
-                                gap: 0.75,
+                                justifyContent: 'space-between',
+                                gap: 1,
                                 cursor: 'pointer',
                                 borderRadius: '6px',
-                                bgcolor: isSelected ? '#eef2ff' : 'transparent',
-                                '&:hover': { bgcolor: isSelected ? '#e0e7ff' : '#f3f4f6' },
+                                '&:hover': { bgcolor: '#f3f4f6' },
                               }}
                             >
-                              {isKey ? (
-                                <VpnKeyRoundedIcon sx={{ fontSize: 12, color: '#f59e0b' }} />
-                              ) : (
-                                <FiberManualRecordIcon
-                                  sx={{ fontSize: 8, color: '#cbd5e1' }}
-                                />
-                              )}
-                              <Typography
+                              <AiaBox
                                 sx={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 0.75,
+                                  minWidth: 0,
                                   flex: 1,
-                                  fontSize: '0.78rem',
-                                  color: '#374151',
-                                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
                                 }}
                               >
-                                {colName}
-                              </Typography>
-                              <Typography
-                                sx={{
-                                  fontSize: '0.62rem',
-                                  fontWeight: 700,
-                                  color: '#9ca3af',
-                                  letterSpacing: '0.04em',
-                                }}
-                              >
-                                {formatSqlType(col.type)}
-                              </Typography>
-                              {isSelected && (
-                                <CheckCircleRoundedIcon
-                                  sx={{ fontSize: 14, color: '#22c55e' }}
+                                <AiaCheckbox
+                                  checked={isSelected}
+                                  checkHandler={(checked) =>
+                                    toggleColumnSelection(group, colName, checked)
+                                  }
+                                  uncheckedColor="var(--aia-primary-bg-color)"
+                                  checkedColor="var(--aia-primary-bg-color)"
                                 />
-                              )}
-                            </Box>
+                                <AiaBox
+                                  sx={{
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: 0.5,
+                                    flexWrap: 'wrap',
+                                    minWidth: 0,
+                                  }}
+                                >
+                                  <AiaText
+                                    sx={{
+                                      ...sttmSidebarSecondaryTextSx,
+                                      color: 'var(--color-text)',
+                                    }}
+                                  >
+                                    {colName}
+                                  </AiaText>
+                                  {col.isPrimaryKey ? (
+                                    <KeyIcon sx={{ fontSize: 16, color: '#ca8a04', flexShrink: 0 }} />
+                                  ) : null}
+                                  {col.isForeignKey ? (
+                                    <LinkIcon sx={{ fontSize: 16, color: '#9ca3af', flexShrink: 0 }} />
+                                  ) : null}
+                                </AiaBox>
+                              </AiaBox>
+                              <AiaText
+                                sx={{
+                                  ...sttmSidebarColumnTypeSx,
+                                  display: 'block',
+                                  mt: 0,
+                                  flexShrink: 0,
+                                  textAlign: 'right',
+                                }}
+                              >
+                                {typeLabel}
+                              </AiaText>
+                            </AiaBox>
                           );
                         })}
-                      </AccordionDetails>
-                    </Accordion>
+                      </AiaAccordionDetails>
+                    </AiaAccordion>
                   );
                 })}
-              </Box>
+              </AiaBox>
             ))}
             {filteredGroups.length === 0 && (
-              <Typography
+              <AiaText
                 sx={{
                   p: 2,
                   fontSize: '0.8rem',
@@ -637,12 +548,13 @@ export default function PreProcessModal() {
                 {sourceAttributeGroups.length === 0
                   ? 'No source attributes available. Select tables first.'
                   : 'No columns match your search.'}
-              </Typography>
+              </AiaText>
             )}
-          </Box>
-        </Box>
+          </AiaBox>
+        </AiaBox>
 
-        <Box
+        <AiaBox
+          data-tour={TOUR_TARGETS.preprocessSqlEditor}
           sx={{
             flex: 1,
             minWidth: 0,
@@ -661,155 +573,56 @@ export default function PreProcessModal() {
             placeholder={`-- Type or click a column from the left panel\n-- e.g. UPPER(a.NAME)   or   ROW_NUMBER() OVER(ORDER BY a.DATE_KEY)`}
             showFunctionLibrary
             showCopy
+            functionLibraryTourTargets={{
+              library: TOUR_TARGETS.preprocessFunctionLibrary,
+              tabs: TOUR_TARGETS.preprocessFunctionTabs,
+              panel: TOUR_TARGETS.preprocessFunctionLibrary,
+            }}
             fillHeight
             minHeight={SQL_EDITOR_PANEL_MIN_HEIGHT}
             maxHeight="100%"
             sx={{ width: '100%', flex: 1, minHeight: 0 }}
           />
-        </Box>
+        </AiaBox>
+      </AiaBox>
 
-        {/* Function Library */}
-        <Box
-          sx={{
-            width: 280,
-            flexShrink: 0,
-            borderLeft: '1px solid #e5e7eb',
-            display: 'flex',
-            flexDirection: 'column',
-            bgcolor: '#fff',
-          }}
-        >
-          <Box
-            sx={{
-              px: 2,
-              py: 1.25,
-              borderBottom: '1px solid #e5e7eb',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 0.75,
-            }}
+      <AiaBox
+        sx={{
+          px: 3,
+          py: 2.25,
+          borderTop: '1px solid #f1f5f9',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+        }}
+      >
+        <AiaText sx={{ fontSize: 12, color: '#64748b' }}>
+          {selectedColumns.length} columns selected
+        </AiaText>
+        <AiaBox sx={{ display: 'flex', gap: 1.5 }}>
+          <AiaButton
+            variant="outlined"
+            size="large"
+            onClick={handleClose}
+            data-tour={TOUR_TARGETS.preprocessCancel}
+            customBorderColor="var(--aia-primary-bg-color)"
+            customColor="var(--aia-primary-bg-color)"
           >
-            <FunctionsRoundedIcon sx={{ fontSize: 16, color: '#374151' }} />
-            <Typography sx={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827' }}>
-              Function Library
-            </Typography>
-          </Box>
-
-          <Box sx={{ px: 1.5, pt: 1.25, pb: 1 }}>
-            <Box
-              sx={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 0.5,
-                p: 0.5,
-                bgcolor: '#f3f4f6',
-                borderRadius: '10px',
-              }}
-            >
-              {SQL_FUNCTION_CATEGORIES.map((tab) => {
-                const isActive = functionTab === tab.id;
-                return (
-                  <Box
-                    key={tab.id}
-                    onClick={() => setFunctionTab(tab.id)}
-                    sx={{
-                      px: 1.25,
-                      py: 0.5,
-                      borderRadius: '7px',
-                      cursor: 'pointer',
-                      fontSize: '0.74rem',
-                      fontWeight: 600,
-                      color: isActive ? '#111827' : '#6b7280',
-                      bgcolor: isActive ? '#ffffff' : 'transparent',
-                      boxShadow: isActive
-                        ? '0 1px 2px rgba(15, 23, 42, 0.08), 0 0 0 1px rgba(15, 23, 42, 0.04)'
-                        : 'none',
-                      transition:
-                        'background-color 120ms ease, color 120ms ease, box-shadow 120ms ease',
-                      '&:hover': {
-                        bgcolor: isActive ? '#ffffff' : 'rgba(255,255,255,0.55)',
-                        color: '#111827',
-                      },
-                    }}
-                  >
-                    {tab.label}
-                  </Box>
-                );
-              })}
-            </Box>
-          </Box>
-
-          <Box
-            sx={{
-              px: 1.5,
-              py: 1.25,
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 0.5,
-              borderBottom: '1px solid #f1f5f9',
-            }}
+            Cancel
+          </AiaButton>
+          <AiaButton
+            variant="contained"
+            size="large"
+            color="primary"
+            onClick={handleApply}
+            data-tour={TOUR_TARGETS.preprocessApplyRule}
+            disabled={!expression.trim() && selectedColumns.length === 0}
+            {...modalPrimaryButtonColors}
           >
-            {SQL_QUICK_ACTIONS.map((action) => (
-              <Chip
-                key={action.id}
-                label={action.label}
-                size="small"
-                onClick={() => insertText(action.snippet, action.wrapExisting ?? action.snippet.includes('()'))}
-                sx={{
-                  height: 26,
-                  borderRadius: '999px',
-                  bgcolor: '#f9fafb',
-                  border: '1px solid #e5e7eb',
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                  fontSize: '0.72rem',
-                  fontWeight: 600,
-                  color: '#374151',
-                  cursor: 'pointer',
-                  '&:hover': { bgcolor: '#f3f4f6', borderColor: '#d1d5db' },
-                }}
-              />
-            ))}
-          </Box>
-
-          <Box
-            sx={{
-              flex: 1,
-              minHeight: 0,
-              overflowY: 'auto',
-              px: 1.5,
-              py: 1.25,
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignContent: 'flex-start',
-              gap: 0.5,
-            }}
-          >
-            {SQL_FUNCTIONS_BY_CATEGORY[functionTab].map((fn) => (
-              <Chip
-                key={fn}
-                label={fn}
-                size="small"
-                onClick={() => insertText(fn, fn.includes('()'))}
-                sx={{
-                  height: 26,
-                  borderRadius: '999px',
-                  bgcolor: '#faf5ff',
-                  border: '1px solid #ddd6fe',
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
-                  fontSize: '0.7rem',
-                  fontWeight: 600,
-                  color: '#6d28d9',
-                  cursor: 'pointer',
-                  '&:hover': {
-                    bgcolor: '#f3e8ff',
-                    borderColor: '#c4b5fd',
-                  },
-                }}
-              />
-            ))}
-          </Box>
-        </Box>
-      </Box>
-    </Dialog>
+            Apply Rule
+          </AiaButton>
+        </AiaBox>
+      </AiaBox>
+    </AiaDialog>
   );
 }

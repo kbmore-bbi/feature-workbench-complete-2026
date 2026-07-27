@@ -7,12 +7,14 @@ type AiaCheckboxCellProps = AiaTableCellProps & {
   checked: boolean;
   onChange?: (checked: boolean) => void;
   indeterminate?: boolean;
+  checkboxSx?: import('@mui/material/styles').SxProps<import('@mui/material/styles').Theme>;
 };
 
 export const AiaCheckboxCell = ({
   checked,
   onChange,
   indeterminate,
+  checkboxSx,
   width,
   minWidth,
   sx,
@@ -44,6 +46,7 @@ export const AiaCheckboxCell = ({
         checked={checked}
         indeterminate={indeterminate}
         checkHandler={(nextChecked: boolean) => onChange?.(nextChecked)}
+        sx={checkboxSx}
       />
     </Box>
   </TableCell>

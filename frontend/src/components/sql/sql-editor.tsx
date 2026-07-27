@@ -1,7 +1,8 @@
 'use client';
+import { AiaBox } from '@/components/ui';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Box } from '@mui/material';
+
 import {
   SQL_FUNCTION_CATEGORIES,
   SQL_FUNCTIONS_BY_CATEGORY,
@@ -28,6 +29,7 @@ export function SqlEditor({
   readOnly = false,
   title = 'SQL Preview',
   subtitle,
+  toolbarActions,
   placeholder = '-- Write SQL here',
   emptyText = '-- No SQL to display',
   showCopy = false,
@@ -42,6 +44,7 @@ export function SqlEditor({
   functionCategories = SQL_FUNCTION_CATEGORIES,
   functionsByCategory = SQL_FUNCTIONS_BY_CATEGORY,
   defaultFunctionCategory = 'string',
+  functionLibraryTourTargets,
   showLineNumbers = true,
   fillHeight = false,
   minHeight = SQL_EDITOR_DEFAULT_HEIGHT,
@@ -119,6 +122,7 @@ export function SqlEditor({
       <SqlEditorToolbar
         title={title}
         subtitle={subtitle}
+        toolbarActions={toolbarActions}
         value={value}
         readOnly={readOnly}
         showCopy={showCopy}
@@ -147,7 +151,7 @@ export function SqlEditor({
 
   if (showFunctionLibrary) {
     return (
-      <Box
+      <AiaBox
         className={className}
         sx={{
           display: 'flex',
@@ -159,7 +163,7 @@ export function SqlEditor({
           ...sx,
         }}
       >
-        <Box
+        <AiaBox
           sx={{
             ...SQL_EDITOR_FRAME_SX,
             flex: 1,
@@ -173,9 +177,9 @@ export function SqlEditor({
           }}
         >
           {editorPanel}
-        </Box>
+        </AiaBox>
 
-        <Box
+        <AiaBox
           sx={{
             ...SQL_EDITOR_FRAME_SX,
             width: 280,
@@ -196,14 +200,17 @@ export function SqlEditor({
             categories={functionCategories}
             functionsByCategory={functionsByCategory}
             defaultCategory={defaultFunctionCategory}
+            libraryTourTarget={functionLibraryTourTargets?.library}
+            tabsTourTarget={functionLibraryTourTargets?.tabs}
+            panelTourTarget={functionLibraryTourTargets?.panel}
           />
-        </Box>
-      </Box>
+        </AiaBox>
+      </AiaBox>
     );
   }
 
   return (
-    <Box
+    <AiaBox
       className={className}
       sx={{
         ...SQL_EDITOR_FRAME_SX,
@@ -218,6 +225,6 @@ export function SqlEditor({
       }}
     >
       {editorPanel}
-    </Box>
+    </AiaBox>
   );
 }

@@ -1,18 +1,9 @@
 "use client";
+import { AiaBox, AiaPaper, AiaTableBody, AiaTableCellPrimitive, AiaTableContainer, AiaTableHead, AiaTablePagination, AiaTablePrimitive, AiaTableRowPrimitive } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useMemo, useState } from "react";
-import {
-  Box,
-  Paper,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TablePagination,
-  TableRow,
-  Typography,
-} from "@mui/material";
+
 import type { MappingState } from "@/features/sttm/types/sttm.types";
 import {
   MappingRowIndexCell,
@@ -70,7 +61,7 @@ export function SttmSheetTab({ mappings }: SttmSheetTabProps) {
   }, [mappings, page, rowsPerPage]);
 
   return (
-    <Box
+    <AiaBox
       sx={{
         flex: 1,
         minHeight: 0,
@@ -80,39 +71,39 @@ export function SttmSheetTab({ mappings }: SttmSheetTabProps) {
         bgcolor: "#fff",
       }}
     >
-      <TableContainer component={Paper} elevation={0} sx={MAPPING_TABLE_CONTAINER_SX}>
-        <Table stickyHeader size="small" sx={scrollableMappingTableSx(STTM_SHEET_TABLE_MIN_WIDTH)}>
+      <AiaTableContainer component={AiaPaper} elevation={0} sx={MAPPING_TABLE_CONTAINER_SX}>
+        <AiaTablePrimitive stickyHeader size="small" sx={scrollableMappingTableSx(STTM_SHEET_TABLE_MIN_WIDTH)}>
           <colgroup>
             {Object.values(STTM_SHEET_COLUMN_WIDTH).map((columnWidth, index) => (
               <col key={`sttm-sheet-col-${index}`} style={{ width: columnWidth }} />
             ))}
           </colgroup>
-          <TableHead>
-            <TableRow>
-              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, width: STTM_SHEET_COLUMN_WIDTH.index }}>
+          <AiaTableHead>
+            <AiaTableRowPrimitive>
+              <AiaTableCellPrimitive sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, width: STTM_SHEET_COLUMN_WIDTH.index }}>
                 #
-              </TableCell>
-              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.targetColumn }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.targetColumn }}>
                 Target Column
-              </TableCell>
-              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.transformRule }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.transformRule }}>
                 Transform Rule
-              </TableCell>
-              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.sourceColumn }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.sourceColumn }}>
                 Source Column
-              </TableCell>
-              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.type }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.type }}>
                 Type
-              </TableCell>
-              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.description }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.description }}>
                 Description
-              </TableCell>
-              <TableCell sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.status }}>
+              </AiaTableCellPrimitive>
+              <AiaTableCellPrimitive sx={{ ...MAPPING_TABLE_HEADER_CELL_SX, minWidth: STTM_SHEET_COLUMN_WIDTH.status }}>
                 Status
-              </TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
+              </AiaTableCellPrimitive>
+            </AiaTableRowPrimitive>
+          </AiaTableHead>
+          <AiaTableBody>
             {paginatedMappings.map((row, index) => {
               const mapped = row.status === "MAPPED";
               const rule = formatMappingRule(row.rule);
@@ -130,7 +121,7 @@ export function SttmSheetTab({ mappings }: SttmSheetTabProps) {
               const description = row.description ?? autoDescription ?? "";
 
               return (
-                <TableRow key={row.id} sx={MAPPING_TABLE_ROW_SX}>
+                <AiaTableRowPrimitive key={row.id} sx={MAPPING_TABLE_ROW_SX}>
                   <MappingRowIndexCell
                     index={page * rowsPerPage + index + 1}
                     width={STTM_SHEET_COLUMN_WIDTH.index}
@@ -176,23 +167,23 @@ export function SttmSheetTab({ mappings }: SttmSheetTabProps) {
                     minWidth={STTM_SHEET_COLUMN_WIDTH.status}
                     sx={{ overflow: "hidden" }}
                   />
-                </TableRow>
+                </AiaTableRowPrimitive>
               );
             })}
             {!paginatedMappings.length ? (
-              <TableRow>
-                <TableCell colSpan={7} sx={{ py: 4, textAlign: "center" }}>
-                  <Typography sx={{ fontSize: "0.82rem", color: "#64748b" }}>
+              <AiaTableRowPrimitive>
+                <AiaTableCellPrimitive colSpan={7} sx={{ py: 4, textAlign: "center" }}>
+                  <AiaText sx={{ fontSize: "0.82rem", color: "#64748b" }}>
                     No mapping rows to display.
-                  </Typography>
-                </TableCell>
-              </TableRow>
+                  </AiaText>
+                </AiaTableCellPrimitive>
+              </AiaTableRowPrimitive>
             ) : null}
-          </TableBody>
-        </Table>
-      </TableContainer>
+          </AiaTableBody>
+        </AiaTablePrimitive>
+      </AiaTableContainer>
 
-      <TablePagination
+      <AiaTablePagination
         component="div"
         count={mappings.length}
         page={page}
@@ -205,6 +196,6 @@ export function SttmSheetTab({ mappings }: SttmSheetTabProps) {
         rowsPerPageOptions={ROWS_PER_PAGE_OPTIONS}
         sx={MAPPING_TABLE_PAGINATION_SX}
       />
-    </Box>
+    </AiaBox>
   );
 }

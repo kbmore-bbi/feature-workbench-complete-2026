@@ -1,6 +1,10 @@
 "use client";
+import { AiaBox } from '@/components/ui';
+import { useEffect, useRef } from "react";
 
-import { Box } from "@mui/material";
+import { AiChatMainOverlay } from "@/features/ai-agent/ai-chat-shell-integration";
+import { AiChatRailTab, AiChatSidebarPanel } from "@/features/ai-agent/ai-chat-shell-host";
+import { useAiChatLayout } from "@/features/ai-agent/ai-chat-layout-context";
 import AppSidebar from "./app-sidebar";
 import type { AppNavItem } from "./app-sidebar-types";
 
@@ -15,8 +19,25 @@ export default function AppShell({
   initialNewMappingOpen = false,
   children,
 }: AppShellProps) {
+  const workspaceRef = useRef<HTMLDivElement | null>(null);
+  const { isOpen, setLayoutMetrics } = useAiChatLayout();
+
+  useEffect(() => {
+    const node = workspaceRef.current;
+    if (!node) return;
+
+    const update = () => {
+      setLayoutMetrics(node.clientWidth, node.clientHeight);
+    };
+
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [setLayoutMetrics]);
+
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "flex",
         flex: 1,
@@ -26,19 +47,35 @@ export default function AppShell({
       }}
     >
       <AppSidebar activeNav={activeNav} initialNewMappingOpen={initialNewMappingOpen} />
-      <Box
-        component="main"
+      <AiaBox
+        ref={workspaceRef}
         sx={{
           flex: 1,
           minWidth: 0,
           minHeight: 0,
           display: "flex",
-          flexDirection: "column",
+          position: "relative",
           overflow: "hidden",
         }}
       >
-        {children}
-      </Box>
-    </Box>
+        <AiaBox
+          component="main"
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            position: "relative",
+          }}
+        >
+          <AiChatMainOverlay />
+          {children}
+        </AiaBox>
+
+        {isOpen ? <AiChatSidebarPanel /> : <AiChatRailTab />}
+      </AiaBox>
+    </AiaBox>
   );
 }

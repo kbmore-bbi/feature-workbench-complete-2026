@@ -1,15 +1,20 @@
-"use client"; // Required for hooks in App Router
+"use client";
 
+import { AiaBox, AiaButton, AiaContainer, AiaGrid, AiaIconButton, AiaPaper, AiaStack } from '@/components/ui';
+
+
+import { AiaText } from '@/components/ui/aia-text';
 import React from 'react';
-import { Box, Typography, Button, Grid, Paper, Stack, Container, IconButton } from '@mui/material';
+
 import { AutoFixHighIcon, BoltIcon, CloseIcon, OpenInFullIcon, SmartToyIcon, VisibilityIcon } from '@/utils/icons';
-import { useRouter } from 'next/navigation';
 import Footer from '@/features/layout/app-footer';
 import { CLIENT_CONFIG as config } from '@/config/client.config';
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+import { API_ROUTES } from "@/api/routes";
 
 /* --- FEATURE CARD SUB-COMPONENT --- */
 const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
-  <Paper
+  <AiaPaper
     elevation={0}
     sx={{
       bgcolor: 'var(--aia-card-color)',
@@ -23,26 +28,30 @@ const FeatureCard = ({ icon, title }: { icon: any, title: string }) => (
       gap: 1.5
     }}
   >
-    <Box sx={{ bgcolor: '#fff', p: 1, borderRadius: '50%', display: 'flex', border: '1px solid #ccc' }}>
+    <AiaBox sx={{ bgcolor: '#fff', p: 1, borderRadius: '50%', display: 'flex', border: '1px solid #ccc' }}>
       {React.cloneElement(icon, { sx: { fontSize: 24, color: '#000' } })}
-    </Box>
-    <Typography sx={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--aia-primary-text-color)', textAlign: 'center' }}>
+    </AiaBox>
+    <AiaText sx={{ fontWeight: 600, fontSize: '0.8rem', color: 'var(--aia-primary-text-color)', textAlign: 'center' }}>
       {title}
-    </Typography>
-  </Paper>
+    </AiaText>
+  </AiaPaper>
 );
 
 export default function HomePage() {
-  const router = useRouter();
+  const startSnowflakeLogin = () => {
+    const next = encodeURIComponent("/dashboard");
+    window.location.href = `/api${API_ROUTES.auth.login}?next=${next}`;
+  };
+
   return (
   <>
      {/* <AppHeader/> */}
 
-    <Box sx={{ minHeight: '100vh', bgcolor: '#fff', position: 'relative', p: 4 }}>
+    <AiaBox sx={{ minHeight: '100vh', bgcolor: '#fff', position: 'relative', p: 4 }}>
 
       {/* 1. TOP HEADER (Welcome Message) */}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 4 }}>
-        <Box sx={{
+      <AiaBox sx={{ display: 'flex', justifyContent: 'flex-end', mb: 4 }}>
+        <AiaBox sx={{
           backgroundColor: 'var(--aia-card-color)', // Light gray background
           px: 2,
           py: 0.5,
@@ -51,14 +60,14 @@ export default function HomePage() {
           display: 'flex',
           alignItems: 'center'
         }}>
-          <Typography variant="caption" sx={{ color: 'var(--aia-primary-text-color)' }}>
+          <AiaText variant="caption" sx={{ color: 'var(--aia-primary-text-color)' }}>
             Welcome User!
-          </Typography>
-        </Box>
-      </Box>
+          </AiaText>
+        </AiaBox>
+      </AiaBox>
 
-      <Container sx={{ mt: 8, maxWidth: '90% !important' }}>
-        <Box sx={{
+      <AiaContainer sx={{ mt: 8, maxWidth: '90% !important' }}>
+        <AiaBox sx={{
           display: 'flex',
           flexDirection: 'row !important',
           gap: 10, // Equivalent to spacing={10}
@@ -66,7 +75,7 @@ export default function HomePage() {
         }}>
 
           {/* LEFT COLUMN: Text Content */}
-          <Grid
+          <AiaGrid
             sx={{
               // This replaces 'item' logic
               flexGrow: 0,
@@ -79,19 +88,19 @@ export default function HomePage() {
               maxWidth: '70% !important'
             }}
           >
-            <Typography sx={{ fontWeight: 800, fontSize: '0.9rem', mb: 2 }}>
+            <AiaText sx={{ fontWeight: 800, fontSize: '0.9rem', mb: 2 }}>
               {config.app.clientTitle}
-            </Typography>
-            <Typography variant="h1" sx={{ fontWeight: 900, fontSize: '4rem', lineHeight: 1, mb: 3 }}>
+            </AiaText>
+            <AiaText variant="h1" sx={{ fontWeight: 900, fontSize: '4rem', lineHeight: 1, mb: 3 }}>
               AI-Assisted <br /> Migration Workbench
-            </Typography>
-            <Typography sx={{ color: '#666', fontSize: '1.1rem', mb: 4, maxWidth: '500px' }}>
+            </AiaText>
+            <AiaText sx={{ color: '#666', fontSize: '1.1rem', mb: 4, maxWidth: '500px' }}>
               STTM Builder brings clarity to complex data pipelines—making ETL documentation faster, collaborative, and always up to date.
-            </Typography>
+            </AiaText>
 
-            <Stack spacing={1.5} sx={{ mb: 5 }}>
+            <AiaStack spacing={1.5} sx={{ mb: 5 }}>
               {['Design.Document.Map', 'Define transformation logic', 'Collaborate in real-time'].map((text) => (
-                <Stack
+                <AiaStack
                   key={text}
                   sx={{
                     flexDirection: 'row',
@@ -99,40 +108,42 @@ export default function HomePage() {
                     gap: 2 // gap: 2 is the sx equivalent of spacing={2}
                   }}
                 >
-                  <Box sx={{ width: 5, height: 5, bgcolor: '#000', borderRadius: '50%' }} />
-                  <Typography sx={{ fontSize: '0.95rem', fontWeight: 500 }}>{text}</Typography>
-                </Stack>
+                  <AiaBox sx={{ width: 5, height: 5, bgcolor: '#000', borderRadius: '50%' }} />
+                  <AiaText sx={{ fontSize: '0.95rem', fontWeight: 500 }}>{text}</AiaText>
+                </AiaStack>
               ))}
-            </Stack>
+            </AiaStack>
 
-            <Button variant="contained"
+            <AiaButton
+              data-tour={TOUR_TARGETS.landingGetStarted}
+              variant="contained"
               sx={{ bgcolor: 'var(--aia-button-color)', textTransform: 'none', px: 5, py: 1.5, borderRadius: '10px', fontWeight: 700 }}
-              onClick={() => router.push('/dashboard')} >
-              Get Started
-            </Button>
-          </Grid>
+              onClick={startSnowflakeLogin} >
+              Sign in with Snowflake
+            </AiaButton>
+          </AiaGrid>
 
           {/* RIGHT COLUMN: Feature Cards */}
-          <Grid
+          <AiaGrid
             sx={{
               display: 'flex',
               alignItems: 'flex-start',
               justifyContent: 'flex-start'
             }}
           >
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'flex-start' }}>
+            <AiaBox sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, justifyContent: 'flex-start' }}>
               <FeatureCard icon={<VisibilityIcon />} title="STTM Viewer" />
               <FeatureCard icon={<AutoFixHighIcon />} title="STTM Builder" />
               <FeatureCard icon={<BoltIcon />} title="SQL Generation" />
-            </Box>
-          </Grid>
-        </Box>
-      </Container>
+            </AiaBox>
+          </AiaGrid>
+        </AiaBox>
+      </AiaContainer>
 
       {/* FLOATING AI WIDGET (Bottom Right) */}
-      {/* <Box sx={{ position: 'fixed', bottom: 70, right: 24 }}>
-        <Paper elevation={4} sx={{ bgcolor: '#000', color: '#fff', borderRadius: '12px', px: 2, py: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <Stack
+      {/* <AiaBox sx={{ position: 'fixed', bottom: 70, right: 24 }}>
+        <AiaPaper elevation={4} sx={{ bgcolor: '#000', color: '#fff', borderRadius: '12px', px: 2, py: 1, display: 'flex', alignItems: 'center', gap: 6 }}>
+          <AiaStack
             sx={{
               flexDirection: 'row',
               alignItems: 'center',
@@ -140,19 +151,18 @@ export default function HomePage() {
             }}
           >
             <SmartToyIcon sx={{ fontSize: 18 }} />
-            <Typography sx={{ fontSize: '0.8rem', fontWeight: 600 }}>AI Assistant</Typography>
-          </Stack>
-          <Stack direction="row" spacing={1}>
+            <AiaText sx={{ fontSize: '0.8rem', fontWeight: 600 }}>AI Assistant</AiaText>
+          </AiaStack>
+          <AiaStack direction="row" spacing={1}>
             <OpenInFullIcon sx={{ fontSize: 14, cursor: 'pointer' }} />
             <CloseIcon sx={{ fontSize: 14, cursor: 'pointer' }} />
-          </Stack>
-        </Paper>
-      </Box> */}
-
+          </AiaStack>
+        </AiaPaper>
+      </AiaBox> */}
 
       {/* FOOTER */}
         <Footer />
-    </Box>
+    </AiaBox>
     </>   
   );
 }

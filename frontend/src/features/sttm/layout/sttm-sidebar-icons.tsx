@@ -1,34 +1,28 @@
 "use client";
 
+import { AiaIcon } from '@/components/ui';
 import type { ReactElement } from "react";
 import type { SxProps, Theme } from "@mui/material/styles";
 import {
-  AccountTreeOutlinedIcon,
+  AccountTreeRoundedIcon,
   AutoAwesomeRoundedIcon,
-  ForwardOutlinedIcon,
-  KeyboardBackspaceOutlinedIcon,
+  ForwardIcon,
 } from "@/utils/icons";
+import { SIDEBAR_NAV_TOKENS } from "@/config/sidebar-nav-tokens";
 
 export type SttmSidebarIconKind = "source" | "target" | "derived" | "ai";
 
 const ICON_BY_KIND = {
-  source: KeyboardBackspaceOutlinedIcon,
-  target: ForwardOutlinedIcon,
-  derived: AccountTreeOutlinedIcon,
+  source: ForwardIcon,
+  target: ForwardIcon,
+  derived: AccountTreeRoundedIcon,
   ai: AutoAwesomeRoundedIcon,
 } as const;
-
-const COLOR_BY_KIND: Record<SttmSidebarIconKind, string> = {
-  source: "var(--color-muted)",
-  target: "var(--color-muted)",
-  derived: "#16a34a",
-  ai: "#6366f1",
-};
 
 export function SttmSidebarSectionIcon({
   kind,
   sx,
-  fontSize = 14,
+  fontSize = SIDEBAR_NAV_TOKENS.iconSize,
 }: {
   kind: SttmSidebarIconKind;
   sx?: SxProps<Theme>;
@@ -37,9 +31,19 @@ export function SttmSidebarSectionIcon({
   const Icon = ICON_BY_KIND[kind];
 
   return (
-    <Icon
+    <AiaIcon
+      component={Icon}
+      inheritViewBox={kind !== "derived"}
       sx={[
-        { fontSize, flexShrink: 0, color: COLOR_BY_KIND[kind] },
+        {
+          fontSize,
+          flexShrink: 0,
+          display: "block",
+          lineHeight: 1,
+          overflow: "visible",
+          color: "var(--aia-sidebar-nav-icon-color)",
+          ...(kind === "source" ? { transform: "scaleX(-1)" } : {}),
+        },
         ...(sx ? (Array.isArray(sx) ? sx : [sx]) : []),
       ]}
     />

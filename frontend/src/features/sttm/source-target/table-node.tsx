@@ -10,12 +10,10 @@ import {
   TableChartIcon,
 } from '@/utils/icons';
 
-
-
-
-
 import type { Column } from "@/features/sttm/types/sttm.types";
+import { AiaChip } from "@/components/ui/aia-chip";
 import { AiaSearchbox } from "@/components/ui/aia-searchbox";
+import { buildTableHeaderHandleKey } from "./relationship-handles";
 
 export interface TableNodeData {
   label: string;
@@ -60,18 +58,59 @@ export interface TableNodeData {
 
 const MAX_VISIBLE_COLS = 4;
 
-function ColumnLeading({ col }: { col: Column }) {
+function ColumnKeyIcon({ col }: { col: Column }) {
   if (col.isPrimaryKey) {
     return <KeyIcon sx={{ fontSize: 16, color: "#ca8a04", flexShrink: 0 }} />;
   }
   if (col.isForeignKey) {
     return <LinkIcon sx={{ fontSize: 16, color: "#9ca3af", flexShrink: 0 }} />;
   }
+  return null;
+}
+
+function TableTagChip({ tag }: { tag: string }) {
+  if (tag.toLowerCase() === "driving") {
+    return (
+      <AiaChip
+        label={tag}
+        size="small"
+        color="warning"
+        customBackgroundColor="rgb(250 204 21 / 35%)"
+        customColor="#9f8500"
+        customBorderColor="rgba(250,204,21,0.45)"
+      />
+    );
+  }
+
+  return <AiaChip label={tag} size="small" color="default" />;
+}
+
+function TableHeaderHandles({
+  database,
+  schema,
+  label,
+}: {
+  database: string;
+  schema: string;
+  label: string;
+}) {
+  const tableRef = { database, schema, label };
+
   return (
-    <span
-      className="tnode__hollow"
-      aria-hidden
-    />
+    <>
+      <Handle
+        type="target"
+        position={Position.Left}
+        id={buildTableHeaderHandleKey(tableRef, "target")}
+        className="tnode__handle tnode__handle--left tnode__handle--header"
+      />
+      <Handle
+        type="source"
+        position={Position.Right}
+        id={buildTableHeaderHandleKey(tableRef, "source")}
+        className="tnode__handle tnode__handle--right tnode__handle--header"
+      />
+    </>
   );
 }
 
@@ -139,8 +178,8 @@ function TableNodeComponent({ data, selected }: NodeProps) {
       ) : null}
 
       <div className="tnode__cols">
-        {visibleCols.map((col, index) => {
-          const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}-${index}`;
+        {visibleCols.map((col) => {
+          const columnKey = `${d.database}.${d.schema}.${d.label}.${col.name ?? "column"}`;
           const isHighlighted = highlightedColumns.has(String(col.name ?? "").toLowerCase());
           const isActiveColumn = d.activeColumnName === col.name;
           return (
@@ -184,31 +223,27 @@ function TableNodeComponent({ data, selected }: NodeProps) {
                       style={{ width: 16, height: 16, margin: 0, accentColor: "#2563eb", flexShrink: 0 }}
                     />
                   ) : null}
-                  {d.selectableColumns ? (
-                    col.isPrimaryKey || col.isForeignKey ? (
-                      <span className="tnode__col-key-inline">
-                        <ColumnLeading col={col} />
-                      </span>
-                    ) : null
-                  ) : (
-                    <span className="tnode__col-icon-slot">
-                      <ColumnLeading col={col} />
+                  <span className="tnode__col-name-group">
+                    <span
+                      className="tnode__col-name"
+                      style={{
+                        color: isActiveColumn
+                          ? "#1d4ed8"
+                          : isHighlighted
+                            ? "#92400e"
+                            : undefined,
+                      }}
+                    >
+                      {col.name}
                     </span>
-                  )}
-                  <span
-                    className="tnode__col-name"
-                    style={{
-                      color: isActiveColumn
-                        ? "#1d4ed8"
-                        : isHighlighted
-                          ? "#92400e"
-                          : undefined,
-                    }}
-                  >
-                    {col.name}
+                    {col.isPrimaryKey || col.isForeignKey ? (
+                      <span className="tnode__col-key-inline">
+                        <ColumnKeyIcon col={col} />
+                      </span>
+                    ) : null}
                   </span>
                 </div>
-                <span className="tnode__col-type">{col.type}</span>
+                <span className="tnode__col-type">{(col.type ?? "").toLowerCase()}</span>
               </div>
 
               <Handle
@@ -257,6 +292,7 @@ function TableNodeComponent({ data, selected }: NodeProps) {
         }
       >
         <div className="tnode__lineage-header" style={{ backgroundColor: d.headerBg ?? "#eef6ff" }}>
+          <TableHeaderHandles database={d.database} schema={d.schema} label={d.label} />
           <div className="tnode__lineage-header-inner">
             <div
               className="tnode__icon-wrap tnode__icon-wrap--lineage"
@@ -367,6 +403,7 @@ function TableNodeComponent({ data, selected }: NodeProps) {
         />
       ) : null}
       <div className="tnode__header" style={{ backgroundColor: d.headerBg ?? "#f9fafb" }}>
+        <TableHeaderHandles database={d.database} schema={d.schema} label={d.label} />
         <div className="tnode__header-main">
           <div
             className="tnode__icon-wrap"
@@ -380,22 +417,9 @@ function TableNodeComponent({ data, selected }: NodeProps) {
                 {d.schema}.{d.label}
               </span>
               <span className="tnode__chip-row">
-                <span
-                  className="tnode__chip"
-                  style={{ backgroundColor: d.tagBg, color: d.tagFg }}
-                >
-                  {d.tag}
-                </span>
+                <TableTagChip tag={d.tag} />
                 {d.secondaryTag ? (
-                  <span
-                    className="tnode__chip"
-                    style={{
-                      backgroundColor: d.secondaryTagBg ?? "#dcfce7",
-                      color: d.secondaryTagFg ?? "#166534",
-                    }}
-                  >
-                    {d.secondaryTag}
-                  </span>
+                  <AiaChip label={d.secondaryTag} size="small" color="success" />
                 ) : null}
               </span>
             </div>

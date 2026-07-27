@@ -1,5 +1,8 @@
 import json
+import logging
 import os
+import threading
+import time
 import uuid
 from collections.abc import Iterator
 from typing import Any
@@ -8,6 +11,27 @@ from urllib.parse import quote
 import httpx
 
 from app.core.exceptions import SnowflakeAgentError
+
+logger = logging.getLogger(__name__)
+
+_HTTP_CLIENT_LOCK = threading.Lock()
+_HTTP_CLIENTS: dict[str, httpx.Client] = {}
+
+
+def _shared_http_client(base_url: str) -> httpx.Client:
+    """Reuse TLS connections to the same Snowflake account across API requests."""
+    with _HTTP_CLIENT_LOCK:
+        client = _HTTP_CLIENTS.get(base_url)
+        if client is None or client.is_closed:
+            client = httpx.Client(
+                limits=httpx.Limits(
+                    max_connections=50,
+                    max_keepalive_connections=20,
+                    keepalive_expiry=60.0,
+                ),
+            )
+            _HTTP_CLIENTS[base_url] = client
+        return client
 
 
 class SnowflakeAgentClient:
@@ -33,15 +57,27 @@ class SnowflakeAgentClient:
         host: str | None = None,
         auth_mode: str = "oauth_bearer",
         request_timeout: float | None = None,
+        role: str | None = None,
+        warehouse: str | None = None,
     ) -> None:
         self._token = token
         self.model = model or os.getenv("SNOWFLAKE_AGENT_ORCHESTRATION_MODEL", self._DEFAULT_MODEL)
         self._timeout = request_timeout or float(os.getenv("SNOWFLAKE_AGENT_TIMEOUT_SECONDS", "240"))
+        self._retry_attempts = max(
+            1,
+            int(os.getenv("SNOWFLAKE_AGENT_RETRY_ATTEMPTS", "3")),
+        )
+        self._retry_backoff_seconds = max(
+            0.0,
+            float(os.getenv("SNOWFLAKE_AGENT_RETRY_BACKOFF_SECONDS", "1.0")),
+        )
         resolved_host = (host or os.getenv("SNOWFLAKE_HOST", "")).strip()
         if not resolved_host:
             raise SnowflakeAgentError("SNOWFLAKE_HOST is not set for Cortex Agent requests.")
         self._base_url = f"https://{resolved_host}"
         self._auth_mode = auth_mode
+        self._role = (role or "").strip()
+        self._warehouse = (warehouse or "").strip()
 
     # ------------------------------------------------------------------
     # Public API
@@ -74,13 +110,12 @@ class SnowflakeAgentClient:
         parent_message_id: int | None = None,
     ) -> Iterator[tuple[str, Any]]:
         payload: dict[str, Any] = {
-            "models": {"orchestration": self.model},
-            "messages": messages,
+            "messages": self._normalize_messages(messages),
             "stream": True,
         }
 
-        if agent and self._auth_mode != "snowflake_token":
-            payload["agent"] = agent
+        if not agent:
+            payload["models"] = {"orchestration": self.model}
 
         if thread_id:
             payload["thread_id"] = thread_id
@@ -89,25 +124,43 @@ class SnowflakeAgentClient:
 
         headers = self._build_headers()
         endpoint = self._build_endpoint(agent)
+        client = _shared_http_client(self._base_url)
 
-        try:
-            with httpx.Client(timeout=self._timeout) as client:
+        last_error: Exception | None = None
+        for attempt in range(1, self._retry_attempts + 1):
+            try:
                 with client.stream(
                     "POST",
                     f"{self._base_url}{endpoint}",
                     headers=headers,
                     json=payload,
+                    timeout=self._timeout,
                 ) as response:
                     if response.status_code != 200:
                         error_body = response.read().decode("utf-8", errors="replace").strip()
-                        raise SnowflakeAgentError(
+                        error = SnowflakeAgentError(
                             f"Cortex Agent returned HTTP {response.status_code}: {error_body}"
                         )
+                        if (
+                            attempt < self._retry_attempts
+                            and self._is_retryable_status_code(response.status_code)
+                        ):
+                            self._sleep_before_retry(attempt, error)
+                            continue
+                        raise error
                     yield from self._iter_sse_events(response)
-        except httpx.HTTPError as exc:
-            raise SnowflakeAgentError(
-                f"HTTP error communicating with Cortex Agent: {exc}"
-            ) from exc
+                    return
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt >= self._retry_attempts or not self._is_retryable_http_error(exc):
+                    raise SnowflakeAgentError(
+                        f"HTTP error communicating with Cortex Agent: {exc}"
+                    ) from exc
+                self._sleep_before_retry(attempt, exc)
+
+        raise SnowflakeAgentError(
+            f"HTTP error communicating with Cortex Agent: {last_error}"
+        ) from last_error
 
     def run_detailed(
         self,
@@ -130,13 +183,12 @@ class SnowflakeAgentClient:
                        start a new one.
         """
         payload: dict[str, Any] = {
-            "models": {"orchestration": self.model},
-            "messages": messages,
+            "messages": self._normalize_messages(messages),
             "stream": False,
         }
 
-        if agent and self._auth_mode != "snowflake_token":
-            payload["agent"] = agent
+        if not agent:
+            payload["models"] = {"orchestration": self.model}
 
         if thread_id:
             payload["thread_id"] = thread_id
@@ -146,22 +198,45 @@ class SnowflakeAgentClient:
         headers = self._build_headers()
         endpoint = self._build_endpoint(agent)
 
-        try:
-            with httpx.Client(timeout=request_timeout or self._timeout) as client:
+        timeout = request_timeout or self._timeout
+        response: httpx.Response | None = None
+        last_error: Exception | None = None
+        client = _shared_http_client(self._base_url)
+        for attempt in range(1, self._retry_attempts + 1):
+            try:
                 response = client.post(
                     f"{self._base_url}{endpoint}",
                     headers=headers,
                     json=payload,
+                    timeout=timeout,
                 )
-        except httpx.HTTPError as exc:
-            raise SnowflakeAgentError(
-                f"HTTP error communicating with Cortex Agent: {exc}"
-            ) from exc
+            except httpx.HTTPError as exc:
+                last_error = exc
+                if attempt >= self._retry_attempts or not self._is_retryable_http_error(exc):
+                    raise SnowflakeAgentError(
+                        f"HTTP error communicating with Cortex Agent: {exc}"
+                    ) from exc
+                self._sleep_before_retry(attempt, exc)
+                continue
 
-        if response.status_code != 200:
-            raise SnowflakeAgentError(
+            if response.status_code == 200:
+                break
+
+            error = SnowflakeAgentError(
                 f"Cortex Agent returned HTTP {response.status_code}: {response.text}"
             )
+            if (
+                attempt >= self._retry_attempts
+                or not self._is_retryable_status_code(response.status_code)
+            ):
+                raise error
+            last_error = error
+            self._sleep_before_retry(attempt, error)
+
+        if response is None:
+            raise SnowflakeAgentError(
+                f"HTTP error communicating with Cortex Agent: {last_error}"
+            ) from last_error
 
         try:
             data = response.json()
@@ -176,6 +251,35 @@ class SnowflakeAgentClient:
         text, resolved_thread_id = self._extract_text_and_thread(data, thread_id)
         return text, resolved_thread_id, data
 
+    def _sleep_before_retry(self, attempt: int, error: Exception) -> None:
+        logger.warning(
+            "Retrying Cortex Agent request after transient failure (attempt %s/%s) in %.1fs: %s",
+            attempt,
+            self._retry_attempts,
+            self._retry_backoff_seconds,
+            error,
+        )
+        if self._retry_backoff_seconds > 0:
+            time.sleep(self._retry_backoff_seconds)
+
+    @staticmethod
+    def _is_retryable_status_code(status_code: int) -> bool:
+        return status_code in {408, 409, 425, 429, 500, 502, 503, 504}
+
+    @staticmethod
+    def _is_retryable_http_error(exc: httpx.HTTPError) -> bool:
+        return isinstance(
+            exc,
+            (
+                httpx.ConnectError,
+                httpx.ConnectTimeout,
+                httpx.ReadTimeout,
+                httpx.WriteTimeout,
+                httpx.RemoteProtocolError,
+                httpx.PoolTimeout,
+            ),
+        )
+
     def _build_headers(self) -> dict[str, str]:
         if self._auth_mode == "snowflake_token":
             return {
@@ -184,26 +288,26 @@ class SnowflakeAgentClient:
                 "Accept": "application/json",
             }
 
-        return {
+        headers = {
             "Authorization": f"Bearer {self._token}",
             "X-Snowflake-Authorization-Token-Type": "OAUTH",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
+        if self._role:
+            headers["X-Snowflake-Role"] = self._role
+        if self._warehouse:
+            headers["X-Snowflake-Warehouse"] = self._warehouse
+        return headers
 
     def _build_endpoint(self, agent: str | None) -> str:
-        if self._auth_mode != "snowflake_token":
-            return self._ENDPOINT
-
         if not agent:
-            raise SnowflakeAgentError(
-                "Local Snowflake-token Cortex Agent requests require a fully-qualified agent name."
-            )
+            return self._ENDPOINT
 
         parts = agent.split(".", 2)
         if len(parts) != 3 or not all(parts):
             raise SnowflakeAgentError(
-                "Expected fully-qualified agent name in DATABASE.SCHEMA.AGENT format for local requests."
+                "Expected fully-qualified agent name in DATABASE.SCHEMA.AGENT format."
             )
 
         database, schema, agent_name = parts
@@ -213,6 +317,26 @@ class SnowflakeAgentClient:
             f"/agents/{quote(agent_name, safe='')}:run"
         )
 
+    @staticmethod
+    def _normalize_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for message in messages:
+            role = message.get("role") or "user"
+            content = message.get("content", "")
+            if isinstance(content, str):
+                normalized_content: Any = [{"type": "text", "text": content}]
+            else:
+                normalized_content = content
+
+            normalized_message: dict[str, Any] = {
+                **message,
+                "role": role,
+                "content": normalized_content,
+            }
+            normalized_message.setdefault("status", "completed")
+            normalized.append(normalized_message)
+        return normalized
+
     # ------------------------------------------------------------------
     # Response parsing
     # ------------------------------------------------------------------
@@ -221,11 +345,14 @@ class SnowflakeAgentClient:
     def _extract_text_and_thread(
         data: dict[str, Any], fallback_thread_id: str | None
     ) -> tuple[str, str]:
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
         thread_id: str = (
             data.get("thread_id")
+            or metadata.get("thread_id")
             or fallback_thread_id
             or str(uuid.uuid4())
         )
+        thread_id = str(thread_id)
 
         # Normalise: some responses wrap content under "message", others don't
         message: dict[str, Any] | str = data.get("message") or data

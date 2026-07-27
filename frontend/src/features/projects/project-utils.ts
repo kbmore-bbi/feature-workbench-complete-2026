@@ -36,6 +36,11 @@ export function createProjectItem(params: {
   description: string;
   color: ProjectColorOption;
   createdBy?: ProjectPerson;
+  domain?: string;
+  intendedOutcome?: string;
+  businessProcess?: string;
+  owner?: string;
+  linkedProjectIds?: string[];
 }): ProjectItem {
   const timestamp = formatProjectTimestamp(new Date());
   const person =
@@ -64,5 +69,10 @@ export function createProjectItem(params: {
     draftCount: 0,
     createdBy: person,
     lastModifiedBy: person,
+    domain: params.domain?.trim() || undefined,
+    intendedOutcome: params.intendedOutcome?.trim() || undefined,
+    businessProcess: params.businessProcess?.trim() || undefined,
+    owner: params.owner?.trim() || undefined,
+    linkedProjectIds: params.linkedProjectIds ?? [],
   };
 }

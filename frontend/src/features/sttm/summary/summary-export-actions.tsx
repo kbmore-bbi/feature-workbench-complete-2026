@@ -1,12 +1,14 @@
 "use client";
+import { AiaBox, AiaButton, AiaCircularProgress, AiaStack } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { Box, Button, CircularProgress, Stack, Typography } from "@mui/material";
 import {
   CodeRoundedIcon,
   FileUploadOutlinedIcon,
   TableChartOutlinedIcon,
 } from "@/utils/icons";
 import { MappingProgressIndicator } from "@/features/sttm/shared/mapping-progress-indicator";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
 
 type SummaryExportActionsProps = {
   onExportExcel?: () => void;
@@ -22,22 +24,10 @@ type SummaryExportActionsProps = {
   sqlLabel?: string;
 };
 
-const exportButtonSx = {
-  height: 30,
-  minWidth: 0,
-  px: 1.25,
-  borderRadius: "8px",
-  textTransform: "none",
-  fontSize: "0.76rem",
-  fontWeight: 600,
-  backgroundColor: "#ffffff",
-  border: "1px solid #e5e7eb",
-  boxShadow: "none",
-  "&:hover": {
-    backgroundColor: "#f8fafc",
-    borderColor: "#dbe2ea",
-    boxShadow: "none",
-  },
+const SUCCESS_OUTLINED_BUTTON_PROPS = {
+  customBorderColor: "var(--aia-state-success-color)",
+  customColor: "var(--aia-state-success-color)",
+  customHoverBackgroundColor: "var(--aia-state-success-hover-bg)",
 } as const;
 
 export function SummaryExportActions({
@@ -56,71 +46,68 @@ export function SummaryExportActions({
   const showProgress = mappedCount !== undefined && totalCount !== undefined;
 
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "nowrap" }}>
-      <Stack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
-        <Button
+    <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1.25, flexWrap: "nowrap" }}>
+      <AiaStack direction="row" spacing={0.75} sx={{ flexShrink: 0 }}>
+        <AiaButton
+          data-tour={TOUR_TARGETS.sttmSummaryExcel}
           variant="outlined"
+          size="small"
+          {...SUCCESS_OUTLINED_BUTTON_PROPS}
           startIcon={
             excelLoading ? (
-              <CircularProgress size={14} sx={{ color: "#16a34a" }} />
+              <AiaCircularProgress size={14} color="inherit" />
             ) : (
-              <TableChartOutlinedIcon sx={{ fontSize: 16, color: "#16a34a" }} />
+              <TableChartOutlinedIcon />
             )
           }
           onClick={onExportExcel}
           disabled={excelLoading || sqlLoading}
-          sx={{
-            ...exportButtonSx,
-            color: "#166534",
-          }}
         >
           {excelLabel}
-        </Button>
-        <Button
+        </AiaButton>
+        <AiaButton
+          data-tour={TOUR_TARGETS.sttmSummarySql}
           variant="outlined"
+          size="small"
+          {...SUCCESS_OUTLINED_BUTTON_PROPS}
           startIcon={
             sqlLoading ? (
-              <CircularProgress size={14} sx={{ color: "#2563eb" }} />
+              <AiaCircularProgress size={14} color="inherit" />
             ) : (
-              <CodeRoundedIcon sx={{ fontSize: 16, color: "#2563eb" }} />
+              <CodeRoundedIcon />
             )
           }
           onClick={onExportSql}
           disabled={excelLoading || sqlLoading}
-          sx={{
-            ...exportButtonSx,
-            color: "#1d4ed8",
-          }}
         >
           {sqlLabel}
-        </Button>
-        <Button
+        </AiaButton>
+        <AiaButton
+          data-tour={TOUR_TARGETS.sttmSummaryPushToGit}
           variant="outlined"
+          size="small"
+          {...SUCCESS_OUTLINED_BUTTON_PROPS}
           startIcon={
             gitLoading ? (
-              <CircularProgress size={14} sx={{ color: "#7c3aed" }} />
+              <AiaCircularProgress size={14} color="inherit" />
             ) : (
-              <FileUploadOutlinedIcon sx={{ fontSize: 16, color: "#7c3aed" }} />
+              <FileUploadOutlinedIcon />
             )
           }
           onClick={onPushToGit}
           disabled={excelLoading || sqlLoading || gitLoading}
-          sx={{
-            ...exportButtonSx,
-            color: "#6d28d9",
-          }}
         >
           {gitLabel}
-        </Button>
-      </Stack>
+        </AiaButton>
+      </AiaStack>
       {excelLoading ? (
-        <Typography sx={{ fontSize: "0.72rem", color: "#64748b", minWidth: 210 }}>
+        <AiaText sx={{ fontSize: "0.72rem", color: "#64748b", minWidth: 210 }}>
           Building workbook and preparing the download...
-        </Typography>
+        </AiaText>
       ) : null}
       {showProgress ? (
         <MappingProgressIndicator mappedCount={mappedCount} totalCount={totalCount} />
       ) : null}
-    </Box>
+    </AiaBox>
   );
 }

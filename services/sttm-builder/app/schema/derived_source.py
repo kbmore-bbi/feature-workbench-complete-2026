@@ -26,6 +26,13 @@ class DerivedSourceDefinition(BaseModel):
     relationships: list[RelationshipContextItem] = Field(default_factory=list)
     filters: list[dict[str, Any]] = Field(default_factory=list)
     selected_columns_by_table: dict[str, list[str]] = Field(default_factory=dict)
+    purpose: str | None = None
+    business_description: str | None = None
+    output_columns: list[dict[str, Any]] = Field(default_factory=list)
+    column_semantics: list[dict[str, Any]] = Field(default_factory=list)
+    grain: str | None = None
+    keys: list[str] = Field(default_factory=list)
+    generated_by_request_id: str | None = None
 
 
 class DerivedSourceValidateRequest(DerivedSourceDefinition):
@@ -35,6 +42,7 @@ class DerivedSourceValidateRequest(DerivedSourceDefinition):
 class DerivedSourceValidateResponse(BaseModel):
     valid: bool = True
     message: str
+    sql_text: str | None = None
     preview_columns: list[DerivedSourcePreviewColumn]
     preview_rows: list[DerivedSourcePreviewRow]
 
@@ -47,7 +55,11 @@ class DerivedSourceRecord(DerivedSourceDefinition):
     semantic_bundle_id: str | None = None
     semantic_view_name: str | None = None
     semantic_level: str | None = None
+    semantic_projection: dict[str, Any] = Field(default_factory=dict)
     upstream_hash: str | None = None
+    source_dependency_hash: str | None = None
+    physical_view_name: str | None = None
+    semantic_quality: str = "incomplete"
     created_by: str | None = None
     created_at: str | None = None
     updated_at: str | None = None

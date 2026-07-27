@@ -66,6 +66,66 @@ export function buildSelectedSourceHierarchy(
     }
   }
 
+  // Saved/draft mappings restore selected tables and their attribute groups
+  // without eagerly reopening every catalog database/schema branch. A fresh
+  // database lookup therefore often has empty `schemas`, even though the
+  // workspace has valid selected columns. Merge those persisted groups into
+  // the display hierarchy so reopening a mapping does not depend on browsing
+  // Step 1 again.
+  for (const group of attributeGroups) {
+    const qualifiedName = String(group.qualifiedName || '').trim();
+    const parts = qualifiedName.split('.').map((part) => part.trim()).filter(Boolean);
+    if (parts.length < 3) {
+      continue;
+    }
+    const databaseName = parts[0];
+    const schemaName = parts.slice(1, -1).join('.');
+    const tableName = String(group.table || parts[parts.length - 1]).trim();
+    const databaseKey = databaseName.toUpperCase();
+    const schemaKey = schemaName.toUpperCase();
+    const tableKey = qualifiedName.toUpperCase();
+
+    let database = hierarchy.find(
+      (item) => item.dbId.toUpperCase() === databaseKey || item.dbName.toUpperCase() === databaseKey,
+    );
+    if (!database) {
+      database = {
+        dbId: databaseName,
+        dbName: databaseName,
+        schemas: [],
+      };
+      hierarchy.push(database);
+    }
+
+    let schema = database.schemas.find(
+      (item) =>
+        item.schemaName.toUpperCase() === schemaKey ||
+        item.schemaId.toUpperCase() === `${databaseKey}:${schemaKey}`,
+    );
+    if (!schema) {
+      schema = {
+        schemaId: `${databaseName}:${schemaName}`,
+        schemaName,
+        tables: [],
+      };
+      database.schemas.push(schema);
+    }
+
+    const existingTable = schema.tables.find(
+      (item) => item.qualifiedName.toUpperCase() === tableKey,
+    );
+    if (existingTable) {
+      existingTable.columns = group.columns;
+      continue;
+    }
+    schema.tables.push({
+      tableId: qualifiedName,
+      tableName,
+      qualifiedName,
+      columns: group.columns,
+    });
+  }
+
   return hierarchy;
 }
 

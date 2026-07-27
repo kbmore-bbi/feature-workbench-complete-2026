@@ -1,4 +1,6 @@
-import { Box, Typography } from '@mui/material';
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+
 import { formatSqlType } from '../mapping-utils';
 import { DATA_PREVIEW_ATTRIBUTE_TYPE_SX } from './mapping-data-preview-styles';
 
@@ -12,8 +14,8 @@ export function MappingDataPreviewAttributeLabel({
   dataType,
 }: MappingDataPreviewAttributeLabelProps) {
   return (
-    <Box sx={{ minWidth: 0 }}>
-      <Typography
+    <AiaBox sx={{ minWidth: 0 }}>
+      <AiaText
         sx={{
           fontSize: '0.8rem',
           fontWeight: 400,
@@ -23,10 +25,10 @@ export function MappingDataPreviewAttributeLabel({
         }}
       >
         {name}
-      </Typography>
-      <Typography sx={DATA_PREVIEW_ATTRIBUTE_TYPE_SX}>
+      </AiaText>
+      <AiaText sx={DATA_PREVIEW_ATTRIBUTE_TYPE_SX}>
         {dataType ? formatSqlType(dataType).toLowerCase() : '—'}
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }

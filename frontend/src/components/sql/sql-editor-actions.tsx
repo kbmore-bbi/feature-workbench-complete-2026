@@ -1,7 +1,8 @@
 'use client';
+import { AiaBox, AiaIconButton, AiaTooltip } from '@/components/ui';
 
 import { useCallback, useRef } from 'react';
-import { Box, IconButton, Tooltip } from '@mui/material';
+
 import { ContentCopyRoundedIcon, UploadFileRoundedIcon } from '@/utils/icons';
 import { SQL_TOOLBAR_ICON_BUTTON_SX } from './sql-styles';
 
@@ -72,26 +73,26 @@ export function SqlEditorActions({
   }
 
   return (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+    <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
       {copyFeedback ? (
-        <Box component="span" sx={{ fontSize: '0.7rem', color: '#86efac', fontWeight: 600 }}>
+        <AiaBox component="span" sx={{ fontSize: '0.7rem', color: '#86efac', fontWeight: 600 }}>
           {copyFeedback}
-        </Box>
+        </AiaBox>
       ) : null}
 
       {showCopy ? (
-        <Tooltip title="Copy SQL" arrow placement="top">
+        <AiaTooltip title="Copy SQL" arrow placement="top">
           <span>
-            <IconButton
+            <AiaIconButton
               onClick={handleCopy}
               disabled={!value.trim()}
               aria-label="Copy SQL"
               sx={SQL_TOOLBAR_ICON_BUTTON_SX}
             >
               <ContentCopyRoundedIcon sx={{ fontSize: 18 }} />
-            </IconButton>
+            </AiaIconButton>
           </span>
-        </Tooltip>
+        </AiaTooltip>
       ) : null}
 
       {!readOnly && showUpload ? (
@@ -103,17 +104,17 @@ export function SqlEditorActions({
             hidden
             onChange={handleUpload}
           />
-          <Tooltip title="Upload SQL file" arrow placement="top">
-            <IconButton
+          <AiaTooltip title="Upload SQL file" arrow placement="top">
+            <AiaIconButton
               onClick={() => fileInputRef.current?.click()}
               aria-label="Upload SQL file"
               sx={SQL_TOOLBAR_ICON_BUTTON_SX}
             >
               <UploadFileRoundedIcon sx={{ fontSize: 18 }} />
-            </IconButton>
-          </Tooltip>
+            </AiaIconButton>
+          </AiaTooltip>
         </>
       ) : null}
-    </Box>
+    </AiaBox>
   );
 }

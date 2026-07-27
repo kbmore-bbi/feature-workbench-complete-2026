@@ -10,6 +10,9 @@ def test_preflight_redacts_message_and_strips_sample_values() -> None:
         "request_id": "req-1",
         "operation": "sttm.chat",
         "context": {
+            "workspace_context": {
+                "captured_at": "2026-07-20T05:19:27.123456+00:00",
+            },
             "semantic_context": [
                 {
                     "table": {"database": "DB", "schema": "SCH", "table": "SRC"},
@@ -39,6 +42,10 @@ def test_preflight_redacts_message_and_strips_sample_values() -> None:
     )
 
     assert sanitized["context"]["trace_id"] == "trace-1"
+    assert (
+        sanitized["context"]["workspace_context"]["captured_at"]
+        == "2026-07-20T05:19:27.123456+00:00"
+    )
     assert sanitized["data"]["message"] == "Please email [REDACTED_EMAIL] with the latest mapping."
     assert (
         sanitized["context"]["semantic_context"][0]["semantic_model"]["attributes"][0]["sample_values"]

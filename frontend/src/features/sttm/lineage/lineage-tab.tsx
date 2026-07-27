@@ -1,4 +1,6 @@
 "use client";
+import { AiaBox, AiaDivider, AiaIconButton, AiaChip, AiaPaper, AiaStack } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import { AutoFixHighRoundedIcon, CloseRoundedIcon, FilterAltRoundedIcon, HubRoundedIcon, NorthEastRoundedIcon } from '@/utils/icons';
 import {
   startTransition,
@@ -20,25 +22,11 @@ import {
   type Edge,
   type EdgeProps,
   type Node,
+  type ReactFlowInstance,
   useEdgesState,
   useNodesState,
 } from "@xyflow/react";
 
-
-
-
-
-
-
-import {
-  Box,
-  Chip,
-  Divider,
-  IconButton,
-  Paper,
-  Stack,
-  Typography,
-} from "@mui/material";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
 import { TableNode, type TableNodeData } from "@/features/sttm/source-target/table-node";
 import { LineageWorkspaceHeader } from "./lineage-workspace-header";
@@ -115,26 +103,19 @@ function LineageOperationChip({
   const colors = toneColors(operation.tone);
 
   return (
-    <Box
+    <AiaChip
+      label={operation.label}
+      size="small"
+      icon={<OperationIcon icon={operation.icon} fontSize={compact ? 12 : 14} />}
+      customBackgroundColor={colors.bg}
+      customColor={colors.fg}
+      customBorderColor={colors.border}
       sx={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 0.6,
-        px: compact ? 0.7 : 0.95,
-        py: compact ? 0.3 : 0.48,
-        borderRadius: "999px",
-        backgroundColor: colors.bg,
-        color: colors.fg,
-        border: `1px solid ${colors.border}`,
+        height: compact ? 24 : 26,
         fontSize: compact ? 10.5 : 11.5,
         fontWeight: 800,
-        lineHeight: 1,
-        whiteSpace: "nowrap",
       }}
-    >
-      <OperationIcon icon={operation.icon} />
-      <span>{operation.label}</span>
-    </Box>
+    />
   );
 }
 
@@ -142,7 +123,7 @@ function LineageOperationBadge({ operation }: { operation: LineageEdgeOperation 
   const colors = toneColors(operation.tone);
 
   return (
-    <Box
+    <AiaBox
       sx={{
         width: 30,
         height: 30,
@@ -158,7 +139,7 @@ function LineageOperationBadge({ operation }: { operation: LineageEdgeOperation 
       title={operation.label}
     >
       <OperationIcon icon={operation.icon} fontSize={17} />
-    </Box>
+    </AiaBox>
   );
 }
 
@@ -202,7 +183,7 @@ function LineageEdgeView({
       />
 
       <EdgeLabelRenderer>
-        <Box
+        <AiaBox
           sx={{
             position: "absolute",
             transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)`,
@@ -210,7 +191,7 @@ function LineageEdgeView({
             zIndex: 20,
           }}
         >
-          <Paper
+          <AiaPaper
             elevation={0}
             component="button"
             type="button"
@@ -240,7 +221,7 @@ function LineageEdgeView({
               />
             ))}
             {extraCount > 0 ? (
-              <Box
+              <AiaBox
                 sx={{
                   minWidth: 24,
                   height: 24,
@@ -256,16 +237,108 @@ function LineageEdgeView({
                 }}
               >
                 +{extraCount}
-              </Box>
+              </AiaBox>
             ) : null}
-          </Paper>
-        </Box>
+          </AiaPaper>
+        </AiaBox>
       </EdgeLabelRenderer>
     </>
   );
 }
 
 const edgeTypes = { lineageEdge: LineageEdgeView };
+
+const LINEAGE_FIT_VIEW_OPTIONS = {
+  padding: 0.26,
+  minZoom: 0.25,
+  maxZoom: 1,
+  duration: 180,
+} as const;
+
+type LineageFlowCanvasProps = {
+  layoutSignature: string;
+  nodes: Node<TableNodeData>[];
+  edges: Edge<LineageEdgeData>[];
+  onNodesChange: ReturnType<typeof useNodesState<Node<TableNodeData>>>[2];
+  onEdgesChange: ReturnType<typeof useEdgesState<Edge<LineageEdgeData>>>[2];
+  onInspectNode: (nodeId: string) => void;
+  onInspectEdge: (edgeId: string) => void;
+  onPaneClick: () => void;
+};
+
+function LineageFlowCanvas({
+  layoutSignature,
+  nodes,
+  edges,
+  onNodesChange,
+  onEdgesChange,
+  onInspectNode,
+  onInspectEdge,
+  onPaneClick,
+}: LineageFlowCanvasProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const flowInstanceRef = useRef<
+    ReactFlowInstance<Node<TableNodeData>, Edge<LineageEdgeData>> | null
+  >(null);
+  const fitFrameRef = useRef<number | null>(null);
+
+  const scheduleFitView = useCallback(() => {
+    const instance = flowInstanceRef.current;
+    const host = hostRef.current;
+    if (!instance || !host || nodes.length === 0 || host.clientHeight < 80) {
+      return;
+    }
+    if (fitFrameRef.current !== null) {
+      window.cancelAnimationFrame(fitFrameRef.current);
+    }
+    fitFrameRef.current = window.requestAnimationFrame(() => {
+      fitFrameRef.current = null;
+      void instance.fitView(LINEAGE_FIT_VIEW_OPTIONS);
+    });
+  }, [nodes.length]);
+
+  useEffect(() => {
+    scheduleFitView();
+    const host = hostRef.current;
+    if (!host) return;
+    const observer = new ResizeObserver(scheduleFitView);
+    observer.observe(host);
+    return () => {
+      observer.disconnect();
+      if (fitFrameRef.current !== null) {
+        window.cancelAnimationFrame(fitFrameRef.current);
+      }
+    };
+  }, [layoutSignature, scheduleFitView]);
+
+  return (
+    <AiaBox ref={hostRef} sx={{ flex: 1, minHeight: 0, height: "100%", position: "relative" }}>
+      <ReactFlow
+        minZoom={0.25}
+        maxZoom={1.2}
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
+        onInit={(instance) => {
+          flowInstanceRef.current = instance;
+          scheduleFitView();
+        }}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeClick={(_, node) => onInspectNode(node.id)}
+        onEdgeClick={(_, edge) => onInspectEdge(edge.id)}
+        onPaneClick={onPaneClick}
+        proOptions={{ hideAttribution: true }}
+        defaultEdgeOptions={{ type: "lineageEdge", animated: false }}
+        style={{ width: "100%", height: "100%" }}
+      >
+        <Background variant={BackgroundVariant.Dots} gap={26} size={1.2} color="#dbe2ea" />
+        <Controls position="bottom-right" style={{ marginBottom: 16, marginRight: 16 }} />
+      </ReactFlow>
+    </AiaBox>
+  );
+}
 
 function estimateNodeWidth(node: LineageGraphNode) {
   const longestColumnLength = node.columns.reduce((longest, column) => {
@@ -596,6 +669,7 @@ export default function LineageTab() {
     return graph.nodes
       .filter((node) => node.kind === "source" || node.kind === "target")
       .map((node) => ({
+        id: node.id,
         label: node.label,
         color:
           node.kind === "target"
@@ -614,24 +688,29 @@ export default function LineageTab() {
   );
 
   return (
-    <Box
+    <AiaBox
       sx={{
         flex: 1,
         minWidth: 0,
         minHeight: 0,
+        height: "100%",
         display: "grid",
         gridTemplateColumns: { xs: "1fr", xl: isDetailsOpen ? "minmax(0, 1fr) 360px" : "1fr" },
+        gridTemplateRows: isDetailsOpen
+          ? { xs: "minmax(0, 1fr) minmax(280px, 40vh)", xl: "minmax(0, 1fr)" }
+          : "minmax(0, 1fr)",
         gap: 2,
         p: 2,
         background:
           "radial-gradient(circle at top right, rgba(191, 219, 254, 0.28), transparent 28%), linear-gradient(180deg, #f8fafc 0%, #ffffff 100%)",
       }}
     >
-      <Paper
+      <AiaPaper
         elevation={0}
         sx={{
           minWidth: 0,
           minHeight: 0,
+          height: "100%",
           borderRadius: "22px",
           border: "1px solid #e2e8f0",
           overflow: "hidden",
@@ -646,9 +725,9 @@ export default function LineageTab() {
           onExpandAll={() => setExpandAllToken((token) => token + 1)}
         />
 
-        <Box sx={{ flex: 1, minHeight: 0, position: "relative" }}>
+        <AiaBox sx={{ flex: 1, minHeight: 0, height: "100%", position: "relative", display: "flex", flexDirection: "column" }}>
           {nodes.length === 0 ? (
-            <Box
+            <AiaBox
               sx={{
                 position: "absolute",
                 inset: 0,
@@ -660,53 +739,40 @@ export default function LineageTab() {
                 textAlign: "center",
               }}
             >
-              <Box sx={{ maxWidth: 420 }}>
-                <Typography sx={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
+              <AiaBox sx={{ maxWidth: 420 }}>
+                <AiaText sx={{ fontSize: 15, fontWeight: 700, color: "#0f172a" }}>
                   Lineage will appear after table selection
-                </Typography>
-                <Typography sx={{ fontSize: 13.5, color: "#64748b", mt: 0.75, lineHeight: 1.55 }}>
+                </AiaText>
+                <AiaText sx={{ fontSize: 13.5, color: "#64748b", mt: 0.75, lineHeight: 1.55 }}>
                   Once source and target tables are selected, this canvas will show table joins
                   and target mappings.
-                </Typography>
-              </Box>
-            </Box>
+                </AiaText>
+              </AiaBox>
+            </AiaBox>
           ) : null}
 
-          <ReactFlow
-            fitView
-            minZoom={0.25}
-            maxZoom={1.2}
-            fitViewOptions={{ padding: 0.26, minZoom: 0.25, maxZoom: 1 }}
-            nodes={nodes}
-            edges={edges}
-            nodeTypes={nodeTypes}
-            edgeTypes={edgeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            onNodeClick={(_, node) => handleInspectNode(node.id)}
-            onEdgeClick={(_, edge) => handleInspectEdge(edge.id)}
-            onPaneClick={() => setFocus({ kind: "overview" })}
-            proOptions={{ hideAttribution: true }}
-            defaultEdgeOptions={{ type: "lineageEdge", animated: false }}
-            style={{ width: "100%", height: "100%" }}
-          >
-            <Background
-              variant={BackgroundVariant.Dots}
-              gap={26}
-              size={1.2}
-              color="#dbe2ea"
+          {nodes.length > 0 ? (
+            <LineageFlowCanvas
+              layoutSignature={layoutSignature}
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              onInspectNode={handleInspectNode}
+              onInspectEdge={handleInspectEdge}
+              onPaneClick={() => setFocus({ kind: "overview" })}
             />
-            <Controls position="bottom-right" style={{ marginBottom: 16, marginRight: 16 }} />
-          </ReactFlow>
-        </Box>
-      </Paper>
+          ) : null}
+        </AiaBox>
+      </AiaPaper>
 
       {isDetailsOpen ? (
-        <Paper
+        <AiaPaper
           elevation={0}
           sx={{
             minWidth: 0,
             minHeight: 0,
+            height: "100%",
             borderRadius: "22px",
             border: "1px solid #e2e8f0",
             backgroundColor: "#fff",
@@ -715,7 +781,7 @@ export default function LineageTab() {
             overflow: "hidden",
           }}
         >
-          <Box
+          <AiaBox
             sx={{
               px: 2.25,
               py: 1.85,
@@ -726,27 +792,27 @@ export default function LineageTab() {
               gap: 1,
             }}
           >
-            <Box>
-              <Typography sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
+            <AiaBox>
+              <AiaText sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
                 Lineage Details
-              </Typography>
-              <Typography sx={{ fontSize: 12.5, color: "#64748b", mt: 0.6 }}>
+              </AiaText>
+              <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.6 }}>
                 Click any card or path badge to inspect joins, filters, and mapping logic.
-              </Typography>
-            </Box>
-            <IconButton
+              </AiaText>
+            </AiaBox>
+            <AiaIconButton
               size="small"
               onClick={() => setIsDetailsOpen(false)}
               sx={{ color: "#64748b", mt: -0.25 }}
             >
               <CloseRoundedIcon fontSize="small" />
-            </IconButton>
-          </Box>
+            </AiaIconButton>
+          </AiaBox>
 
-          <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
-            <Stack spacing={1.5}>
+          <AiaBox sx={{ flex: 1, minHeight: 0, overflow: "auto", p: 2 }}>
+            <AiaStack spacing={1.5}>
               {selectedTargetColumn ? (
-                <Box
+                <AiaBox
                   sx={{
                     p: 1.7,
                     borderRadius: "18px",
@@ -754,37 +820,38 @@ export default function LineageTab() {
                     border: "1px solid #bfd9e5",
                   }}
                 >
-                  <Stack direction="row" spacing={0.8} useFlexGap sx={{ flexWrap: "wrap", mb: 1 }}>
-                    <Chip
+                  <AiaStack direction="row" spacing={0.8} useFlexGap sx={{ flexWrap: "wrap", mb: 1 }}>
+                    <AiaChip
                       label="Column focus"
                       size="small"
-                      sx={{
-                        bgcolor: "#d7eef7",
-                        color: "#003D59",
-                        fontWeight: 800,
-                      }}
+                      color="primary"
+                      customBackgroundColor="#d7eef7"
+                      customColor="#003D59"
+                      customBorderColor="#bfd9e5"
+                      sx={{ fontWeight: 800 }}
                     />
-                    <Chip
+                    <AiaChip
                       label={`${focusedMappings.length} mapping source${focusedMappings.length === 1 ? "" : "s"}`}
                       size="small"
+                      color="default"
                       sx={{ fontWeight: 700 }}
                     />
-                  </Stack>
-                  <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
+                  </AiaStack>
+                  <AiaText sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
                     {selectedTargetColumn}
-                  </Typography>
-                  <Typography sx={{ fontSize: 12.5, color: "#475569", mt: 0.7, lineHeight: 1.55 }}>
+                  </AiaText>
+                  <AiaText sx={{ fontSize: 12.5, color: "#475569", mt: 0.7, lineHeight: 1.55 }}>
                     The canvas is currently focused on the upstream lineage that lands in this target column.
-                  </Typography>
-                </Box>
+                  </AiaText>
+                </AiaBox>
               ) : null}
 
               {focusedMappings.length > 0 ? (
-                <Box sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
-                  <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
+                <AiaBox sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
+                  <AiaText sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
                     Column lineage
-                  </Typography>
-                  <Stack spacing={1.15}>
+                  </AiaText>
+                  <AiaStack spacing={1.15}>
                     {focusedMappings.map(({ edgeId, sourceLabel, mapping }) => (
                       <LineageMappingCard
                         key={`${edgeId}:${mapping.mappingId}`}
@@ -792,18 +859,18 @@ export default function LineageTab() {
                         sourceLabel={sourceLabel}
                       />
                     ))}
-                  </Stack>
-                </Box>
+                  </AiaStack>
+                </AiaBox>
               ) : null}
 
               {focusedPrepEdges.length > 0 ? (
-                <Box sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
-                  <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
+                <AiaBox sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
+                  <AiaText sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
                     Upstream prep path
-                  </Typography>
-                  <Stack spacing={1.1}>
+                  </AiaText>
+                  <AiaStack spacing={1.1}>
                     {focusedPrepEdges.map((edge) => (
-                      <Box
+                      <AiaBox
                         key={edge.id}
                         sx={{
                           p: 1.15,
@@ -812,7 +879,7 @@ export default function LineageTab() {
                           backgroundColor: "#fff",
                         }}
                       >
-                        <Stack direction="row" spacing={0.7} useFlexGap sx={{ flexWrap: "wrap", mb: 0.8 }}>
+                        <AiaStack direction="row" spacing={0.7} useFlexGap sx={{ flexWrap: "wrap", mb: 0.8 }}>
                           {edge.operations.map((operation, index) => (
                             <LineageOperationChip
                               key={`${edge.id}-${operation.label}-${index}`}
@@ -820,17 +887,17 @@ export default function LineageTab() {
                               compact
                             />
                           ))}
-                        </Stack>
-                        <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>
+                        </AiaStack>
+                        <AiaText sx={{ fontSize: 12.5, fontWeight: 700, color: "#0f172a" }}>
                           {edge.sourceLabel} → {edge.targetLabel}
-                        </Typography>
-                        <Typography sx={{ fontSize: 12, color: "#64748b", mt: 0.45 }}>
+                        </AiaText>
+                        <AiaText sx={{ fontSize: 12, color: "#64748b", mt: 0.45 }}>
                           {edge.subtitle}
-                        </Typography>
+                        </AiaText>
                         {edge.conditions.length > 0 ? (
-                          <Stack spacing={0.55} sx={{ mt: 0.9 }}>
+                          <AiaStack spacing={0.55} sx={{ mt: 0.9 }}>
                             {edge.conditions.map((condition, index) => (
-                              <Typography
+                              <AiaText
                                 key={`${edge.id}-condition-${index}`}
                                 sx={{
                                   fontSize: 12,
@@ -840,31 +907,31 @@ export default function LineageTab() {
                                 }}
                               >
                                 {condition.leftColumn} {condition.operator} {condition.rightColumn}
-                              </Typography>
+                              </AiaText>
                             ))}
-                          </Stack>
+                          </AiaStack>
                         ) : null}
                         {edge.filters.length > 0 ? (
-                          <Stack spacing={0.55} sx={{ mt: 0.9 }}>
+                          <AiaStack spacing={0.55} sx={{ mt: 0.9 }}>
                             {edge.filters.flatMap((group) => describeRuleGroup(group)).map((text, index) => (
-                              <Typography
+                              <AiaText
                                 key={`${edge.id}-filter-${index}`}
                                 sx={{ fontSize: 12, color: "#475569", lineHeight: 1.5 }}
                               >
                                 {text}
-                              </Typography>
+                              </AiaText>
                             ))}
-                          </Stack>
+                          </AiaStack>
                         ) : null}
-                      </Box>
+                      </AiaBox>
                     ))}
-                  </Stack>
-                </Box>
+                  </AiaStack>
+                </AiaBox>
               ) : null}
 
               {focusedNode ? (
-                <Stack spacing={1.5}>
-                  <Box
+                <AiaStack spacing={1.5}>
+                  <AiaBox
                     sx={{
                       p: 1.7,
                       borderRadius: "18px",
@@ -872,73 +939,73 @@ export default function LineageTab() {
                       border: `1px solid ${focusedNode.accentColor}33`,
                     }}
                   >
-                    <Stack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1 }}>
-                      <Chip
+                    <AiaStack direction="row" spacing={1} sx={{ alignItems: "center", mb: 1 }}>
+                      <AiaChip
                         label={focusedNode.tag}
                         size="small"
-                        sx={{
-                          backgroundColor: `${focusedNode.accentColor}18`,
-                          color: focusedNode.accentColor,
-                          fontWeight: 800,
-                        }}
+                        customBackgroundColor={`${focusedNode.accentColor}18`}
+                        customColor={focusedNode.accentColor}
+                        customBorderColor={`${focusedNode.accentColor}33`}
+                        sx={{ fontWeight: 800 }}
                       />
-                      <Chip label={readableLineageDepth(focusedNode)} size="small" sx={{ fontWeight: 700 }} />
-                    </Stack>
-                    <Typography sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
+                      <AiaChip
+                        label={readableLineageDepth(focusedNode)}
+                        size="small"
+                        color="default"
+                        sx={{ fontWeight: 700 }}
+                      />
+                    </AiaStack>
+                    <AiaText sx={{ fontSize: 16, fontWeight: 800, color: "#0f172a" }}>
                       {focusedNode.label}
-                    </Typography>
-                    <Typography sx={{ fontSize: 12.5, color: "#64748b", mt: 0.6 }}>
+                    </AiaText>
+                    <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.6 }}>
                       {focusedNode.database}.{focusedNode.schema}
-                    </Typography>
-                    <Typography sx={{ fontSize: 12.5, color: "#334155", mt: 1.1, lineHeight: 1.55 }}>
+                    </AiaText>
+                    <AiaText sx={{ fontSize: 12.5, color: "#334155", mt: 1.1, lineHeight: 1.55 }}>
                       {focusedNode.summary}
-                    </Typography>
-                  </Box>
+                    </AiaText>
+                  </AiaBox>
 
-                  <Box sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
-                    <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
+                  <AiaBox sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
+                    <AiaText sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
                       Quick stats
-                    </Typography>
-                    <Stack spacing={0.8}>
-                      <Typography sx={{ fontSize: 12.5, color: "#475569" }}>
+                    </AiaText>
+                    <AiaStack spacing={0.8}>
+                      <AiaText sx={{ fontSize: 12.5, color: "#475569" }}>
                         {focusedNode.colCount} visible columns
-                      </Typography>
-                      <Typography sx={{ fontSize: 12.5, color: "#475569" }}>
+                      </AiaText>
+                      <AiaText sx={{ fontSize: 12.5, color: "#475569" }}>
                         {focusedNode.highlightedColumns.length} columns participate in the current lineage focus
-                      </Typography>
-                    </Stack>
-                  </Box>
+                      </AiaText>
+                    </AiaStack>
+                  </AiaBox>
 
-                  <Box sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
-                    <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
+                  <AiaBox sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
+                    <AiaText sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
                       Active columns
-                    </Typography>
+                    </AiaText>
                     {focusedNode.highlightedColumns.length > 0 ? (
-                      <Stack direction="row" spacing={0.9} useFlexGap sx={{ flexWrap: "wrap" }}>
+                      <AiaStack direction="row" spacing={0.9} useFlexGap sx={{ flexWrap: "wrap" }}>
                         {focusedNode.highlightedColumns.map((column) => (
-                          <Chip
+                          <AiaChip
                             key={column}
                             label={column}
                             size="small"
-                            sx={{
-                              bgcolor: "#fff7ed",
-                              color: "#9a3412",
-                              border: "1px solid #fdba74",
-                              fontWeight: 700,
-                            }}
+                            color="warning"
+                            sx={{ fontWeight: 700 }}
                           />
                         ))}
-                      </Stack>
+                      </AiaStack>
                     ) : (
-                      <Typography sx={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.55 }}>
+                      <AiaText sx={{ fontSize: 12.5, color: "#64748b", lineHeight: 1.55 }}>
                         This table is part of the visible lineage context even though no specific column is in focus yet.
-                      </Typography>
+                      </AiaText>
                     )}
-                  </Box>
-                </Stack>
+                  </AiaBox>
+                </AiaStack>
               ) : focusedEdge ? (
-                <Stack spacing={1.5}>
-                  <Box
+                <AiaStack spacing={1.5}>
+                  <AiaBox
                     sx={{
                       p: 1.7,
                       borderRadius: "18px",
@@ -946,31 +1013,31 @@ export default function LineageTab() {
                       backgroundColor: "#f8fafc",
                     }}
                   >
-                    <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", mb: 1.2 }}>
+                    <AiaStack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap", mb: 1.2 }}>
                       {focusedEdge.operations.map((operation, index) => (
                         <LineageOperationChip
                           key={`${focusedEdge.id}-${operation.label}-${index}`}
                           operation={operation}
                         />
                       ))}
-                    </Stack>
-                    <Typography sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
+                    </AiaStack>
+                    <AiaText sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
                       {readableNodeLabel(focusedEdge.source, graph.nodes)} →{" "}
                       {readableNodeLabel(focusedEdge.target, graph.nodes)}
-                    </Typography>
-                    <Typography sx={{ fontSize: 12.5, color: "#64748b", mt: 0.55 }}>
+                    </AiaText>
+                    <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.55 }}>
                       {focusedEdge.subtitle}
-                    </Typography>
-                  </Box>
+                    </AiaText>
+                  </AiaBox>
 
                   {focusedEdge.conditions.length > 0 ? (
-                    <Box sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
-                      <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
+                    <AiaBox sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
+                      <AiaText sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
                         Join or lineage conditions
-                      </Typography>
-                      <Stack spacing={0.9}>
+                      </AiaText>
+                      <AiaStack spacing={0.9}>
                         {focusedEdge.conditions.map((condition, index) => (
-                          <Typography
+                          <AiaText
                             key={`${focusedEdge.id}-condition-${index}`}
                             sx={{
                               fontSize: 12.5,
@@ -980,36 +1047,36 @@ export default function LineageTab() {
                             }}
                           >
                             {condition.leftColumn} {condition.operator} {condition.rightColumn}
-                          </Typography>
+                          </AiaText>
                         ))}
-                      </Stack>
-                    </Box>
+                      </AiaStack>
+                    </AiaBox>
                   ) : null}
 
                   {focusedEdge.filters.length > 0 ? (
-                    <Box sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
-                      <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
+                    <AiaBox sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
+                      <AiaText sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
                         Applied filters
-                      </Typography>
-                      <Stack spacing={0.9}>
+                      </AiaText>
+                      <AiaStack spacing={0.9}>
                         {focusedEdge.filters.flatMap((group) => describeRuleGroup(group)).map((text, index) => (
-                          <Typography
+                          <AiaText
                             key={`${focusedEdge.id}-filter-${index}`}
                             sx={{ fontSize: 12.5, color: "#334155", lineHeight: 1.55 }}
                           >
                             {text}
-                          </Typography>
+                          </AiaText>
                         ))}
-                      </Stack>
-                    </Box>
+                      </AiaStack>
+                    </AiaBox>
                   ) : null}
 
                   {focusedEdge.mappings.length > 0 ? (
-                    <Box sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
-                      <Typography sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
+                    <AiaBox sx={{ p: 1.7, borderRadius: "18px", border: "1px solid #e2e8f0" }}>
+                      <AiaText sx={{ fontSize: 13, fontWeight: 800, color: "#0f172a", mb: 1 }}>
                         Target mappings
-                      </Typography>
-                      <Stack spacing={1.25}>
+                      </AiaText>
+                      <AiaStack spacing={1.25}>
                         {focusedEdge.mappings.map((mapping) => (
                           <LineageMappingCard
                             key={mapping.mappingId}
@@ -1017,12 +1084,12 @@ export default function LineageTab() {
                             sourceLabel={readableNodeLabel(focusedEdge.source, graph.nodes)}
                           />
                         ))}
-                      </Stack>
-                    </Box>
+                      </AiaStack>
+                    </AiaBox>
                   ) : null}
-                </Stack>
+                </AiaStack>
               ) : (
-                <Box
+                <AiaBox
                   sx={{
                     height: "100%",
                     display: "flex",
@@ -1032,29 +1099,29 @@ export default function LineageTab() {
                     p: 3,
                   }}
                 >
-                  <Box sx={{ maxWidth: 240 }}>
-                    <Typography sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
+                  <AiaBox sx={{ maxWidth: 240 }}>
+                    <AiaText sx={{ fontSize: 15, fontWeight: 800, color: "#0f172a" }}>
                       Select a lineage element
-                    </Typography>
-                    <Typography sx={{ fontSize: 12.5, color: "#64748b", mt: 0.9, lineHeight: 1.55 }}>
+                    </AiaText>
+                    <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.9, lineHeight: 1.55 }}>
                       Choose a card or path badge in the canvas to inspect how tables join, filter, and map into the target.
-                    </Typography>
-                  </Box>
-                </Box>
+                    </AiaText>
+                  </AiaBox>
+                </AiaBox>
               )}
-            </Stack>
-          </Box>
+            </AiaStack>
+          </AiaBox>
 
-          <Divider />
+          <AiaDivider />
 
-          <Box sx={{ px: 2, py: 1.4, backgroundColor: "#f8fafc" }}>
-            <Typography sx={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
+          <AiaBox sx={{ px: 2, py: 1.4, backgroundColor: "#f8fafc" }}>
+            <AiaText sx={{ fontSize: 12, color: "#64748b", lineHeight: 1.5 }}>
               The canvas stays in sync with Step 1 joins, selected derived sources, and every mapped column in the grid.
-            </Typography>
-          </Box>
-        </Paper>
+            </AiaText>
+          </AiaBox>
+        </AiaPaper>
       ) : null}
-    </Box>
+    </AiaBox>
   );
 }
 
@@ -1066,7 +1133,7 @@ function LineageMappingCard({
   sourceLabel: string;
 }) {
   return (
-    <Box
+    <AiaBox
       sx={{
         p: 1.15,
         borderRadius: "14px",
@@ -1074,27 +1141,28 @@ function LineageMappingCard({
         backgroundColor: "#fff",
       }}
     >
-      <Stack direction="row" spacing={0.8} useFlexGap sx={{ flexWrap: "wrap", mb: 0.85 }}>
-        <Chip
+      <AiaStack direction="row" spacing={0.8} useFlexGap sx={{ flexWrap: "wrap", mb: 0.85 }}>
+        <AiaChip
           size="small"
+          color="primary"
           label={mapping.targetColumn}
-          sx={{
-            bgcolor: "#dbeafe",
-            color: "#003D59",
-            fontWeight: 800,
-          }}
+          customBackgroundColor="#dbeafe"
+          customColor="#003D59"
+          customBorderColor="#bfdbfe"
+          sx={{ fontWeight: 800 }}
         />
-        <Chip
+        <AiaChip
           size="small"
+          color="default"
           label={sourceLabel}
-          sx={{
-            bgcolor: "#eef2ff",
-            color: "#334155",
-            fontWeight: 700,
-          }}
+          customBackgroundColor="#eef2ff"
+          customColor="#334155"
+          customBorderColor="#e2e8f0"
+          sx={{ fontWeight: 700 }}
         />
-        <Chip
+        <AiaChip
           size="small"
+          color={mapping.rule === "Direct" ? "primary" : "warning"}
           label={readableOperationLabel({
             icon: mapping.rule === "Direct" ? "direct" : "transform",
             label: mapping.rule,
@@ -1102,17 +1170,17 @@ function LineageMappingCard({
           })}
           sx={{ fontWeight: 700 }}
         />
-      </Stack>
-      <Typography sx={{ fontSize: 12.5, color: "#475569", lineHeight: 1.55 }}>
+      </AiaStack>
+      <AiaText sx={{ fontSize: 12.5, color: "#475569", lineHeight: 1.55 }}>
         Sources: {mapping.sourceColumns.map(formatColumnReference).join(", ")}
-      </Typography>
+      </AiaText>
       {mapping.description ? (
-        <Typography sx={{ fontSize: 12.5, color: "#334155", mt: 0.75, lineHeight: 1.55 }}>
+        <AiaText sx={{ fontSize: 12.5, color: "#334155", mt: 0.75, lineHeight: 1.55 }}>
           {mapping.description}
-        </Typography>
+        </AiaText>
       ) : null}
       {mapping.expression ? (
-        <Typography
+        <AiaText
           sx={{
             fontSize: 12,
             color: "#64748b",
@@ -1122,8 +1190,8 @@ function LineageMappingCard({
           }}
         >
           SQL: {mapping.expression}
-        </Typography>
+        </AiaText>
       ) : null}
-    </Box>
+    </AiaBox>
   );
 }

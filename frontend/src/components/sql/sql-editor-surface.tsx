@@ -1,7 +1,9 @@
 'use client';
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Typography } from '@mui/material';
+
 import { SqlHighlight } from './sql-highlight';
 import {
   SQL_EDITOR_COLORS,
@@ -89,7 +91,7 @@ export function SqlEditorSurface({
     const readOnlyLineHeight = compact ? 1.72 : 1.65;
 
     return (
-      <Box
+      <AiaBox
         sx={{
           flex: 1,
           minHeight: 0,
@@ -101,7 +103,7 @@ export function SqlEditorSurface({
         }}
       >
         {value.trim() ? (
-          <Box
+          <AiaBox
             component="pre"
             sx={{
               m: 0,
@@ -114,9 +116,9 @@ export function SqlEditorSurface({
             }}
           >
             <SqlHighlight text={value} tokens={highlightTokens} />
-          </Box>
+          </AiaBox>
         ) : (
-          <Typography
+          <AiaText
             sx={{
               fontFamily: SQL_MONO_FONT,
               fontSize: compact ? readOnlyFontSize : '0.78rem',
@@ -126,14 +128,14 @@ export function SqlEditorSurface({
             }}
           >
             {emptyText}
-          </Typography>
+          </AiaText>
         )}
-      </Box>
+      </AiaBox>
     );
   }
 
   return (
-    <Box
+    <AiaBox
       sx={{
         display: 'flex',
         flex: 1,
@@ -144,7 +146,7 @@ export function SqlEditorSurface({
       }}
     >
       {showLineNumbers ? (
-        <Box
+        <AiaBox
           sx={{
             width: SQL_EDITOR_METRICS.lineNumberWidth,
             flexShrink: 0,
@@ -154,7 +156,7 @@ export function SqlEditorSurface({
             position: 'relative',
           }}
         >
-          <Box
+          <AiaBox
             ref={lineNumbersRef}
             sx={{
               py: SQL_EDITOR_METRICS.paddingY,
@@ -171,14 +173,14 @@ export function SqlEditorSurface({
             }}
           >
             {Array.from({ length: lineCount }, (_, index) => (
-              <Box key={index + 1}>{index + 1}</Box>
+              <AiaBox key={index + 1}>{index + 1}</AiaBox>
             ))}
-          </Box>
-        </Box>
+          </AiaBox>
+        </AiaBox>
       ) : null}
 
-      <Box sx={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0 }}>
-        <Box
+      <AiaBox sx={{ position: 'relative', flex: 1, minWidth: 0, minHeight: 0 }}>
+        <AiaBox
           ref={overlayRef}
           aria-hidden
           sx={{
@@ -193,9 +195,9 @@ export function SqlEditorSurface({
           {highlightText ? (
             <SqlHighlight text={highlightText} tokens={highlightTokens} />
           ) : null}
-        </Box>
+        </AiaBox>
 
-        <Box
+        <AiaBox
           component="textarea"
           ref={textareaRef}
           value={value}
@@ -236,7 +238,7 @@ export function SqlEditorSurface({
             },
           }}
         />
-      </Box>
-    </Box>
+      </AiaBox>
+    </AiaBox>
   );
 }

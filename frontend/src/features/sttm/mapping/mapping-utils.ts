@@ -1,5 +1,6 @@
 import type { ColumnGroup, DerivedSource, MappingState } from '@/features/sttm/types/sttm.types';
-import type { RelationshipContextItem, TableRef } from '@/types/api-contract';
+import type { RelationGraphContext, RelationshipContextItem, TableRef } from '@/types/api-contract';
+import type { JoinConfig } from '@/features/sttm/types/sttm.types';
 
 export type SourceColumnOption = {
   label: string;
@@ -10,6 +11,88 @@ export type SourceColumnOption = {
 
 export function tableAlias(tableName: string) {
   return tableName.toLowerCase();
+}
+
+function compilerRelationAlias(seed: string, index: number) {
+  const suffix = seed.split('.').pop()?.replace(/[^A-Za-z0-9_]/g, '_').toLowerCase();
+  return `${suffix || 'source'}_${index + 1}`;
+}
+
+export function buildCompilerRelationGraph(params: {
+  sourceTables: TableRef[];
+  sourceColumnsByTable?: Record<string, Array<{ name?: string | null; type?: string | null }>>;
+  derivedSources: DerivedSource[];
+  relationships: JoinConfig[];
+  mappings: MappingState[];
+}): RelationGraphContext {
+  const { sourceTables, sourceColumnsByTable = {}, derivedSources, relationships, mappings } = params;
+  const selectedDerived = derivedSources.filter((source) => source.isSelected);
+  const nodes: RelationGraphContext['nodes'] = [
+    ...sourceTables.map((table, index) => {
+      const relationId = qualifiedTableName(table);
+      return {
+        relation_id: relationId,
+        kind: 'PHYSICAL_TABLE' as const,
+        alias: compilerRelationAlias(relationId, index),
+        table,
+        output_columns: (sourceColumnsByTable[relationId] ?? []).map((column) => ({
+          name: column.name,
+          data_type: column.type,
+        })),
+      };
+    }),
+    ...selectedDerived.map((source, index) => ({
+      relation_id: source.id,
+      kind: 'DERIVED_SOURCE' as const,
+      alias: source.alias || compilerRelationAlias(source.sourceName || source.id, sourceTables.length + index),
+      derived_source_id: source.id,
+      physical_view_name: source.physicalViewName ?? null,
+      sql_text: source.sqlText ?? null,
+      output_columns: source.outputColumns ?? source.previewColumns?.map((column) => ({
+        name: column.name,
+        data_type: column.dataType,
+        is_primary_key: column.isPrimaryKey,
+      })) ?? [],
+      column_semantics: source.columnSemantics ?? [],
+      grain: source.grain ?? null,
+      keys: source.keys ?? [],
+      dependency_hash: source.sourceDependencyHash ?? source.upstreamHash ?? null,
+      parent_relation_ids: source.parentDerivedSourceIds ?? source.derivedSourceIds ?? [],
+    })),
+  ];
+  const nodeIds = new Set(nodes.map((node) => node.relation_id));
+  const edges = relationships
+    .filter((join) => join.leftTableId && join.rightTableId && nodeIds.has(join.leftTableId) && nodeIds.has(join.rightTableId))
+    .map((join, index) => ({
+      edge_id: join.id ?? `relation-edge-${index + 1}`,
+      left_relation_id: String(join.leftTableId),
+      right_relation_id: String(join.rightTableId),
+      join_type: join.joinType ?? 'INNER',
+      provenance: join.source ?? 'USER_DEFINED',
+      validation_status: join.locked ? 'validated' : 'selected',
+      conditions: (join.conditions ?? [])
+        .filter((condition) => condition.leftColumn && condition.rightColumn)
+        .map((condition) => ({
+          left_column: String(condition.leftColumn),
+          right_column: String(condition.rightColumn),
+          operator: condition.operator ?? '=',
+        })),
+    }))
+    .filter((edge) => edge.conditions.length > 0);
+  const value_bindings = mappings
+    .filter((mapping) => mapping.mappingMode === 'constant' && mapping.constantValue != null)
+    .map((mapping) => {
+      const placeholder = String(mapping.constantValue).trim().startsWith('$');
+      return {
+        binding_id: mapping.valueBindingIds?.[0] ?? mapping.id,
+        value: String(mapping.constantValue),
+        data_type: mapping.targetType || null,
+        is_placeholder: placeholder,
+        allow_project_specific_value: false,
+        resolution_status: placeholder ? 'placeholder_contract' : 'resolved',
+      };
+    });
+  return { nodes, edges, value_bindings };
 }
 
 function qualifiedTableName(table: TableRef) {
@@ -143,6 +226,9 @@ function applyPreviewTransform(
 }
 
 export function getMappingSourceColumnLabel(mapping: MappingState): string | null {
+  if (mapping.mappingMode === "constant") {
+    return mapping.constantValue?.trim() || null;
+  }
   const sourceColumns =
     mapping.sourceColumns && mapping.sourceColumns.length
       ? mapping.sourceColumns
@@ -175,6 +261,16 @@ function toSafePreviewText(value: unknown, maxLength = 160): string | null {
 }
 
 export function buildMappingDataPreview(mapping: MappingState): MappingDataPreviewResult {
+  if (mapping.mappingMode === "constant") {
+    const constantValue = toSafePreviewText(mapping.constantValue);
+    return {
+      sourceValue: constantValue,
+      transformedValue: constantValue,
+      displayValue: constantValue,
+      ruleLabel: "VALUE",
+      hasTransform: true,
+    };
+  }
   const sourceColumn = getMappingSourceColumnLabel(mapping);
   if (!sourceColumn) {
     return {
@@ -220,22 +316,18 @@ export function buildMappingDataPreview(mapping: MappingState): MappingDataPrevi
   };
 }
 
-export function typeChipSx(dataType?: string) {
+export function typeChipColor(dataType?: string): 'default' | 'primary' | 'secondary' | 'info' {
   const formatted = formatSqlType(dataType);
   const isNumeric =
     formatted === 'BIGINT' ||
     formatted === 'INT' ||
     formatted === 'DECIMAL' ||
     formatted === 'NUMBER';
-  return {
-    height: 20,
-    fontSize: '0.65rem',
-    borderRadius: '4px',
-    fontWeight: 700,
-    bgcolor: isNumeric ? '#1f2937' : '#f3f4f6',
-    color: isNumeric ? '#fff' : '#4b5563',
-    border: isNumeric ? 'none' : '1px solid #e5e7eb',
-  } as const;
+  const isDate = formatted === 'DATE' || formatted === 'TIMESTAMP';
+
+  if (isNumeric) return 'secondary';
+  if (isDate) return 'info';
+  return 'default';
 }
 
 export function getDerivedDisplayColumns(source: DerivedSource): Array<{ name: string; type: string }> {
@@ -244,6 +336,14 @@ export function getDerivedDisplayColumns(source: DerivedSource): Array<{ name: s
       name: column.name,
       type: column.dataType || '—',
     }));
+  }
+  if (source.outputColumns?.length) {
+    return source.outputColumns
+      .map((column) => ({
+        name: String(column.name ?? column.column_name ?? '').trim(),
+        type: String(column.data_type ?? column.dataType ?? column.type ?? '—'),
+      }))
+      .filter((column) => Boolean(column.name));
   }
   return (source.columns ?? [])
     .filter((column) => column.name)
@@ -391,6 +491,64 @@ function normalizeSourceExpression(
   return normalized;
 }
 
+function qualifyBareSourceIdentifiers(expression: string, sourceColumns: string[]) {
+  const candidates = new Map<string, Set<string>>();
+  for (const sourceColumn of sourceColumns) {
+    const normalized = String(sourceColumn || '').trim();
+    if (!normalized) continue;
+    const columnName = normalized.split('.').pop()?.trim();
+    if (!columnName) continue;
+    const key = columnName.toUpperCase();
+    const values = candidates.get(key) ?? new Set<string>();
+    values.add(normalized);
+    candidates.set(key, values);
+  }
+
+  let output = '';
+  let index = 0;
+  let quote: "'" | '"' | '`' | null = null;
+  while (index < expression.length) {
+    const character = expression[index];
+    if (quote) {
+      output += character;
+      if (character === quote) {
+        if (quote === "'" && expression[index + 1] === "'") {
+          output += expression[index + 1];
+          index += 2;
+          continue;
+        }
+        quote = null;
+      }
+      index += 1;
+      continue;
+    }
+    if (character === "'" || character === '"' || character === '`') {
+      quote = character;
+      output += character;
+      index += 1;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(character)) {
+      let end = index + 1;
+      while (end < expression.length && /[A-Za-z0-9_$]/.test(expression[end])) {
+        end += 1;
+      }
+      const token = expression.slice(index, end);
+      const prior = index > 0 ? expression[index - 1] : '';
+      const next = end < expression.length ? expression[end] : '';
+      const matches = candidates.get(token.toUpperCase());
+      output += prior !== '.' && next !== '.' && matches?.size === 1
+        ? [...matches][0]
+        : token;
+      index = end;
+      continue;
+    }
+    output += character;
+    index += 1;
+  }
+  return output;
+}
+
 export function buildFallbackSourceQuerySql(params: {
   sourceQuerySql?: string | null;
   sourceTables: TableRef[];
@@ -535,13 +693,22 @@ export function buildResolvedMappingExpression(
     derivedSources?: DerivedSource[];
   },
 ) {
+  if (mapping.mappingMode === "constant") {
+    return buildSnowflakeConstantExpression(mapping.constantValue, mapping.targetType);
+  }
   const sourceColumns =
     mapping.sourceColumns && mapping.sourceColumns.length
       ? mapping.sourceColumns
       : parseSourceColumns(mapping.sourceColumn);
 
   if (mapping.expression?.trim()) {
-    return normalizeSourceExpression(mapping.expression.trim(), params);
+    const normalizedHints = sourceColumns.map((item) =>
+      normalizeSourceExpression(item, params),
+    );
+    return qualifyBareSourceIdentifiers(
+      normalizeSourceExpression(mapping.expression.trim(), params),
+      normalizedHints,
+    );
   }
   if (!sourceColumns.length) {
     return 'NULL';
@@ -565,6 +732,41 @@ export function buildResolvedMappingExpression(
     return `NULLIF(${normalizedSourceColumns[0]}, '')`;
   }
   return normalizedSourceColumns[0];
+}
+
+function buildSnowflakeConstantExpression(
+  value: string | null | undefined,
+  targetType: string | null | undefined,
+) {
+  const trimmed = String(value ?? "").trim();
+  if (!trimmed || trimmed.toUpperCase() === "NULL") {
+    return "NULL";
+  }
+
+  const normalizedType = String(targetType ?? "").trim().toUpperCase();
+  if (
+    /^(NUMBER|DECIMAL|NUMERIC|INT|INTEGER|BIGINT|SMALLINT|FLOAT|DOUBLE|REAL)/.test(
+      normalizedType,
+    )
+    && /^[-+]?(?:\d+\.?\d*|\.\d+)$/.test(trimmed)
+  ) {
+    return trimmed;
+  }
+  if (
+    /^(BOOLEAN|BOOL)/.test(normalizedType)
+    && /^(TRUE|FALSE)$/i.test(trimmed)
+  ) {
+    return trimmed.toUpperCase();
+  }
+
+  const quoted = `'${trimmed.replaceAll("'", "''")}'`;
+  if (/^(DATE|TIME|TIMESTAMP)/.test(normalizedType)) {
+    return `CAST(${quoted} AS ${normalizedType})`;
+  }
+  if (/^(VARIANT|OBJECT|ARRAY)/.test(normalizedType)) {
+    return `PARSE_JSON(${quoted})`;
+  }
+  return quoted;
 }
 
 export function buildMappingSelectSql(params: {

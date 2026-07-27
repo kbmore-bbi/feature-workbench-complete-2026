@@ -1,8 +1,11 @@
+import base64
 import json
 import hashlib
 import uuid
 from typing import Any
 
+import sqlglot
+from sqlglot import exp
 from snowflake.snowpark import Session
 from snowflake.snowpark.types import StructField
 
@@ -35,7 +38,14 @@ class DerivedSourceService:
 
     @staticmethod
     def _json_literal(value: Any) -> str:
-        return "'" + json.dumps(value, default=str).replace("'", "''") + "'"
+        # Snowflake interprets backslash escapes inside ordinary SQL string
+        # literals. Embedding json.dumps() output directly can therefore turn
+        # JSON escapes such as ``\n`` into raw control characters before
+        # PARSE_JSON sees them. Base64 keeps the SQL literal ASCII-only and
+        # round-trips arbitrary agent-generated metadata safely.
+        payload = json.dumps(value, default=str, ensure_ascii=False).encode("utf-8")
+        encoded = base64.b64encode(payload).decode("ascii")
+        return f"BASE64_DECODE_STRING('{encoded}')"
 
     @staticmethod
     def _build_preview_column_names(fields: list[StructField]) -> list[str]:
@@ -78,11 +88,19 @@ class DerivedSourceService:
             FILTERS VARIANT,
             SELECTED_COLUMNS_BY_TABLE VARIANT,
             PREVIEW_COLUMNS VARIANT,
+            PURPOSE STRING,
+            BUSINESS_DESCRIPTION STRING,
+            OUTPUT_COLUMNS VARIANT,
+            COLUMN_SEMANTICS VARIANT,
+            SEMANTIC_PROJECTION VARIANT,
             LINEAGE_DEPTH NUMBER,
             SEMANTIC_BUNDLE_ID STRING,
             SEMANTIC_VIEW_NAME STRING,
             SEMANTIC_LEVEL STRING,
             UPSTREAM_HASH STRING,
+            SOURCE_DEPENDENCY_HASH STRING,
+            GENERATED_BY_REQUEST_ID STRING,
+            PHYSICAL_VIEW_NAME STRING,
             CREATED_BY STRING,
             CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
             UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
@@ -91,16 +109,6 @@ class DerivedSourceService:
         """
         try:
             self._session.sql(ddl).collect()
-            for column_ddl in (
-                "ADD COLUMN IF NOT EXISTS PARENT_DERIVED_SOURCE_IDS VARIANT",
-                "ADD COLUMN IF NOT EXISTS BASE_SOURCE_TABLES VARIANT",
-                "ADD COLUMN IF NOT EXISTS LINEAGE_DEPTH NUMBER",
-                "ADD COLUMN IF NOT EXISTS SEMANTIC_BUNDLE_ID STRING",
-                "ADD COLUMN IF NOT EXISTS SEMANTIC_VIEW_NAME STRING",
-                "ADD COLUMN IF NOT EXISTS SEMANTIC_LEVEL STRING",
-                "ADD COLUMN IF NOT EXISTS UPSTREAM_HASH STRING",
-            ):
-                self._session.sql(f"ALTER TABLE {self._table_name} {column_ddl}").collect()
         except Exception as exc:
             raise SnowflakeQueryError(
                 f"Failed to ensure derived sources table exists: {exc}"
@@ -117,9 +125,13 @@ class DerivedSourceService:
         )
 
     def validate_sql(self, body: DerivedSourceDefinition) -> DerivedSourceValidateResponse:
-        normalized_sql = body.sql_text.strip().rstrip(";")
+        normalized_sql = self._qualify_selected_source_tables(
+            body.sql_text.strip().rstrip(";"),
+            body.source_tables,
+        )
         if not normalized_sql:
             raise AppValidationError("Derived SQL cannot be empty.")
+        self._validate_select_only(normalized_sql)
 
         preview_query = f"SELECT * FROM ({normalized_sql}) AS DERIVED_SOURCE_PREVIEW LIMIT 5"
         try:
@@ -156,9 +168,94 @@ class DerivedSourceService:
 
         return DerivedSourceValidateResponse(
             message="SQL validated successfully.",
+            sql_text=normalized_sql,
             preview_columns=preview_columns,
             preview_rows=preview_rows,
         )
+
+    @staticmethod
+    def _qualify_selected_source_tables(sql_text: str, source_tables: list[TableRef]) -> str:
+        """Resolve Analyst logical table names against the selected physical graph.
+
+        Cortex Analyst can emit the semantic table's short name (for example
+        ``CONTACT_FAMILIES``), while the service session normally uses the STTM
+        metadata schema.  Executing that SQL unchanged therefore looks in the
+        wrong schema.  Only unqualified names that uniquely identify a selected
+        source are rewritten; CTE references and already-qualified objects are
+        preserved.
+        """
+        if not sql_text or not source_tables:
+            return sql_text
+        try:
+            statement = sqlglot.parse_one(sql_text, read="snowflake")
+        except Exception:
+            # The normal select-only validator returns the parse error with the
+            # established API contract.
+            return sql_text
+
+        cte_names = {
+            str(cte.alias_or_name or "").upper()
+            for cte in statement.find_all(exp.CTE)
+            if cte.alias_or_name
+        }
+        lookup: dict[str, list[TableRef]] = {}
+        for source in source_tables:
+            names = {
+                source.table.upper(),
+                f"{source.schema}_{source.table}".upper(),
+                f"{source.database}_{source.schema}_{source.table}".upper(),
+            }
+            for name in names:
+                lookup.setdefault(name, []).append(source)
+
+        changed = False
+        for table in statement.find_all(exp.Table):
+            if table.catalog or table.db:
+                continue
+            short_name = str(table.name or "").upper()
+            if not short_name or short_name in cte_names:
+                continue
+            matches = lookup.get(short_name, [])
+            unique = {item.qualified_name.upper(): item for item in matches}
+            if len(unique) > 1:
+                candidates = ", ".join(sorted(unique))
+                raise AppValidationError(
+                    f"Unqualified table '{table.name}' is ambiguous in the selected source graph. "
+                    f"Use one of: {candidates}."
+                )
+            if not unique:
+                continue
+            source = next(iter(unique.values()))
+            alias = table.args.get("alias")
+            table.set("catalog", exp.to_identifier(source.database))
+            table.set("db", exp.to_identifier(source.schema))
+            table.set("this", exp.to_identifier(source.table))
+            if alias is not None:
+                table.set("alias", alias)
+            changed = True
+
+        return statement.sql(dialect="snowflake", pretty=True) if changed else sql_text
+
+    @staticmethod
+    def _validate_select_only(sql_text: str) -> None:
+        try:
+            statements = sqlglot.parse(sql_text, read="snowflake")
+        except Exception as exc:
+            raise AppValidationError(f"Derived SQL could not be parsed: {exc}") from exc
+        if len(statements) != 1 or not isinstance(statements[0], exp.Query):
+            raise AppValidationError("Derived sources must contain one SELECT or CTE query.")
+        forbidden = (
+            exp.Insert,
+            exp.Update,
+            exp.Delete,
+            exp.Merge,
+            exp.Create,
+            exp.Alter,
+            exp.Drop,
+            exp.Command,
+        )
+        if any(isinstance(node, forbidden) for node in statements[0].walk()):
+            raise AppValidationError("Derived SQL must be read-only SELECT/CTE SQL.")
 
     def list_sources(self) -> list[DerivedSourceRecord]:
         try:
@@ -194,6 +291,9 @@ class DerivedSourceService:
     def save_source(self, body: DerivedSourceDefinition) -> DerivedSourceRecord:
         self.ensure_table_exists()
         validation = self.validate_sql(body)
+        persisted_sql = validation.sql_text or body.sql_text
+        if persisted_sql != body.sql_text:
+            body = body.model_copy(update={"sql_text": persisted_sql})
 
         source_id = body.derived_source_id or f"derived_{uuid.uuid4().hex[:12]}"
         current_user = self._current_user()
@@ -201,6 +301,32 @@ class DerivedSourceService:
         base_source_tables = self._resolve_base_source_tables(body, parent_records)
         lineage_depth = self._lineage_depth(parent_records)
         upstream_hash = self._upstream_hash(body, parent_records)
+        output_columns = self._reconcile_output_columns(
+            body.output_columns,
+            validation.preview_columns,
+        )
+        column_semantics = self._derive_column_semantics(
+            sql_text=body.sql_text,
+            output_columns=output_columns,
+            supplied=body.column_semantics,
+        )
+        semantic_quality, semantic_coverage_issues = self._semantic_quality(
+            body=body,
+            output_columns=output_columns,
+            column_semantics=column_semantics,
+        )
+        semantic_projection = self._build_virtual_semantic_projection(
+            source_id=source_id,
+            body=body,
+            output_columns=output_columns,
+            preview_columns=validation.preview_columns,
+            base_source_tables=base_source_tables,
+            lineage_depth=lineage_depth,
+            upstream_hash=upstream_hash,
+            column_semantics=column_semantics,
+            semantic_quality=semantic_quality,
+            semantic_coverage_issues=semantic_coverage_issues,
+        )
 
         merge_sql = f"""
         MERGE INTO {self._table_name} AS target
@@ -217,11 +343,18 @@ class DerivedSourceService:
                 PARSE_JSON({self._json_literal(body.filters)}) AS FILTERS,
                 PARSE_JSON({self._json_literal(body.selected_columns_by_table)}) AS SELECTED_COLUMNS_BY_TABLE,
                 PARSE_JSON({self._json_literal([column.model_dump() for column in validation.preview_columns])}) AS PREVIEW_COLUMNS,
+                {self._quote_literal(body.purpose or "")} AS PURPOSE,
+                {self._quote_literal(body.business_description or "")} AS BUSINESS_DESCRIPTION,
+                PARSE_JSON({self._json_literal(output_columns)}) AS OUTPUT_COLUMNS,
+                PARSE_JSON({self._json_literal(column_semantics)}) AS COLUMN_SEMANTICS,
+                PARSE_JSON({self._json_literal(semantic_projection)}) AS SEMANTIC_PROJECTION,
                 {lineage_depth} AS LINEAGE_DEPTH,
                 NULL AS SEMANTIC_BUNDLE_ID,
                 NULL AS SEMANTIC_VIEW_NAME,
                 NULL AS SEMANTIC_LEVEL,
                 {self._quote_literal(upstream_hash)} AS UPSTREAM_HASH,
+                {self._quote_literal(upstream_hash)} AS SOURCE_DEPENDENCY_HASH,
+                {self._quote_literal(body.generated_by_request_id or "")} AS GENERATED_BY_REQUEST_ID,
                 {self._quote_literal(current_user)} AS CREATED_BY
         ) AS source
         ON target.DERIVED_SOURCE_ID = source.DERIVED_SOURCE_ID
@@ -236,11 +369,18 @@ class DerivedSourceService:
             FILTERS = source.FILTERS,
             SELECTED_COLUMNS_BY_TABLE = source.SELECTED_COLUMNS_BY_TABLE,
             PREVIEW_COLUMNS = source.PREVIEW_COLUMNS,
+            PURPOSE = source.PURPOSE,
+            BUSINESS_DESCRIPTION = source.BUSINESS_DESCRIPTION,
+            OUTPUT_COLUMNS = source.OUTPUT_COLUMNS,
+            COLUMN_SEMANTICS = source.COLUMN_SEMANTICS,
+            SEMANTIC_PROJECTION = source.SEMANTIC_PROJECTION,
             LINEAGE_DEPTH = source.LINEAGE_DEPTH,
             SEMANTIC_BUNDLE_ID = COALESCE(target.SEMANTIC_BUNDLE_ID, source.SEMANTIC_BUNDLE_ID),
             SEMANTIC_VIEW_NAME = COALESCE(target.SEMANTIC_VIEW_NAME, source.SEMANTIC_VIEW_NAME),
             SEMANTIC_LEVEL = COALESCE(target.SEMANTIC_LEVEL, source.SEMANTIC_LEVEL),
             UPSTREAM_HASH = source.UPSTREAM_HASH,
+            SOURCE_DEPENDENCY_HASH = source.SOURCE_DEPENDENCY_HASH,
+            GENERATED_BY_REQUEST_ID = source.GENERATED_BY_REQUEST_ID,
             UPDATED_AT = CURRENT_TIMESTAMP(),
             IS_ACTIVE = TRUE
         WHEN NOT MATCHED THEN INSERT (
@@ -255,11 +395,18 @@ class DerivedSourceService:
             FILTERS,
             SELECTED_COLUMNS_BY_TABLE,
             PREVIEW_COLUMNS,
+            PURPOSE,
+            BUSINESS_DESCRIPTION,
+            OUTPUT_COLUMNS,
+            COLUMN_SEMANTICS,
+            SEMANTIC_PROJECTION,
             LINEAGE_DEPTH,
             SEMANTIC_BUNDLE_ID,
             SEMANTIC_VIEW_NAME,
             SEMANTIC_LEVEL,
             UPSTREAM_HASH,
+            SOURCE_DEPENDENCY_HASH,
+            GENERATED_BY_REQUEST_ID,
             CREATED_BY,
             CREATED_AT,
             UPDATED_AT,
@@ -276,11 +423,18 @@ class DerivedSourceService:
             source.FILTERS,
             source.SELECTED_COLUMNS_BY_TABLE,
             source.PREVIEW_COLUMNS,
+            source.PURPOSE,
+            source.BUSINESS_DESCRIPTION,
+            source.OUTPUT_COLUMNS,
+            source.COLUMN_SEMANTICS,
+            source.SEMANTIC_PROJECTION,
             source.LINEAGE_DEPTH,
             source.SEMANTIC_BUNDLE_ID,
             source.SEMANTIC_VIEW_NAME,
             source.SEMANTIC_LEVEL,
             source.UPSTREAM_HASH,
+            source.SOURCE_DEPENDENCY_HASH,
+            source.GENERATED_BY_REQUEST_ID,
             source.CREATED_BY,
             CURRENT_TIMESTAMP(),
             CURRENT_TIMESTAMP(),
@@ -297,6 +451,24 @@ class DerivedSourceService:
                 ) from exc
             raise SnowflakeQueryError(f"Failed to save derived source: {exc}") from exc
 
+        materialization = self._materialize_secure_view(source_id)
+        physical_view_name = materialization.get("physical_view_name")
+        try:
+            bundle_table = self._settings.qualify_table_name(
+                self._settings.snowflake_semantic_bundles_table
+            )
+            self._session.sql(
+                f"UPDATE {bundle_table} SET BUNDLE_ARTIFACT = NULL, "
+                "STATUS = 'stale', STALE_REASON = 'derived source changed', "
+                "UPDATED_AT = CURRENT_TIMESTAMP() "
+                f"WHERE ARRAY_CONTAINS(TO_VARIANT({self._quote_literal(source_id)}), DERIVED_SOURCE_IDS)"
+            ).collect()
+        except Exception:
+            logger.debug("Semantic bundle invalidation after derived-source save was unavailable", exc_info=True)
+        from app.core.semantic_context import invalidate_semantic_bundle_cache
+
+        invalidate_semantic_bundle_cache()
+
         return DerivedSourceRecord(
             derived_source_id=source_id,
             derived_source_name=body.derived_source_name,
@@ -306,14 +478,44 @@ class DerivedSourceService:
             base_source_tables=base_source_tables,
             lineage_depth=lineage_depth,
             upstream_hash=upstream_hash,
+            source_dependency_hash=upstream_hash,
+            physical_view_name=physical_view_name,
+            generated_by_request_id=body.generated_by_request_id,
             driving_table=body.driving_table,
             relationships=body.relationships,
             filters=body.filters,
             selected_columns_by_table=body.selected_columns_by_table,
+            purpose=body.purpose,
+            business_description=body.business_description,
+            output_columns=output_columns,
+            column_semantics=column_semantics,
+            semantic_projection=semantic_projection,
             preview_columns=validation.preview_columns,
+            grain=body.grain,
+            keys=body.keys,
+            semantic_quality=semantic_quality,
             created_by=current_user,
             is_active=True,
         )
+
+    def _materialize_secure_view(self, source_id: str) -> dict[str, Any]:
+        procedure = self._settings.qualify_metadata_object_name(
+            "SP_FIR_MATERIALIZE_DERIVED_SOURCE"
+        )
+        try:
+            result = self._session.call(procedure, source_id)
+            if isinstance(result, str):
+                result = json.loads(result)
+        except Exception as exc:
+            raise SnowflakeQueryError(
+                f"Derived source was saved but its secure view could not be materialized: {exc}"
+            ) from exc
+        if not isinstance(result, dict) or result.get("status") != "success":
+            reason = result.get("reason") if isinstance(result, dict) else str(result)
+            raise SnowflakeQueryError(
+                f"Derived source secure view materialization failed: {reason or 'unknown error'}"
+            )
+        return result
 
     def update_semantic_metadata(
         self,
@@ -339,6 +541,193 @@ class DerivedSourceService:
             WHERE DERIVED_SOURCE_ID IN ({ids_sql})
             """
         ).collect()
+
+    @staticmethod
+    def _build_virtual_semantic_projection(
+        *,
+        source_id: str,
+        body: DerivedSourceDefinition,
+        output_columns: list[dict[str, Any]],
+        preview_columns: list[DerivedSourcePreviewColumn],
+        base_source_tables: list[TableRef],
+        lineage_depth: int,
+        upstream_hash: str,
+        column_semantics: list[dict[str, Any]],
+        semantic_quality: str,
+        semantic_coverage_issues: list[str],
+    ) -> dict[str, Any]:
+        return {
+            "projection_profile": "derived_source_virtual",
+            "derived_source_id": source_id,
+            "name": body.derived_source_name,
+            "description": body.business_description
+            or f"Derived source {body.derived_source_name} created from selected source-preparation SQL.",
+            "purpose": body.purpose,
+            "sql_text": body.sql_text,
+            "source_tables": [table.model_dump(mode="json") for table in body.source_tables],
+            "base_source_tables": [table.model_dump(mode="json") for table in base_source_tables],
+            "parent_derived_source_ids": body.parent_derived_source_ids,
+            "driving_table": body.driving_table.model_dump(mode="json") if body.driving_table else None,
+            "relationships": [item.model_dump(mode="json") for item in body.relationships],
+            "filters": body.filters,
+            "selected_columns_by_table": body.selected_columns_by_table,
+            "output_columns": output_columns,
+            "column_semantics": column_semantics,
+            "grain": body.grain,
+            "keys": body.keys,
+            "semantic_quality": semantic_quality,
+            "semantic_coverage_issues": semantic_coverage_issues,
+            "preview_columns": [column.model_dump(mode="json") for column in preview_columns],
+            "lineage_depth": lineage_depth,
+            "upstream_hash": upstream_hash,
+            "source_dependency_hash": upstream_hash,
+            "generated_by_request_id": body.generated_by_request_id,
+        }
+
+    @staticmethod
+    def _reconcile_output_columns(
+        supplied: list[dict[str, Any]],
+        preview_columns: list[DerivedSourcePreviewColumn],
+    ) -> list[dict[str, Any]]:
+        supplied_by_name = {
+            str(item.get("name") or item.get("column_name") or "").upper(): item
+            for item in supplied
+            if isinstance(item, dict)
+        }
+        reconciled: list[dict[str, Any]] = []
+        for column in preview_columns:
+            declared = supplied_by_name.get(column.name.upper(), {})
+            reconciled.append(
+                {
+                    **declared,
+                    "name": column.name,
+                    "data_type": column.data_type,
+                    "is_primary_key": column.is_primary_key,
+                }
+            )
+        return reconciled
+
+    @staticmethod
+    def _derive_column_semantics(
+        *,
+        sql_text: str,
+        output_columns: list[dict[str, Any]],
+        supplied: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        supplied_by_name = {
+            str(item.get("name") or item.get("column_name") or "").upper(): item
+            for item in supplied
+            if isinstance(item, dict)
+        }
+        lineage_by_name: dict[str, list[str]] = {}
+        try:
+            query = sqlglot.parse_one(sql_text, read="snowflake")
+            select = query.find(exp.Select)
+            if select is not None:
+                for expression in select.expressions:
+                    output_name = str(expression.alias_or_name or "").upper()
+                    if not output_name:
+                        continue
+                    lineage_by_name[output_name] = sorted(
+                        {
+                            column.sql(dialect="snowflake")
+                            for column in expression.find_all(exp.Column)
+                        }
+                    )
+        except Exception:
+            lineage_by_name = {}
+
+        semantics: list[dict[str, Any]] = []
+        for output in output_columns:
+            name = str(output.get("name") or output.get("column_name") or "").strip()
+            if not name:
+                continue
+            declared = supplied_by_name.get(name.upper(), {})
+            inherited_fallback = (
+                str(declared.get("business_meaning_status") or "").lower() == "fallback"
+                or str(declared.get("semantic_source") or "").lower()
+                == "deterministic_sql_lineage"
+                or (
+                    not str(declared.get("description") or "").strip()
+                    and str(declared.get("business_meaning") or "").strip()
+                    == name.replace("_", " ").strip().title()
+                )
+            )
+            declared_meaning = (
+                ""
+                if inherited_fallback
+                else str(
+                    declared.get("business_meaning")
+                    or declared.get("description")
+                    or output.get("description")
+                    or ""
+                ).strip()
+            )
+            business_meaning = str(
+                declared_meaning
+                or name.replace("_", " ").strip().title()
+            )
+            semantics.append(
+                {
+                    **declared,
+                    "name": name,
+                    "data_type": output.get("data_type"),
+                    "business_meaning": business_meaning,
+                    "source_columns": declared.get("source_columns")
+                    or lineage_by_name.get(name.upper(), []),
+                    "semantic_source": "agent_declared" if declared_meaning else "deterministic_sql_lineage",
+                    "business_meaning_status": "declared" if declared_meaning else "fallback",
+                }
+            )
+        return semantics
+
+    @staticmethod
+    def _semantic_quality(
+        *,
+        body: DerivedSourceDefinition,
+        output_columns: list[dict[str, Any]],
+        column_semantics: list[dict[str, Any]],
+    ) -> tuple[str, list[str]]:
+        """Distinguish deterministic coverage from an agent-authored semantic contract."""
+        issues: list[str] = []
+        if not str(body.purpose or "").strip():
+            issues.append("purpose is missing")
+        if not str(body.business_description or "").strip():
+            issues.append("business description is missing")
+        if not str(body.grain or "").strip():
+            issues.append("row grain is missing")
+        if not [str(key).strip() for key in body.keys if str(key).strip()]:
+            issues.append("business keys are missing")
+
+        output_names = {
+            str(item.get("name") or item.get("column_name") or "").strip().upper()
+            for item in output_columns
+            if isinstance(item, dict)
+        }
+        semantic_by_name = {
+            str(item.get("name") or item.get("column_name") or "").strip().upper(): item
+            for item in column_semantics
+            if isinstance(item, dict)
+        }
+        missing_meanings = sorted(
+            name
+            for name in output_names
+            if not name
+            or str(semantic_by_name.get(name, {}).get("business_meaning_status") or "").lower()
+            != "declared"
+        )
+        if missing_meanings:
+            issues.append(
+                f"{len(missing_meanings)} output column(s) lack agent-declared business meaning"
+            )
+        missing_types = sorted(
+            name
+            for name in output_names
+            if not str(semantic_by_name.get(name, {}).get("data_type") or "").strip()
+        )
+        if missing_types:
+            issues.append(f"{len(missing_types)} output column(s) lack data type")
+        return ("complete" if not issues else "incomplete", issues)
 
     def _current_user(self) -> str:
         try:
@@ -414,6 +803,9 @@ class DerivedSourceService:
         filters = _coerce_json(_value("FILTERS"), [])
         selected_columns = _coerce_json(_value("SELECTED_COLUMNS_BY_TABLE"), {})
         preview_columns = _coerce_json(_value("PREVIEW_COLUMNS"), [])
+        output_columns = _coerce_json(_value("OUTPUT_COLUMNS"), [])
+        column_semantics = _coerce_json(_value("COLUMN_SEMANTICS"), [])
+        semantic_projection = _coerce_json(_value("SEMANTIC_PROJECTION"), {})
         parent_derived_source_ids = _coerce_json(_value("PARENT_DERIVED_SOURCE_IDS"), [])
         base_source_tables = _coerce_json(_value("BASE_SOURCE_TABLES"), [])
         driving_table = _value("DRIVING_TABLE") or ""
@@ -436,10 +828,25 @@ class DerivedSourceService:
             semantic_view_name=_value("SEMANTIC_VIEW_NAME"),
             semantic_level=_value("SEMANTIC_LEVEL"),
             upstream_hash=_value("UPSTREAM_HASH"),
+            source_dependency_hash=_value("SOURCE_DEPENDENCY_HASH") or _value("UPSTREAM_HASH"),
+            physical_view_name=_value("PHYSICAL_VIEW_NAME"),
+            generated_by_request_id=_value("GENERATED_BY_REQUEST_ID"),
             driving_table=driving_ref,
             relationships=relationships,
             filters=filters,
             selected_columns_by_table=selected_columns,
+            purpose=_value("PURPOSE"),
+            business_description=_value("BUSINESS_DESCRIPTION"),
+            output_columns=output_columns,
+            column_semantics=column_semantics,
+            semantic_projection=semantic_projection,
+            grain=semantic_projection.get("grain") if isinstance(semantic_projection, dict) else None,
+            keys=semantic_projection.get("keys", []) if isinstance(semantic_projection, dict) else [],
+            semantic_quality=(
+                semantic_projection.get("semantic_quality", "incomplete")
+                if isinstance(semantic_projection, dict)
+                else "incomplete"
+            ),
             preview_columns=preview_columns,
             created_by=_value("CREATED_BY"),
             created_at=str(_value("CREATED_AT")) if _value("CREATED_AT") else None,

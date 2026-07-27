@@ -1,6 +1,7 @@
 'use client';
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { Box, Typography } from '@mui/material';
 import { SQL_PREVIEW_META_BOX_SX } from './sql-preview-styles';
 
 export type SqlPreviewMetaBoxProps = {
@@ -13,9 +14,9 @@ export function SqlPreviewMetaBox({ lines }: SqlPreviewMetaBoxProps) {
   }
 
   return (
-    <Box sx={SQL_PREVIEW_META_BOX_SX}>
+    <AiaBox sx={SQL_PREVIEW_META_BOX_SX}>
       {lines.map((line, index) => (
-        <Typography
+        <AiaText
           key={`${index}-${line}`}
           sx={{
             fontSize: '0.82rem',
@@ -23,8 +24,8 @@ export function SqlPreviewMetaBox({ lines }: SqlPreviewMetaBoxProps) {
           }}
         >
           {line}
-        </Typography>
+        </AiaText>
       ))}
-    </Box>
+    </AiaBox>
   );
 }

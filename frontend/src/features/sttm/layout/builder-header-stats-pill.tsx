@@ -1,6 +1,6 @@
 "use client";
-
-import { Box, Typography } from "@mui/material";
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
 type BuilderHeaderStat = {
   value: number;
@@ -13,21 +13,21 @@ type BuilderHeaderStatsPillProps = {
 
 function StatSegment({ value, label }: BuilderHeaderStat) {
   return (
-    <Typography
+    <AiaText
       component="span"
       sx={{ fontSize: "12px", whiteSpace: "nowrap", color: "#64748b", lineHeight: 1.2 }}
     >
-      <Box component="span" sx={{ fontWeight: 700, color: "#111827" }}>
+      <AiaBox component="span" sx={{ fontWeight: 700, color: "#111827" }}>
         {value}
-      </Box>{" "}
+      </AiaBox>{" "}
       {label}
-    </Typography>
+    </AiaText>
   );
 }
 
 export function BuilderHeaderStatsPill({ items }: BuilderHeaderStatsPillProps) {
   return (
-    <Box
+    <AiaBox
       sx={{
         px: 1.5,
         py: 0.75,
@@ -41,10 +41,10 @@ export function BuilderHeaderStatsPill({ items }: BuilderHeaderStatsPillProps) {
       }}
     >
       <StatSegment value={items[0].value} label={items[0].label} />
-      <Typography component="span" sx={{ fontSize: "12px", color: "#cbd5e1", lineHeight: 1 }}>
+      <AiaText component="span" sx={{ fontSize: "12px", color: "#cbd5e1", lineHeight: 1 }}>
         ·
-      </Typography>
+      </AiaText>
       <StatSegment value={items[1].value} label={items[1].label} />
-    </Box>
+    </AiaBox>
   );
 }

@@ -1,19 +1,17 @@
 "use client";
-
-import { Box, Typography } from "@mui/material";
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+import { SECTION_TITLE_SX, SECONDARY_TEXT_SX } from '@/config/typography-tokens';
 
 export default function DashboardHeader() {
   return (
-    <Box>
-      <Typography
-        className="font-semibold leading-[1.05] tracking-[-0.02em] text-[#111827]"
-        sx={{ fontSize: "1.5rem" }}
-      >
+    <AiaBox>
+      <AiaText sx={{ ...SECTION_TITLE_SX, letterSpacing: "-0.02em" }}>
         Dashboard
-      </Typography>
-      <Typography className="mt-2 text-[15px] text-[#6B7280]">
+      </AiaText>
+      <AiaText sx={{ ...SECONDARY_TEXT_SX, mt: 1 }}>
         Source-to-Target Mapping overview for all projects
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }

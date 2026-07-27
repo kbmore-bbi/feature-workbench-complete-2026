@@ -1,12 +1,18 @@
 import uuid
-from typing import Any, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, Field
-from fastapi import Request
 
 
 CONTRACT_VERSION = "1.0"
 DataT = TypeVar("DataT")
+
+
+class RequestLike(Protocol):
+    """Minimal request surface used by transport-neutral response contracts."""
+
+    headers: Any
+    state: Any
 
 
 class ApiActor(BaseModel):
@@ -44,6 +50,13 @@ class OperationContext(BaseModel):
     current_database: str | None = None
     current_schema: str | None = None
     trace_id: str | None = None
+    session_id: str | None = None
+    logical_conversation_id: str | None = None
+    physical_thread_segment: int | None = None
+    semantic_bundle_hash: str | None = None
+    learning_context_id: str | None = None
+    learning_context_hash: str | None = None
+    artifact_refs: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ApiRequest(BaseModel):
@@ -103,7 +116,7 @@ class ApiResponseEnvelope(BaseModel, Generic[DataT]):
 
 
 def resolve_request_id(
-    request: Request | None = None,
+    request: RequestLike | None = None,
     *,
     preferred: str | None = None,
 ) -> str:
@@ -123,7 +136,7 @@ def build_response_envelope(
     *,
     operation: str,
     data: DataT,
-    request: Request | None = None,
+    request: RequestLike | None = None,
     request_id: str | None = None,
     actor: ApiActor | None = None,
     context: dict[str, Any] | None = None,

@@ -1,5 +1,7 @@
 "use client";
+import { AiaAlert, AiaBox, AiaButton, AiaCircularProgress, AiaIconButton, AiaLinearProgress, AiaChip, AiaStack } from '@/components/ui';
 
+import { AiaText } from '@/components/ui/aia-text';
 import { useEffect, useMemo, useRef, useState } from "react";
 import AutoAwesomeRoundedIcon from "@mui/icons-material/AutoAwesomeRounded";
 import CheckCircleRoundedIcon from "@mui/icons-material/CheckCircleRounded";
@@ -11,19 +13,10 @@ import FolderOpenRoundedIcon from "@mui/icons-material/FolderOpenRounded";
 import FolderRoundedIcon from "@mui/icons-material/FolderRounded";
 import RefreshRoundedIcon from "@mui/icons-material/RefreshRounded";
 import SourceRoundedIcon from "@mui/icons-material/SourceRounded";
-import {
-  Alert,
-  Box,
-  Button,
-  Chip,
-  CircularProgress,
-  IconButton,
-  LinearProgress,
-  Stack,
-  Typography,
-} from "@mui/material";
+
 import { SqlEditorSurface } from "@/components/sql/sql-editor-surface";
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
 import type {
   DbtConversionRequest,
   DbtConversionResponse,
@@ -80,6 +73,7 @@ export type CachedDbtConversion = {
 };
 
 const completedDbtConversionCache = new Map<string, CachedDbtConversion>();
+const activeDbtConversionRuns = new Map<string, Promise<void>>();
 
 const CHECKLIST = [
   "File names should follow the standard release and project naming rules where applicable.",
@@ -158,6 +152,8 @@ function mapSummaryMappings(
     targetType: string;
     sourceColumn: string | null;
     sourceColumns?: string[];
+    mappingMode?: "source" | "constant";
+    constantValue?: string | null;
     expression: string | null;
     rule: string;
     status: string;
@@ -170,6 +166,8 @@ function mapSummaryMappings(
     target_type: mapping.targetType || null,
     source_column: mapping.sourceColumn ?? null,
     source_columns: mapping.sourceColumns ?? [],
+    mapping_mode: mapping.mappingMode ?? "source",
+    constant_value: mapping.constantValue ?? null,
     expression: mapping.expression ?? null,
     rule: mapping.rule ?? null,
     status: mapping.status ?? null,
@@ -179,6 +177,8 @@ function mapSummaryMappings(
 }
 
 type DbtConversionRequestBuilderParams = {
+  projectId?: string | null;
+  sttmId?: string | null;
   targets: Array<{ isSelected: boolean; qualifiedName: string }>;
   sources: Array<{ isSelected: boolean; qualifiedName: string }>;
   relationships: Array<{
@@ -222,6 +222,8 @@ export function buildDbtConversionRequestPayload(
   params: DbtConversionRequestBuilderParams,
 ): DbtConversionRequest | null {
   const {
+    projectId,
+    sttmId,
     targets,
     sources,
     relationships,
@@ -275,6 +277,8 @@ export function buildDbtConversionRequestPayload(
   const sourceSchemas = sourceTables.map((table) => table.schema);
 
   return {
+    project_id: projectId ?? null,
+    sttm_id: sttmId ?? null,
     project_name: `${targetTable.table} DBT Conversion`,
     domain_name: deriveDomainName(targetTable.schema, sourceSchemas),
     target_layer: deriveLayer(targetTable.schema),
@@ -454,13 +458,13 @@ function FileTree({
   depth?: number;
 }) {
   return (
-    <Stack spacing={0.35}>
+    <AiaStack spacing={0.35}>
       {nodes.map((node) => {
         if (node.kind === "folder") {
           const isExpanded = expanded.has(node.path);
           return (
-            <Box key={node.path}>
-              <Button
+            <AiaBox key={node.path}>
+              <AiaButton
                 fullWidth
                 variant="text"
                 onClick={() => onToggle(node.path)}
@@ -481,12 +485,12 @@ function FileTree({
                 ) : (
                   <FolderRoundedIcon sx={{ fontSize: 17, color: "#64748b", mr: 0.8 }} />
                 )}
-                <Typography sx={{ fontSize: "0.78rem", fontWeight: 600, color: "inherit" }}>
+                <AiaText sx={{ fontSize: "0.78rem", fontWeight: 600, color: "inherit" }}>
                   {node.name}
-                </Typography>
-              </Button>
+                </AiaText>
+              </AiaButton>
               {isExpanded && node.children?.length ? (
-                <Box sx={{ mt: 0.3 }}>
+                <AiaBox sx={{ mt: 0.3 }}>
                   <FileTree
                     nodes={node.children}
                     expanded={expanded}
@@ -495,15 +499,15 @@ function FileTree({
                     onSelectFile={onSelectFile}
                     depth={depth + 1}
                   />
-                </Box>
+                </AiaBox>
               ) : null}
-            </Box>
+            </AiaBox>
           );
         }
 
         const selected = selectedFileId === node.file?.id;
         return (
-          <Button
+          <AiaButton
             key={node.path}
             fullWidth
             variant="text"
@@ -529,7 +533,7 @@ function FileTree({
             ) : (
               <DescriptionOutlinedIcon sx={{ fontSize: 16, mr: 0.8, color: "#64748b" }} />
             )}
-            <Typography
+            <AiaText
               sx={{
                 fontSize: "0.77rem",
                 fontWeight: selected ? 700 : 500,
@@ -539,11 +543,11 @@ function FileTree({
               }}
             >
               {node.name}
-            </Typography>
-          </Button>
+            </AiaText>
+          </AiaButton>
         );
       })}
-    </Stack>
+    </AiaStack>
   );
 }
 
@@ -567,6 +571,8 @@ export function DbtConversionTab({
     semanticContextItems,
     semanticLineage,
     semanticDatahubContext,
+    activeProjectId,
+    activeSttmId,
   } = useSttmBuilderContext();
 
   const [status, setStatus] = useState<"idle" | "running" | "completed" | "error">("idle");
@@ -585,11 +591,14 @@ export function DbtConversionTab({
   });
   const observedSignatureRef = useRef<string | null>(null);
   const requestPayloadRef = useRef<DbtConversionRequest | null>(null);
+  const onCompletedRef = useRef(onCompleted);
   const stepCounterRef = useRef(0);
 
   const requestPayload = useMemo<DbtConversionRequest | null>(
     () =>
       buildDbtConversionRequestPayload({
+        projectId: activeProjectId,
+        sttmId: activeSttmId,
         targets,
         sources,
         relationships,
@@ -607,6 +616,8 @@ export function DbtConversionTab({
         generatedSql,
       }),
     [
+      activeProjectId,
+      activeSttmId,
       derivedSources,
       generatedSql,
       mappings,
@@ -633,6 +644,10 @@ export function DbtConversionTab({
   useEffect(() => {
     requestPayloadRef.current = requestPayload;
   }, [requestPayload]);
+
+  useEffect(() => {
+    onCompletedRef.current = onCompleted;
+  }, [onCompleted]);
 
   useEffect(() => {
     if (!requestSignature) {
@@ -696,12 +711,40 @@ export function DbtConversionTab({
     if (!validatedSql.trim() || payload.mappings.length === 0) return;
     if (retryNonce === 0 && completedDbtConversionCache.has(requestSignature)) return;
 
+    const existingRun = activeDbtConversionRuns.get(requestSignature);
+    if (existingRun) {
+      let mounted = true;
+      setStatus("running");
+      setStatusMessage("DBT conversion is continuing in the background...");
+      void existingRun.finally(() => {
+        if (!mounted) return;
+        const cached = completedDbtConversionCache.get(requestSignature);
+        if (cached) {
+          setStatus("completed");
+          setStatusMessage(cached.statusMessage);
+          setSteps(cached.steps);
+          setResult(cached.result);
+          setStreamArtifacts(cached.streamArtifacts);
+          setSelectedFileId(cached.selectedFileId);
+          setErrorMessage(null);
+        } else {
+          setStatus("error");
+          setStatusMessage("The background DBT conversion did not return a final result.");
+          setErrorMessage("The background DBT conversion did not return a final result. Retry the conversion.");
+        }
+      });
+      return () => {
+        mounted = false;
+      };
+    }
+
     logDbtTelemetry("effect_start", {
       requestSignature: summarizeSignature(requestSignature),
       retryNonce,
       hasValidatedSql: Boolean(validatedSql.trim()),
       mappedCount: payload.mappings.length,
     });
+    let attached = true;
     const abortController = new AbortController();
     let receivedFinal = false;
     let idleTimedOut = false;
@@ -723,6 +766,7 @@ export function DbtConversionTab({
     };
 
     const appendStep = (phase: string, message: string) => {
+      if (!attached) return;
       setSteps((current) => {
         const trimmed = message.trim();
         if (!trimmed) return current;
@@ -742,23 +786,25 @@ export function DbtConversionTab({
     };
 
     const run = async () => {
-      setStatus("running");
-      setStatusMessage("Starting DBT conversion from the summary SQL...");
-      setSteps([
-        {
-          id: `boot-${stepCounterRef.current++}`,
-          phase: "request_prepared",
-          message: "Starting DBT conversion from the summary SQL.",
-        },
-      ]);
-      setSummaryDismissed(false);
-      setErrorMessage(null);
-      setResult(null);
-      setStreamArtifacts({
-        generatedFiles: [],
-        schemaFiles: [],
-        sourceUpdate: null,
-      });
+      if (attached) {
+        setStatus("running");
+        setStatusMessage("Starting DBT conversion from the summary SQL...");
+        setSteps([
+          {
+            id: `boot-${stepCounterRef.current++}`,
+            phase: "request_prepared",
+            message: "Starting DBT conversion from the summary SQL.",
+          },
+        ]);
+        setSummaryDismissed(false);
+        setErrorMessage(null);
+        setResult(null);
+        setStreamArtifacts({
+          generatedFiles: [],
+          schemaFiles: [],
+          sourceUpdate: null,
+        });
+      }
       armIdleTimer();
 
       try {
@@ -803,7 +849,7 @@ export function DbtConversionTab({
               typeof event.data.message === "string"
                 ? event.data.message
                 : "AGT_DBT_CONVERSION is working on the request.";
-            setStatusMessage(message);
+            if (attached) setStatusMessage(message);
             appendStep(phase, message);
             continue;
           }
@@ -819,7 +865,7 @@ export function DbtConversionTab({
                 : "unknown";
             appendStep("file_ready", buildArtifactStepMessage(kind, filePath));
             if (kind === "generated_file") {
-              setStreamArtifacts((current) => ({
+              if (attached) setStreamArtifacts((current) => ({
                 ...current,
                 generatedFiles: appendGeneratedFile(
                   current.generatedFiles,
@@ -829,7 +875,7 @@ export function DbtConversionTab({
               continue;
             }
             if (kind === "schema_file") {
-              setStreamArtifacts((current) => ({
+              if (attached) setStreamArtifacts((current) => ({
                 ...current,
                 schemaFiles: appendGeneratedFile(
                   current.schemaFiles,
@@ -839,7 +885,7 @@ export function DbtConversionTab({
               continue;
             }
             if (kind === "source_update") {
-              setStreamArtifacts((current) => ({
+              if (attached) setStreamArtifacts((current) => ({
                 ...current,
                 sourceUpdate: file as NonNullable<DbtConversionResponse["source_update"]>,
               }));
@@ -859,16 +905,20 @@ export function DbtConversionTab({
             if (!finalData) {
               throw new Error("DBT conversion finished without a result payload.");
             }
-            setResult(finalData);
+            if (attached) setResult(finalData);
             if (envelope.error) {
               const detail = envelope.error.detail || envelope.error.title || "DBT conversion failed.";
-              setStatus("error");
-              setErrorMessage(detail);
-              setStatusMessage(detail);
+              if (attached) {
+                setStatus("error");
+                setErrorMessage(detail);
+                setStatusMessage(detail);
+              }
               appendStep("failed", detail);
             } else {
-              setStatus("completed");
-              setStatusMessage(finalData.message || "DBT conversion completed.");
+              if (attached) {
+                setStatus("completed");
+                setStatusMessage(finalData.message || "DBT conversion completed.");
+              }
               appendStep("completed", finalData.message || "DBT conversion completed.");
               const cachedResult: CachedDbtConversion = {
                 result: finalData,
@@ -882,16 +932,18 @@ export function DbtConversionTab({
                 selectedFileId: null,
               };
               completedDbtConversionCache.set(requestSignature, cachedResult);
-              onCompleted?.(cachedResult);
+              if (attached) onCompletedRef.current?.(cachedResult);
             }
           }
         }
         if (!receivedFinal) {
           const detail =
             "AGT_DBT_CONVERSION ended the stream before returning a final payload.";
-          setStatus("error");
-          setErrorMessage(detail);
-          setStatusMessage(detail);
+          if (attached) {
+            setStatus("error");
+            setErrorMessage(detail);
+            setStatusMessage(detail);
+          }
           appendStep("failed", detail);
         }
       } catch (error) {
@@ -916,29 +968,40 @@ export function DbtConversionTab({
         }
         const detail =
           error instanceof Error ? error.message : "Unable to generate DBT conversion.";
-        setStatus("error");
-        setErrorMessage(detail);
-        setStatusMessage(detail);
+        if (attached) {
+          setStatus("error");
+          setErrorMessage(detail);
+          setStatusMessage(detail);
+        }
         appendStep("failed", detail);
       } finally {
         clearIdleTimer();
       }
     };
 
-    void run();
+    const runPromise = run();
+    activeDbtConversionRuns.set(requestSignature, runPromise);
+    void runPromise.finally(() => {
+      if (activeDbtConversionRuns.get(requestSignature) === runPromise) {
+        activeDbtConversionRuns.delete(requestSignature);
+      }
+    });
 
     return () => {
-      clearIdleTimer();
-      logDbtTelemetry("effect_cleanup_abort", {
+      attached = false;
+      // The conversion is a Summary-session job, not a tab component request.
+      // Keep it alive across tab changes and Mapping/Summary navigation; a
+      // remounted Summary attaches to the shared promise/cache above.
+      logDbtTelemetry("effect_cleanup_detach", {
         requestSignature: summarizeSignature(requestSignature),
-        reason: "effect_cleanup",
+        reason: "component_detached",
       });
-      abortController.abort();
     };
-  }, [onCompleted, requestSignature, retryNonce, validatedSql]);
+  }, [requestSignature, retryNonce, validatedSql]);
 
   return (
-    <Box
+    <AiaBox
+      data-tour={active ? TOUR_TARGETS.sttmDbtConversionPanel : undefined}
       sx={{
         display: active ? "flex" : "none",
         flex: 1,
@@ -949,50 +1012,50 @@ export function DbtConversionTab({
         bgcolor: "#ffffff",
       }}
     >
-      <Box sx={{ px: 2, py: 1.5, borderBottom: "1px solid #e5e7eb", backgroundColor: "#ffffff" }}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+      <AiaBox sx={{ px: 2, py: 1.5, borderBottom: "1px solid #e5e7eb", backgroundColor: "#ffffff" }}>
+        <AiaStack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
           <AutoAwesomeRoundedIcon sx={{ fontSize: 18, color: "#2563eb" }} />
-          <Typography sx={{ fontSize: "0.88rem", fontWeight: 700, color: "#111827" }}>
+          <AiaText sx={{ fontSize: "0.88rem", fontWeight: 700, color: "#111827" }}>
             DBT Conversion
-          </Typography>
+          </AiaText>
           {result?.action ? (
-            <Chip
+            <AiaChip
               label={result.action.replaceAll("_", " ")}
               size="small"
-              sx={{ height: 22, fontSize: "0.68rem", fontWeight: 700, bgcolor: "#eff6ff", color: "#1d4ed8" }}
+              color="primary"
             />
           ) : null}
           {result?.materialization ? (
-            <Chip
+            <AiaChip
               label={`Materialization: ${result.materialization}`}
               size="small"
-              sx={{ height: 22, fontSize: "0.68rem", fontWeight: 700, bgcolor: "#f8fafc", color: "#334155" }}
+              color="default"
             />
           ) : null}
           {result?.source_update ? (
-            <Chip
+            <AiaChip
               label={`Sources YAML: ${result.source_update.action}`}
               size="small"
-              sx={{ height: 22, fontSize: "0.68rem", fontWeight: 700, bgcolor: "#f0fdf4", color: "#166534" }}
+              color="success"
             />
           ) : null}
-        </Stack>
-      </Box>
+        </AiaStack>
+      </AiaBox>
 
-      <Box sx={{ px: 2, pt: 1.5, pb: 1 }}>
+      <AiaBox sx={{ px: 2, pt: 1.5, pb: 1 }}>
         {showEmptyState ? (
-          <Alert severity="info" sx={{ borderRadius: 2 }}>
+          <AiaAlert severity="info" sx={{ borderRadius: 2 }}>
             Map at least one target column to start DBT conversion from the summary SQL.
-          </Alert>
+          </AiaAlert>
         ) : showStatusBanner ? (
-          <Alert
+          <AiaAlert
             severity={status === "error" ? "error" : status === "completed" ? "success" : "info"}
             sx={{ borderRadius: 2, alignItems: "center", py: 0.25 }}
           >
-            <Stack spacing={0.6} sx={{ width: "100%" }}>
-              <Stack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
+            <AiaStack spacing={0.6} sx={{ width: "100%" }}>
+              <AiaStack direction="row" spacing={1} sx={{ alignItems: "center", flexWrap: "wrap" }}>
                 {status === "running" ? (
-                  <CircularProgress size={16} sx={{ color: "#2563eb" }} />
+                  <AiaCircularProgress size={16} sx={{ color: "#2563eb" }} />
                 ) : status === "completed" ? (
                   <CheckCircleRoundedIcon sx={{ fontSize: 18, color: "#16a34a" }} />
                 ) : status === "error" ? (
@@ -1000,7 +1063,7 @@ export function DbtConversionTab({
                 ) : (
                   <CodeRoundedIcon sx={{ fontSize: 18, color: "#2563eb" }} />
                 )}
-                <Typography
+                <AiaText
                   sx={{
                     fontSize: "0.82rem",
                     fontWeight: 700,
@@ -1012,9 +1075,9 @@ export function DbtConversionTab({
                   }}
                 >
                   {compactSummary}
-                </Typography>
+                </AiaText>
                 {status === "error" ? (
-                  <Button
+                  <AiaButton
                     size="small"
                     variant="outlined"
                     startIcon={<RefreshRoundedIcon sx={{ fontSize: 16 }} />}
@@ -1027,20 +1090,20 @@ export function DbtConversionTab({
                     sx={{ ml: "auto", textTransform: "none" }}
                   >
                     Retry
-                  </Button>
+                  </AiaButton>
                 ) : null}
                 {status === "completed" ? (
-                  <IconButton
+                  <AiaIconButton
                     size="small"
                     onClick={() => setSummaryDismissed(true)}
                     sx={{ ml: "auto", color: "#64748b" }}
                   >
                     <CloseRoundedIcon sx={{ fontSize: 16 }} />
-                  </IconButton>
+                  </AiaIconButton>
                 ) : null}
-              </Stack>
+              </AiaStack>
               {status === "running" ? (
-                <LinearProgress
+                <AiaLinearProgress
                   sx={{
                     height: 6,
                     borderRadius: 999,
@@ -1049,17 +1112,17 @@ export function DbtConversionTab({
                 />
               ) : null}
               {status !== "running" && result?.materialization_reason ? (
-                <Typography sx={{ fontSize: "0.75rem", color: "#64748b", lineHeight: 1.45 }}>
+                <AiaText sx={{ fontSize: "0.75rem", color: "#64748b", lineHeight: 1.45 }}>
                   {result.materialization_reason}
-                </Typography>
+                </AiaText>
               ) : null}
-            </Stack>
-          </Alert>
+            </AiaStack>
+          </AiaAlert>
         ) : null}
-      </Box>
+      </AiaBox>
 
-      <Box sx={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", px: 2, pb: 2, gap: 2 }}>
-        <Box
+      <AiaBox sx={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0, overflow: "hidden", px: 2, pb: 2, gap: 2 }}>
+        <AiaBox
           sx={{
             width: 280,
             minWidth: 240,
@@ -1073,19 +1136,19 @@ export function DbtConversionTab({
             overflow: "hidden",
           }}
         >
-          <Box sx={{ px: 1.5, py: 1.25, borderBottom: "1px solid #e5e7eb", backgroundColor: "#ffffff" }}>
-            <Typography sx={{ fontSize: "0.76rem", fontWeight: 700, color: "#0f172a" }}>
+          <AiaBox sx={{ px: 1.5, py: 1.25, borderBottom: "1px solid #e5e7eb", backgroundColor: "#ffffff" }}>
+            <AiaText sx={{ fontSize: "0.76rem", fontWeight: 700, color: "#0f172a" }}>
               Generated Files
-            </Typography>
-            <Typography sx={{ fontSize: "0.72rem", color: "#64748b", mt: 0.35 }}>
+            </AiaText>
+            <AiaText sx={{ fontSize: "0.72rem", color: "#64748b", mt: 0.35 }}>
               {fileEntries.length
                 ? `${fileEntries.length} file${fileEntries.length === 1 ? "" : "s"} available`
                 : status === "running"
                   ? "Waiting for agent output..."
                   : "No files generated yet."}
-            </Typography>
-          </Box>
-          <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 1 }}>
+            </AiaText>
+          </AiaBox>
+          <AiaBox sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 1 }}>
             {fileTree.length ? (
               <FileTree
                 nodes={fileTree}
@@ -1105,24 +1168,24 @@ export function DbtConversionTab({
                 onSelectFile={setSelectedFileId}
               />
             ) : (
-              <Stack spacing={1}>
-                <Typography sx={{ fontSize: "0.75rem", color: "#64748b", lineHeight: 1.6 }}>
+              <AiaStack spacing={1}>
+                <AiaText sx={{ fontSize: "0.75rem", color: "#64748b", lineHeight: 1.6 }}>
                   {status === "running"
                     ? "Waiting for the first generated dbt file..."
                     : "No files generated yet."}
-                </Typography>
+                </AiaText>
                 {errorMessage ? (
-                  <Alert severity="error" sx={{ borderRadius: 2 }}>
+                  <AiaAlert severity="error" sx={{ borderRadius: 2 }}>
                     {errorMessage}
-                  </Alert>
+                  </AiaAlert>
                 ) : null}
-              </Stack>
+              </AiaStack>
             )}
-          </Box>
-        </Box>
+          </AiaBox>
+        </AiaBox>
 
-        <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", gap: 1.5 }}>
-          <Box
+        <AiaBox sx={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column", gap: 1.5 }}>
+          <AiaBox
             sx={{
               flex: 1,
               minHeight: 0,
@@ -1135,7 +1198,7 @@ export function DbtConversionTab({
               flexDirection: "column",
             }}
           >
-            <Box
+            <AiaBox
               sx={{
                 px: 2,
                 py: 1.2,
@@ -1148,7 +1211,7 @@ export function DbtConversionTab({
               }}
             >
               <DescriptionOutlinedIcon sx={{ fontSize: 16, color: "#94a3b8" }} />
-              <Typography
+              <AiaText
                 sx={{
                   fontSize: "0.78rem",
                   fontWeight: 700,
@@ -1159,15 +1222,18 @@ export function DbtConversionTab({
                 }}
               >
                 {selectedFile?.path ?? "No file selected"}
-              </Typography>
+              </AiaText>
               {selectedFile ? (
-                <Chip
+                <AiaChip
                   label={selectedFile.fileType}
                   size="small"
-                  sx={{ ml: "auto", height: 20, fontSize: "0.65rem", bgcolor: "#1e293b", color: "#cbd5e1" }}
+                  customBackgroundColor="#1e293b"
+                  customColor="#cbd5e1"
+                  customBorderColor="#334155"
+                  sx={{ ml: "auto", height: 22, fontSize: "0.65rem" }}
                 />
               ) : null}
-            </Box>
+            </AiaBox>
 
             {selectedFile ? (
               selectedFile.language === "sql" ? (
@@ -1178,8 +1244,8 @@ export function DbtConversionTab({
                   emptyText="-- No SQL content to display."
                 />
               ) : (
-                <Box sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 1.5 }}>
-                  <Typography
+                <AiaBox sx={{ flex: 1, minHeight: 0, overflow: "auto", px: 2, py: 1.5 }}>
+                  <AiaText
                     component="pre"
                     sx={{
                       m: 0,
@@ -1192,32 +1258,32 @@ export function DbtConversionTab({
                     }}
                   >
                     {selectedFile.content}
-                  </Typography>
-                </Box>
+                  </AiaText>
+                </AiaBox>
               )
             ) : (
-              <Box sx={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", px: 3 }}>
-                <Stack spacing={1.25} sx={{ alignItems: "center", textAlign: "center", maxWidth: 420 }}>
+              <AiaBox sx={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", px: 3 }}>
+                <AiaStack spacing={1.25} sx={{ alignItems: "center", textAlign: "center", maxWidth: 420 }}>
                   {status === "running" ? (
-                    <CircularProgress size={26} sx={{ color: "#60a5fa" }} />
+                    <AiaCircularProgress size={26} sx={{ color: "#60a5fa" }} />
                   ) : (
                     <CodeRoundedIcon sx={{ fontSize: 28, color: "#94a3b8" }} />
                   )}
-                  <Typography sx={{ fontSize: "0.9rem", fontWeight: 700, color: "#e2e8f0" }}>
+                  <AiaText sx={{ fontSize: "0.9rem", fontWeight: 700, color: "#e2e8f0" }}>
                     {status === "running" ? "Generating dbt files..." : "No dbt file selected yet"}
-                  </Typography>
-                  <Typography sx={{ fontSize: "0.78rem", color: "#94a3b8", lineHeight: 1.6 }}>
+                  </AiaText>
+                  <AiaText sx={{ fontSize: "0.78rem", color: "#94a3b8", lineHeight: 1.6 }}>
                     {status === "running"
                       ? "The agent is loading repo context, checking matching models, and composing the final file set."
                       : "When the conversion finishes, choose a file from the left sidebar to inspect the generated SQL or YAML."}
-                  </Typography>
-                </Stack>
-              </Box>
+                  </AiaText>
+                </AiaStack>
+              </AiaBox>
             )}
-          </Box>
+          </AiaBox>
 
           {result?.macros_used?.length ? (
-            <Box
+            <AiaBox
               sx={{
                 borderRadius: 2,
                 border: "1px solid #e5e7eb",
@@ -1225,23 +1291,18 @@ export function DbtConversionTab({
                 p: 1.5,
               }}
             >
-              <Typography sx={{ fontSize: "0.76rem", fontWeight: 700, color: "#111827", mb: 0.9 }}>
+              <AiaText sx={{ fontSize: "0.76rem", fontWeight: 700, color: "#111827", mb: 0.9 }}>
                 Macros Used
-              </Typography>
-              <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: "wrap" }}>
+              </AiaText>
+              <AiaStack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: "wrap" }}>
                 {result.macros_used.map((macro) => (
-                  <Chip
-                    key={macro}
-                    label={macro}
-                    size="small"
-                    sx={{ height: 22, fontSize: "0.68rem", fontWeight: 700, bgcolor: "#eff6ff", color: "#1d4ed8" }}
-                  />
+                  <AiaChip key={macro} label={macro} size="small" color="primary" />
                 ))}
-              </Stack>
-            </Box>
+              </AiaStack>
+            </AiaBox>
           ) : null}
-        </Box>
-      </Box>
-    </Box>
+        </AiaBox>
+      </AiaBox>
+    </AiaBox>
   );
 }

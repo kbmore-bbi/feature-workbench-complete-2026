@@ -1,6 +1,9 @@
-import { TableCell, Typography } from '@mui/material';
+import { AiaTableCellPrimitive } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+
 import type { SxProps, Theme } from '@mui/material/styles';
 import { aiaTableCellSx } from '@/components/ui/aia-table';
+import { MAPPING_TABLE_BODY_TEXT_SX } from '../mapping-table-styles';
 
 type MappingRowIndexCellProps = {
   index: number;
@@ -15,16 +18,14 @@ export const MappingRowIndexCell = ({
   minWidth,
   sx,
 }: MappingRowIndexCellProps) => (
-  <TableCell sx={aiaTableCellSx({ width, minWidth, sx })}>
-    <Typography
+  <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx })}>
+    <AiaText
       sx={{
-        fontSize: '0.72rem',
-        color: '#9ca3af',
-        fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+        ...MAPPING_TABLE_BODY_TEXT_SX,
         textAlign: 'left',
       }}
     >
       {index}
-    </Typography>
-  </TableCell>
+    </AiaText>
+  </AiaTableCellPrimitive>
 );

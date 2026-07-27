@@ -1,4 +1,6 @@
 "use client";
+import { AiaBox, AiaIconButton, AiaLinearProgress, AiaChip, AiaPaper, AiaStack } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import type { ReactNode } from "react";
 import {
   AllInclusiveIcon,
@@ -11,15 +13,8 @@ import {
   WarningAmberRoundedIcon,
 } from "@/utils/icons";
 import { SttmSidebarSectionIcon } from "@/features/sttm/layout/sttm-sidebar-icons";
-import {
-  Box,
-  Chip,
-  IconButton,
-  LinearProgress,
-  Paper,
-  Stack,
-  Typography,
-} from "@mui/material";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+
 import type { SummaryMetrics } from "./summary-utils";
 import { getMappedSourceColumnLabel, summaryStatusLabel } from "./summary-utils";
 
@@ -58,7 +53,7 @@ function formatSourceTableDisplayLabel(qualifiedName: string): string {
 
 function SourceTableRow({ label }: { label: string }) {
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "flex",
         alignItems: "center",
@@ -70,7 +65,7 @@ function SourceTableRow({ label }: { label: string }) {
         bgcolor: "#f8fafc",
       }}
     >
-      <Box
+      <AiaBox
         sx={{
           width: 7,
           height: 7,
@@ -79,7 +74,7 @@ function SourceTableRow({ label }: { label: string }) {
           flexShrink: 0,
         }}
       />
-      <Typography
+      <AiaText
         sx={{
           fontSize: "0.78rem",
           fontWeight: 500,
@@ -89,14 +84,14 @@ function SourceTableRow({ label }: { label: string }) {
         }}
       >
         {formatSourceTableDisplayLabel(label)}
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }
 
 function TransformRulePill({ rule, compact = false }: { rule: string; compact?: boolean }) {
   return (
-    <Box
+    <AiaBox
       component="span"
       sx={{
         display: "inline-flex",
@@ -116,7 +111,7 @@ function TransformRulePill({ rule, compact = false }: { rule: string; compact?: 
       }}
     >
       {rule}
-    </Box>
+    </AiaBox>
   );
 }
 
@@ -132,7 +127,7 @@ function MappedColumnRow({
   const showTransform = rule !== "Direct";
 
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "flex",
         alignItems: "center",
@@ -142,7 +137,7 @@ function MappedColumnRow({
         py: 0.2,
       }}
     >
-      <Typography
+      <AiaText
         sx={{
           fontSize: "0.72rem",
           fontWeight: 500,
@@ -153,8 +148,8 @@ function MappedColumnRow({
         }}
       >
         {getMappedSourceColumnLabel(source)}
-      </Typography>
-      <Typography
+      </AiaText>
+      <AiaText
         sx={{
           fontSize: "0.72rem",
           color: "#cbd5e1",
@@ -163,9 +158,9 @@ function MappedColumnRow({
         }}
       >
         →
-      </Typography>
+      </AiaText>
       {showTransform ? <TransformRulePill rule={rule} compact /> : null}
-      <Typography
+      <AiaText
         sx={{
           fontSize: "0.72rem",
           fontWeight: 700,
@@ -176,14 +171,14 @@ function MappedColumnRow({
         }}
       >
         {target.toUpperCase()}
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }
 
 function UnmappedColumnsCard({ columns }: { columns: string[] }) {
   return (
-    <Box
+    <AiaBox
       sx={{
         borderRadius: "12px",
         border: "1px solid #fde68a",
@@ -191,15 +186,15 @@ function UnmappedColumnsCard({ columns }: { columns: string[] }) {
         p: 1.25,
       }}
     >
-      <Stack direction="row" spacing={0.6} sx={{ alignItems: "center", mb: 0.85 }}>
+      <AiaStack direction="row" spacing={0.6} sx={{ alignItems: "center", mb: 0.85 }}>
         <WarningAmberRoundedIcon sx={{ fontSize: 16, color: "#92400e" }} />
-        <Typography sx={{ fontSize: "0.76rem", fontWeight: 700, color: "#92400e" }}>
+        <AiaText sx={{ fontSize: "0.76rem", fontWeight: 700, color: "#92400e" }}>
           Unmapped Columns ({columns.length})
-        </Typography>
-      </Stack>
-      <Stack spacing={0.35} sx={{ pl: 0.15 }}>
+        </AiaText>
+      </AiaStack>
+      <AiaStack spacing={0.35} sx={{ pl: 0.15 }}>
         {columns.map((column) => (
-          <Typography
+          <AiaText
             key={column}
             sx={{
               fontSize: "0.74rem",
@@ -209,10 +204,10 @@ function UnmappedColumnsCard({ columns }: { columns: string[] }) {
             }}
           >
             {column}
-          </Typography>
+          </AiaText>
         ))}
-      </Stack>
-    </Box>
+      </AiaStack>
+    </AiaBox>
   );
 }
 
@@ -242,7 +237,7 @@ function MetricCard({
   const palette = METRIC_PALETTES[tone];
 
   return (
-    <Paper
+    <AiaPaper
       elevation={0}
       sx={{
         p: 1.15,
@@ -258,7 +253,7 @@ function MetricCard({
         justifyContent: "space-between",
       }}
     >
-      <Box
+      <AiaBox
         sx={{
           display: "flex",
           alignItems: "center",
@@ -266,7 +261,7 @@ function MetricCard({
           minHeight: 24,
         }}
       >
-        <Box
+        <AiaBox
           sx={{
             color: palette.color,
             display: "flex",
@@ -279,8 +274,8 @@ function MetricCard({
           }}
         >
           {icon}
-        </Box>
-        <Typography
+        </AiaBox>
+        <AiaText
           component="span"
           sx={{
             fontSize: "1.85rem",
@@ -294,9 +289,9 @@ function MetricCard({
           }}
         >
           {value}
-        </Typography>
-      </Box>
-      <Typography
+        </AiaText>
+      </AiaBox>
+      <AiaText
         sx={{
           fontSize: "0.62rem",
           fontWeight: 700,
@@ -306,8 +301,8 @@ function MetricCard({
         }}
       >
         {label}
-      </Typography>
-    </Paper>
+      </AiaText>
+    </AiaPaper>
   );
 }
 
@@ -318,15 +313,11 @@ export function AiSummaryPanel({
   onCollapse,
 }: AiSummaryPanelProps) {
   const status = summaryStatusLabel(metrics);
-  const statusColor =
-    status === "Complete" ? "#166534" : status === "Partial" ? "#92400e" : "#64748b";
-  const statusBg =
-    status === "Complete" ? "#ecfdf5" : status === "Partial" ? "#fffbeb" : "#f8fafc";
-  const statusBorder =
-    status === "Complete" ? "#bbf7d0" : status === "Partial" ? "#fde68a" : "#e5e7eb";
+  const statusChipColor =
+    status === "Complete" ? "success" : status === "Partial" ? "warning" : "default";
 
   return (
-    <Box
+    <AiaBox
       sx={{
         width: "100%",
         height: "100%",
@@ -337,19 +328,22 @@ export function AiSummaryPanel({
         overflow: "hidden",
       }}
     >
-      <Box sx={{ px: 2, py: 1.5, borderBottom: "1px solid #e5e7eb", backgroundColor: "#fff" }}>
-        <Stack direction="row" spacing={1} sx={{ alignItems: "center" }}>
+      <AiaBox
+        data-tour={TOUR_TARGETS.sttmSummaryAiSummary}
+        sx={{ px: 2, py: 1.5, borderBottom: "1px solid #e5e7eb", backgroundColor: "#fff" }}
+      >
+        <AiaStack direction="row" spacing={1} sx={{ alignItems: "center" }}>
           <SttmSidebarSectionIcon kind="ai" fontSize={18} />
-          <Typography sx={{ fontSize: "0.92rem", fontWeight: 700, color: "#111827" }}>
+          <AiaText sx={{ fontSize: "0.92rem", fontWeight: 700, color: "#111827" }}>
             AI Summary
-          </Typography>
-        </Stack>
-      </Box>
+          </AiaText>
+        </AiaStack>
+      </AiaBox>
 
-      <Box sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 2 }}>
-        <Stack spacing={2}>
-          <Box>
-            <Box
+      <AiaBox sx={{ flex: 1, minHeight: 0, overflowY: "auto", p: 2 }}>
+        <AiaStack spacing={2}>
+          <AiaBox>
+            <AiaBox
               sx={{
                 display: "flex",
                 alignItems: "center",
@@ -358,23 +352,12 @@ export function AiSummaryPanel({
                 mb: 1,
               }}
             >
-              <Typography sx={{ fontSize: "0.78rem", fontWeight: 600, color: "#475569" }}>
+              <AiaText sx={{ fontSize: "0.78rem", fontWeight: 600, color: "#475569" }}>
                 Mapping Status
-              </Typography>
-              <Chip
-                label={status}
-                size="small"
-                sx={{
-                  height: 22,
-                  fontSize: "0.68rem",
-                  fontWeight: 700,
-                  bgcolor: statusBg,
-                  color: statusColor,
-                  border: `1px solid ${statusBorder}`,
-                }}
-              />
-            </Box>
-            <Box
+              </AiaText>
+              <AiaChip label={status} size="small" color={statusChipColor} />
+            </AiaBox>
+            <AiaBox
               sx={{
                 display: "flex",
                 alignItems: "center",
@@ -383,14 +366,14 @@ export function AiSummaryPanel({
                 mb: 0.75,
               }}
             >
-              <Typography sx={{ fontSize: "0.74rem", color: "#64748b" }}>
+              <AiaText sx={{ fontSize: "0.74rem", color: "#64748b" }}>
                 Column Coverage
-              </Typography>
-              <Typography sx={{ fontSize: "0.82rem", fontWeight: 700, color: "#111827" }}>
+              </AiaText>
+              <AiaText sx={{ fontSize: "0.82rem", fontWeight: 700, color: "#111827" }}>
                 {metrics.mappedCount}/{metrics.totalCount}
-              </Typography>
-            </Box>
-            <LinearProgress
+              </AiaText>
+            </AiaBox>
+            <AiaLinearProgress
               variant="determinate"
               value={metrics.progressPercent}
               sx={{
@@ -404,12 +387,12 @@ export function AiSummaryPanel({
                 },
               }}
             />
-            <Typography sx={{ fontSize: "0.74rem", color: "#64748b" }}>
+            <AiaText sx={{ fontSize: "0.74rem", color: "#64748b" }}>
               {metrics.progressPercent}% complete
-            </Typography>
-          </Box>
+            </AiaText>
+          </AiaBox>
 
-          <Box
+          <AiaBox
             sx={{
               display: "flex",
               flexWrap: "wrap",
@@ -418,58 +401,58 @@ export function AiSummaryPanel({
               rowGap: 1,
             }}
           >
-            <Box sx={{ width: "46%", minWidth: 118, display: "flex" }}>
+            <AiaBox sx={{ width: "46%", minWidth: 118, display: "flex" }}>
               <MetricCard
                 label="TOTAL MAPPED"
                 value={metrics.mappedCount}
                 tone="green"
                 icon={<CheckRoundedIcon />}
               />
-            </Box>
-            <Box sx={{ width: "46%", minWidth: 118, display: "flex" }}>
+            </AiaBox>
+            <AiaBox sx={{ width: "46%", minWidth: 118, display: "flex" }}>
               <MetricCard
                 label="UNMAPPED"
                 value={metrics.unmappedCount}
                 tone="amber"
                 icon={<ErrorOutlineRoundedIcon />}
               />
-            </Box>
-            <Box sx={{ width: "46%", minWidth: 118, display: "flex" }}>
+            </AiaBox>
+            <AiaBox sx={{ width: "46%", minWidth: 118, display: "flex" }}>
               <MetricCard
                 label="DIRECT RULES"
                 value={metrics.directRuleCount}
                 tone="indigo"
                 icon={<EastRoundedIcon />}
               />
-            </Box>
-            <Box sx={{ width: "46%", minWidth: 118, display: "flex" }}>
+            </AiaBox>
+            <AiaBox sx={{ width: "46%", minWidth: 118, display: "flex" }}>
               <MetricCard
                 label="TRANSFORMS"
                 value={metrics.transformRuleCount}
                 tone="purple"
                 icon={<SwapHorizRoundedIcon />}
               />
-            </Box>
-            <Box sx={{ width: "46%", minWidth: 118, display: "flex" }}>
+            </AiaBox>
+            <AiaBox sx={{ width: "46%", minWidth: 118, display: "flex" }}>
               <MetricCard
                 label="JOINS"
                 value={metrics.joinCount}
                 tone="sky"
                 icon={<AllInclusiveIcon />}
               />
-            </Box>
-            <Box sx={{ width: "46%", minWidth: 118, display: "flex" }}>
+            </AiaBox>
+            <AiaBox sx={{ width: "46%", minWidth: 118, display: "flex" }}>
               <MetricCard
                 label="SOURCE TABLES"
                 value={metrics.sourceTableCount}
                 tone="teal"
                 icon={<TableChartOutlinedIcon />}
               />
-            </Box>
-          </Box>
+            </AiaBox>
+          </AiaBox>
 
-          <Box>
-            <Paper
+          <AiaBox>
+            <AiaPaper
               elevation={0}
               sx={{
                 borderRadius: "12px",
@@ -478,32 +461,32 @@ export function AiSummaryPanel({
                 p: 1.25,
               }}
             >
-              <Typography sx={{ fontSize: "0.76rem", color: "#475569", lineHeight: 1.55 }}>
+              <AiaText sx={{ fontSize: "0.76rem", color: "#475569", lineHeight: 1.55 }}>
                 {narrative}
-              </Typography>
-            </Paper>
-          </Box>
+              </AiaText>
+            </AiaPaper>
+          </AiaBox>
 
           {metrics.sourceTableLabels.length > 0 ? (
-            <Box>
-              <Typography sx={SECTION_HEADER_SX}>Source Tables</Typography>
-              <Stack spacing={0.65}>
+            <AiaBox>
+              <AiaText sx={SECTION_HEADER_SX}>Source Tables</AiaText>
+              <AiaStack spacing={0.65}>
                 {metrics.sourceTableLabels.map((label) => (
                   <SourceTableRow key={label} label={label} />
                 ))}
-              </Stack>
-            </Box>
+              </AiaStack>
+            </AiaBox>
           ) : null}
 
           {metrics.transformRules.length > 0 ? (
-            <Box>
-              <Typography sx={SECTION_HEADER_SX}>Transform Rules</Typography>
-              <Stack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: "wrap" }}>
+            <AiaBox>
+              <AiaText sx={SECTION_HEADER_SX}>Transform Rules</AiaText>
+              <AiaStack direction="row" spacing={0.75} useFlexGap sx={{ flexWrap: "wrap" }}>
                 {metrics.transformRules.map((rule) => (
                   <TransformRulePill key={rule} rule={rule} />
                 ))}
-              </Stack>
-            </Box>
+              </AiaStack>
+            </AiaBox>
           ) : null}
 
           {metrics.unmappedColumns.length > 0 ? (
@@ -511,9 +494,9 @@ export function AiSummaryPanel({
           ) : null}
 
           {metrics.mappedPairs.length > 0 ? (
-            <Box>
-              <Typography sx={SECTION_HEADER_SX}>Mapped Columns</Typography>
-              <Stack spacing={0.55}>
+            <AiaBox>
+              <AiaText sx={SECTION_HEADER_SX}>Mapped Columns</AiaText>
+              <AiaStack spacing={0.55}>
                 {metrics.mappedPairs.map((pair) => (
                   <MappedColumnRow
                     key={`${pair.source}-${pair.target}-${pair.rule}`}
@@ -522,20 +505,20 @@ export function AiSummaryPanel({
                     rule={pair.rule}
                   />
                 ))}
-              </Stack>
-            </Box>
+              </AiaStack>
+            </AiaBox>
           ) : null}
 
           {targetQualifiedName ? (
-            <Typography sx={{ fontSize: "0.72rem", color: "#94a3b8" }}>
+            <AiaText sx={{ fontSize: "0.72rem", color: "#94a3b8" }}>
               Target table: {targetQualifiedName}
-            </Typography>
+            </AiaText>
           ) : null}
-        </Stack>
-      </Box>
+        </AiaStack>
+      </AiaBox>
 
       {onCollapse ? (
-        <Box
+        <AiaBox
           sx={{
             px: 1.5,
             py: 1,
@@ -547,7 +530,7 @@ export function AiSummaryPanel({
             backgroundColor: "#fff",
           }}
         >
-          <IconButton
+          <AiaIconButton
             size="small"
             aria-label="Collapse AI summary"
             onClick={onCollapse}
@@ -561,9 +544,9 @@ export function AiSummaryPanel({
             }}
           >
             <KeyboardDoubleArrowLeftRoundedIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-        </Box>
+          </AiaIconButton>
+        </AiaBox>
       ) : null}
-    </Box>
+    </AiaBox>
   );
 }

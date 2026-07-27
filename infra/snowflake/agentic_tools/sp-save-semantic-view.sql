@@ -20,6 +20,13 @@ DECLARE
     last_altered    TIMESTAMP_NTZ;
     version         VARCHAR;
     semantic_level  VARCHAR;
+    physical_view_name VARCHAR;
+    yaml_hash       VARCHAR;
+    producer_agent  VARCHAR;
+    request_id      VARCHAR;
+    parent_view_id  VARCHAR;
+    active_view_id  VARCHAR;
+    change_reason   VARCHAR;
     query           VARCHAR;
     rs              RESULTSET;
 BEGIN
@@ -34,11 +41,35 @@ BEGIN
     schema_name := UPPER(COALESCE(SEMANTIC_VIEW_JSON:schema::VARCHAR, ''));
     table_name := UPPER(COALESCE(SEMANTIC_VIEW_JSON:table::VARCHAR, ''));
     semantic_level := COALESCE(SEMANTIC_VIEW_JSON:semantic_model:semantic_level::VARCHAR, 'L1_CONTEXT');
+    physical_view_name := SEMANTIC_VIEW_JSON:publication:physical_view_name::VARCHAR;
+    yaml_hash := SEMANTIC_VIEW_JSON:publication:yaml_hash::VARCHAR;
+    producer_agent := COALESCE(SEMANTIC_VIEW_JSON:publication:producer_agent::VARCHAR, CURRENT_USER());
+    request_id := SEMANTIC_VIEW_JSON:publication:request_id::VARCHAR;
+    parent_view_id := SEMANTIC_VIEW_JSON:publication:parent_view_id::VARCHAR;
+    change_reason := SEMANTIC_VIEW_JSON:publication:change_reason::VARCHAR;
     fqn := db_name || '.' || schema_name || '.' || table_name;
 
     IF (scope != 'TABLE') THEN
         RETURN OBJECT_CONSTRUCT('status', 'ERROR', 'code', 'UNSUPPORTED_SCOPE', 'message', 'SP_SAVE_SEMANTIC_VIEW currently supports TABLE scope only.');
     END IF;
+
+    SELECT VIEW_ID INTO :active_view_id
+    FROM FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SEM_TABLE_VIEWS
+    WHERE DATABASE_NAME = :db_name
+      AND SCHEMA_NAME = :schema_name
+      AND TABLE_NAME = :table_name
+      AND STATUS = 'ACTIVE'
+    ORDER BY GENERATED_AT DESC
+    LIMIT 1;
+    IF (parent_view_id IS NOT NULL AND COALESCE(active_view_id, '') != parent_view_id) THEN
+        RETURN OBJECT_CONSTRUCT(
+            'status', 'ERROR',
+            'code', 'VERSION_CONFLICT',
+            'expected_view_id', parent_view_id,
+            'active_view_id', active_view_id
+        );
+    END IF;
+    parent_view_id := active_view_id;
 
     col_count := ARRAY_SIZE(SEMANTIC_VIEW_JSON:attribute_semantic_model);
     IF (col_count > 0) THEN
@@ -79,35 +110,17 @@ BEGIN
     FOR r IN rs DO version := r.NEXT_VER::VARCHAR; END FOR;
     IF (version IS NULL) THEN version := '1'; END IF;
 
-    query := '
-        UPDATE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SEM_TABLE_VIEWS
-        SET STATUS = ''SUPERSEDED'', UPDATED_AT = CURRENT_TIMESTAMP()
-        WHERE DATABASE_NAME = UPPER(''' || db_name || ''')
-          AND SCHEMA_NAME = UPPER(''' || schema_name || ''')
-          AND TABLE_NAME = UPPER(''' || table_name || ''')
-          AND STATUS = ''ACTIVE''
-    ';
-    EXECUTE IMMEDIATE :query;
-
     INSERT INTO FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SEM_TABLE_VIEWS (
         VIEW_ID, DATABASE_NAME, SCHEMA_NAME, TABLE_NAME, FQN, GENERATED_BY, STATUS, VERSION,
         ROW_COUNT, COLUMN_COUNT, COLUMN_SET_HASH, LAST_ALTERED_TS, SEMANTIC_LEVEL, SEMANTIC_VIEW,
+        PHYSICAL_VIEW_NAME, YAML_HASH, PRODUCER_AGENT, REQUEST_ID, PARENT_VIEW_ID, CHANGE_REASON,
         GENERATED_AT, UPDATED_AT
     )
     SELECT
-        :new_view_id, :db_name, :schema_name, :table_name, :fqn, CURRENT_USER(), 'ACTIVE', :version,
+        :new_view_id, :db_name, :schema_name, :table_name, :fqn, CURRENT_USER(), 'PENDING', :version,
         :row_count, :col_count, :col_set_hash, :last_altered, :semantic_level, :SEMANTIC_VIEW_JSON,
+        :physical_view_name, :yaml_hash, :producer_agent, :request_id, :parent_view_id, :change_reason,
         CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP();
-
-    query := '
-        UPDATE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SEM_COLUMN_VIEWS
-        SET STATUS = ''SUPERSEDED'', UPDATED_AT = CURRENT_TIMESTAMP()
-        WHERE DATABASE_NAME = UPPER(''' || db_name || ''')
-          AND SCHEMA_NAME = UPPER(''' || schema_name || ''')
-          AND TABLE_NAME = UPPER(''' || table_name || ''')
-          AND STATUS = ''ACTIVE''
-    ';
-    EXECUTE IMMEDIATE :query;
 
     INSERT INTO FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SEM_COLUMN_VIEWS (
         VIEW_ID, DATABASE_NAME, SCHEMA_NAME, TABLE_NAME, COLUMN_NAME, FQN, TABLE_VIEW_ID,
@@ -122,7 +135,7 @@ BEGIN
         :fqn || '.' || UPPER(f.value:name::VARCHAR),
         :new_view_id,
         CURRENT_USER(),
-        'ACTIVE',
+        'PENDING',
         f.value:data_type::VARCHAR,
         MD5(f.value:data_type::VARCHAR || ':' || IFF(f.value:nullable::BOOLEAN, 'YES', 'NO')),
         f.value,
@@ -130,67 +143,9 @@ BEGIN
         CURRENT_TIMESTAMP()
     FROM TABLE(FLATTEN(input => :SEMANTIC_VIEW_JSON, path => 'attribute_semantic_model')) f;
 
-    MERGE INTO FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODELS tgt
-    USING (
-        SELECT
-            'TABLE' AS SCOPE,
-            :db_name AS DB_NAME,
-            :schema_name AS SCHEMA_NAME,
-            :table_name AS TABLE_NAME,
-            '' AS ATTRIBUTE_NAME,
-            :SEMANTIC_VIEW_JSON:semantic_model AS SEMANTIC_MODEL,
-            :col_set_hash AS DDL_HASH,
-            CURRENT_TIMESTAMP() AS NOW_TS
-    ) src
-    ON tgt.SCOPE = src.SCOPE
-       AND tgt.DB_NAME = src.DB_NAME
-       AND tgt.SCHEMA_NAME = src.SCHEMA_NAME
-       AND tgt.TABLE_NAME = src.TABLE_NAME
-       AND tgt.ATTRIBUTE_NAME = src.ATTRIBUTE_NAME
-    WHEN MATCHED THEN UPDATE SET
-        tgt.SEMANTIC_MODEL = src.SEMANTIC_MODEL,
-        tgt.DDL_HASH = src.DDL_HASH,
-        tgt.UPDATED_AT = src.NOW_TS
-    WHEN NOT MATCHED THEN INSERT (
-        SCOPE, DB_NAME, SCHEMA_NAME, TABLE_NAME, ATTRIBUTE_NAME,
-        SEMANTIC_MODEL, DDL_HASH, GENERATED_AT, UPDATED_AT
-    ) VALUES (
-        src.SCOPE, src.DB_NAME, src.SCHEMA_NAME, src.TABLE_NAME, src.ATTRIBUTE_NAME,
-        src.SEMANTIC_MODEL, src.DDL_HASH, src.NOW_TS, src.NOW_TS
-    );
-
-    MERGE INTO FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.TBL_SEMANTIC_MODELS tgt
-    USING (
-        SELECT
-            'ATTRIBUTE' AS SCOPE,
-            :db_name AS DB_NAME,
-            :schema_name AS SCHEMA_NAME,
-            :table_name AS TABLE_NAME,
-            UPPER(f.value:name::VARCHAR) AS ATTRIBUTE_NAME,
-            f.value AS SEMANTIC_MODEL,
-            :col_set_hash AS DDL_HASH,
-            CURRENT_TIMESTAMP() AS NOW_TS
-        FROM TABLE(FLATTEN(input => :SEMANTIC_VIEW_JSON, path => 'attribute_semantic_model')) f
-    ) src
-    ON tgt.SCOPE = src.SCOPE
-       AND tgt.DB_NAME = src.DB_NAME
-       AND tgt.SCHEMA_NAME = src.SCHEMA_NAME
-       AND tgt.TABLE_NAME = src.TABLE_NAME
-       AND tgt.ATTRIBUTE_NAME = src.ATTRIBUTE_NAME
-    WHEN MATCHED THEN UPDATE SET
-        tgt.SEMANTIC_MODEL = src.SEMANTIC_MODEL,
-        tgt.DDL_HASH = src.DDL_HASH,
-        tgt.UPDATED_AT = src.NOW_TS
-    WHEN NOT MATCHED THEN INSERT (
-        SCOPE, DB_NAME, SCHEMA_NAME, TABLE_NAME, ATTRIBUTE_NAME,
-        SEMANTIC_MODEL, DDL_HASH, GENERATED_AT, UPDATED_AT
-    ) VALUES (
-        src.SCOPE, src.DB_NAME, src.SCHEMA_NAME, src.TABLE_NAME, src.ATTRIBUTE_NAME,
-        src.SEMANTIC_MODEL, src.DDL_HASH, src.NOW_TS, src.NOW_TS
-    );
-
     RETURN OBJECT_CONSTRUCT(
         'status', 'OK',
+        'publication_status', 'PENDING',
         'fqn', fqn,
         'table_view_id', new_view_id,
         'version', version,

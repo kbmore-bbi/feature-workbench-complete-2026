@@ -1,6 +1,12 @@
 "use client";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { AllInclusiveIcon, KeyIcon, LinkIcon } from '@/utils/icons';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AddIcon, AllInclusiveIcon, KeyIcon, LinkIcon } from '@/utils/icons';
+import { AiaResizeHandle } from '@/components/ui';
+import { AIA_RESIZE_HANDLE_THICKNESS } from '@/components/ui/aia-resize-handle';
+import { AiaButton } from '@/components/ui/aia-button';
+import { AiaChip } from '@/components/ui/aia-chip';
+import { AiaText } from '@/components/ui/aia-text';
+import { textStyleCssVars } from '@/config/typography-tokens';
 import {
   MarkerType,
   type Connection,
@@ -13,7 +19,9 @@ import {
 
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
+import { resolveSelectedSourceTables } from "@/features/sttm/shared/sttm-selection-utils";
 import type { Column, DerivedSource, JoinConfig, TableMeta } from "@/features/sttm/types/sttm.types";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
 
 import { FilterConditions } from "./filter-conditions";
 import { JoinModal } from "./join-modal";
@@ -21,38 +29,80 @@ import { TableNode, type TableNodeData } from "./table-node";
 import { AddDerivedModal } from "./add-derived-modal";
 import { RelationshipFlowView } from "./relationship-flow-view";
 import {
+  isTableHeaderHandle,
+  resolveTableHeaderHandleId,
+} from "./relationship-handles";
+import {
   buildRelationshipLayout,
   mergeRelationshipNodePositions,
   RELATIONSHIP_LAYOUT_FULL,
 } from "./relationship-layout";
 const EMPTY_SELECTED_COLUMNS: Record<string, string[]> = {};
+const CANVAS_AREA_MIN_HEIGHT = 660;
+const CANVAS_FLOW_HOST_DEFAULT_HEIGHT = 560;
 
 function renderSqlTableReference(table: TableMeta) {
   return `${table.database ?? ""}.${table.schema ?? ""}.${table.name ?? ""}`.replace(/\.+/g, ".");
 }
 
-function renderSqlColumnReference(table: TableMeta, columnName: string) {
-  return `${renderSqlTableReference(table)}.${columnName}`.replace(/\.+/g, ".");
+function buildRelationshipQuery(
+  tables: TableMeta[],
+  joins: JoinConfig[],
+  drivingTableId: string | null | undefined,
+  tableReference: (table: TableMeta) => string = renderSqlTableReference,
+) {
+  if (!tables.length) return "";
+  const tableById = new Map(tables.map((table) => [table.id as string, table]));
+  const seedTable =
+    (drivingTableId ? tableById.get(drivingTableId) : undefined) ??
+    (joins[0]?.leftTableId ? tableById.get(joins[0].leftTableId) : undefined) ??
+    tables[0];
+  if (!seedTable) return "";
+  const columnReference = (table: TableMeta, column: string) => `${tableReference(table)}.${column}`;
+  const lines = ["SELECT", "  *", `FROM ${tableReference(seedTable)}`];
+  const visited = new Set<string>([seedTable.id as string]);
+  const remaining = [...joins];
+  while (remaining.length > 0) {
+    const nextIndex = remaining.findIndex((join) => {
+      const leftVisited = !!join.leftTableId && visited.has(join.leftTableId);
+      const rightVisited = !!join.rightTableId && visited.has(join.rightTableId);
+      return leftVisited !== rightVisited;
+    });
+    if (nextIndex === -1) break;
+    const [join] = remaining.splice(nextIndex, 1);
+    const leftTable = join.leftTableId ? tableById.get(join.leftTableId) : undefined;
+    const rightTable = join.rightTableId ? tableById.get(join.rightTableId) : undefined;
+    if (!leftTable || !rightTable) continue;
+    const attachRight = visited.has(join.leftTableId as string) && !visited.has(join.rightTableId as string);
+    const attachingTable = attachRight ? rightTable : leftTable;
+    const validConditions = (join.conditions ?? []).filter(
+      (condition) => condition.leftColumn && condition.rightColumn,
+    );
+    if (!validConditions.length) continue;
+    lines.push(`${join.joinType ?? "INNER"} JOIN ${tableReference(attachingTable)}`);
+    lines.push(
+      `  ON ${validConditions.map((condition) =>
+        `${columnReference(leftTable, condition.leftColumn as string)} ${condition.operator ?? "="} ${columnReference(rightTable, condition.rightColumn as string)}`,
+      ).join("\n  AND ")}`,
+    );
+    visited.add(attachingTable.id as string);
+  }
+  return lines.join("\n");
 }
 
-function buildHandleId(
-  table: { database?: string; schema?: string; name?: string },
-  columnName: string,
-  _index: number,
-  kind: "source" | "target"
-) {
-  return `${table.database}.${table.schema}.${table.name}.${columnName}-${kind}`;
-}
-
-function resolveHandleId(
-  table: TableMeta | undefined,
-  columnName: string | undefined,
-  kind: "source" | "target"
-) {
-  if (!table || !columnName) return undefined;
-  const index = (table.columns ?? []).findIndex((column) => column.name === columnName);
-  if (index === -1) return undefined;
-  return buildHandleId(table, columnName, index, kind);
+function orientJoinToDrivingLeft(join: JoinConfig, drivingTableId: string): JoinConfig {
+  if (join.rightTableId !== drivingTableId || join.leftTableId === drivingTableId) return join;
+  return {
+    ...join,
+    leftTableId: join.rightTableId,
+    rightTableId: join.leftTableId,
+    joinType: join.joinType === "LEFT" ? "RIGHT" : join.joinType === "RIGHT" ? "LEFT" : join.joinType,
+    conditions: (join.conditions ?? []).map((condition) => ({
+      ...condition,
+      leftColumn: condition.rightColumn,
+      rightColumn: condition.leftColumn,
+    })),
+  };
 }
 
 function parseHandleId(
@@ -87,11 +137,30 @@ function normalizeColumns(
   tableId: string,
   tableName: string
 ): Column[] {
-  return (columns ?? []).map((column) => ({
-    ...column,
-    tableId: column.tableId ?? tableId,
-    tableName: column.tableName ?? tableName,
-  }));
+  const uniqueColumns = new Map<string, Column>();
+  (columns ?? []).forEach((column, index) => {
+    const normalized = {
+      ...column,
+      tableId: column.tableId ?? tableId,
+      tableName: column.tableName ?? tableName,
+    };
+    const columnName = String(column.name ?? "").trim();
+    const key = columnName ? columnName.toUpperCase() : `__UNNAMED_${index}`;
+    const existing = uniqueColumns.get(key);
+    uniqueColumns.set(
+      key,
+      existing
+        ? {
+            ...existing,
+            ...normalized,
+            isPrimaryKey: Boolean(existing.isPrimaryKey || normalized.isPrimaryKey),
+            isForeignKey: Boolean(existing.isForeignKey || normalized.isForeignKey),
+            selected: Boolean(existing.selected || normalized.selected),
+          }
+        : normalized,
+    );
+  });
+  return [...uniqueColumns.values()];
 }
 
 type TableRelationshipFlowProps = {
@@ -121,6 +190,7 @@ export default function SttmTableRelationshipFlow({
 }: TableRelationshipFlowProps) {
   const {
     fullData,
+    sources,
     drivingTableId,
     relationships,
     setRelationships,
@@ -133,11 +203,51 @@ export default function SttmTableRelationshipFlow({
     sourceGroupBySql,
     sourceOrderBySql,
     sourceQuerySql,
+    refreshAssistantSignals,
   } = useSttmBuilderContext();
 
   const [editingDerivedSource, setEditingDerivedSource] = useState<DerivedSource | null>(null);
   const [isDerivedModalOpen, setIsDerivedModalOpen] = useState(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
+  const [flowHostHeight, setFlowHostHeight] = useState(CANVAS_FLOW_HOST_DEFAULT_HEIGHT);
+  const headerRef = useRef<HTMLDivElement>(null);
+  const legendRef = useRef<HTMLDivElement>(null);
+
+  const resolveMinFlowHostHeight = useCallback(() => {
+    const headerHeight = headerRef.current?.offsetHeight ?? 48;
+    const legendHeight = legendRef.current?.offsetHeight ?? 58;
+    return Math.max(
+      160,
+      CANVAS_AREA_MIN_HEIGHT - headerHeight - legendHeight - AIA_RESIZE_HANDLE_THICKNESS,
+    );
+  }, []);
+
+  const handleCanvasResizeMouseDown = useCallback(
+    (event: React.MouseEvent<HTMLDivElement>) => {
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = flowHostHeight;
+      const minHeight = resolveMinFlowHostHeight();
+
+      const handleMouseMove = (moveEvent: MouseEvent) => {
+        const nextHeight = startHeight + (moveEvent.clientY - startY);
+        setFlowHostHeight(Math.max(minHeight, nextHeight));
+      };
+
+      const handleMouseUp = () => {
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+        document.body.style.removeProperty("cursor");
+        document.body.style.removeProperty("user-select");
+      };
+
+      document.body.style.cursor = "row-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    },
+    [flowHostHeight, resolveMinFlowHostHeight],
+  );
   const [editingJoin, setEditingJoin] = useState<JoinConfig | null>(null);
   const effectiveDrivingTableId = controlledDrivingTableId ?? drivingTableId;
 
@@ -147,55 +257,54 @@ export default function SttmTableRelationshipFlow({
     );
     const selectedTables: TableMeta[] = [];
 
-    for (const db of fullData?.sources ?? []) {
-      for (const schema of db.schemas ?? []) {
-        for (const table of schema.tables ?? []) {
-          if (!table.isSelected) continue;
+    for (const table of resolveSelectedSourceTables({
+      sourceDatabases: fullData?.sources ?? [],
+      sources,
+    })) {
+      const qualifiedName = table.qualifiedName;
+      const [database = "", schema = ""] = qualifiedName.split(".");
+      const columnItems = normalizeColumns(
+        table.columnItems?.length ? table.columnItems : groupsByQualifiedName.get(qualifiedName),
+        table.tableId,
+        table.tableName
+      );
+      const chip = tagChipPalette(table.tag);
 
-          const qualifiedName = table.qualifiedName;
-          const columnItems = normalizeColumns(
-            table.columnItems?.length ? table.columnItems : groupsByQualifiedName.get(qualifiedName),
-            table.tableId,
-            table.tableName
-          );
-          const chip = tagChipPalette(table.tag);
-
-          selectedTables.push({
-            id: table.tableId,
-            name: table.tableName,
-            schema: schema.schemaName,
-            database: db.dbName,
-            rowCount: table.rows ?? "—",
-            colCount: columnItems.length || table.columns || 0,
-            columns: columnItems,
-            tag: table.tag ?? "Source",
-            tagBg: chip.tagBg,
-            tagFg: chip.tagFg,
-          });
-        }
-      }
+      selectedTables.push({
+        id: table.tableId,
+        name: table.tableName,
+        schema,
+        database,
+        rowCount: table.rows ?? "—",
+        colCount: columnItems.length || table.columns || 0,
+        columns: columnItems,
+        tag: table.tag ?? "Source",
+        tagBg: chip.tagBg,
+        tagFg: chip.tagFg,
+      });
     }
 
     const derived: TableMeta[] = (derivedSources || [])
       .filter((source) => source.isSelected)
       .map((source) => {
-      const chip = tagChipPalette("Derived");
-      return {
-        id: source.id,
-        name: source.sourceName,
-        schema: "DERIVED",
-        database: "DERIVED",
-        rowCount: "—",
-        colCount: source.columns.length,
-        columns: normalizeColumns(source.columns, source.id, source.sourceName),
-        tag: "Derived",
-        tagBg: chip.tagBg,
-        tagFg: chip.tagFg,
-      };
-    });
+        const chip = tagChipPalette("Derived");
+        const columns = normalizeColumns(source.columns, source.id, source.sourceName);
+        return {
+          id: source.id,
+          name: source.sourceName,
+          schema: "DERIVED",
+          database: "DERIVED",
+          rowCount: "—",
+          colCount: columns.length,
+          columns,
+          tag: "Derived",
+          tagBg: chip.tagBg,
+          tagFg: chip.tagFg,
+        };
+      });
 
     return [...selectedTables, ...derived];
-  }, [derivedSources, fullData, sourceAttributeGroups]);
+  }, [derivedSources, fullData, sourceAttributeGroups, sources]);
 
   const activeTables = useMemo(() => {
     const source = tables ?? contextTables;
@@ -231,6 +340,13 @@ export default function SttmTableRelationshipFlow({
     },
     [currentJoins, onJoinsChange, setRelationships]
   );
+
+  useEffect(() => {
+    if (!effectiveDrivingTableId || !currentJoins.some((join) => join.rightTableId === effectiveDrivingTableId)) {
+      return;
+    }
+    setJoinState(currentJoins.map((join) => orientJoinToDrivingLeft(join, effectiveDrivingTableId)));
+  }, [currentJoins, effectiveDrivingTableId, setJoinState]);
 
   useEffect(() => {
     const ids = new Set(activeTables.map((table) => table.id));
@@ -271,7 +387,7 @@ export default function SttmTableRelationshipFlow({
   const initialNodes = useMemo(() => {
     return activeTables.map((table) => {
       const isDriving = table.id === effectiveDrivingTableId;
-      const chip = tagChipPalette(isDriving ? "Driving" : table.tag);
+      const chip = tagChipPalette(table.tag ?? "Source");
 
       return {
       id: table.id as string,
@@ -282,8 +398,8 @@ export default function SttmTableRelationshipFlow({
         schema: table.schema ?? "—",
         database: table.database ?? "—",
         tag: isDriving ? "Driving" : table.tag ?? "Source",
-        tagBg: isDriving ? chip.tagBg : table.tagBg ?? chip.tagBg,
-        tagFg: isDriving ? chip.tagFg : table.tagFg ?? chip.tagFg,
+        tagBg: table.tagBg ?? chip.tagBg,
+        tagFg: table.tagFg ?? chip.tagFg,
         rowCount: table.rowCount ?? "—",
         colCount: table.colCount ?? table.columns?.length ?? 0,
         columns: table.columns ?? [],
@@ -344,8 +460,8 @@ export default function SttmTableRelationshipFlow({
 
         const leftTable = activeTables.find((table) => table.id === join.leftTableId);
         const rightTable = activeTables.find((table) => table.id === join.rightTableId);
-        const sourceHandle = resolveHandleId(leftTable, first.leftColumn, "source");
-        const targetHandle = resolveHandleId(rightTable, first.rightColumn, "target");
+        const sourceHandle = resolveTableHeaderHandleId(leftTable, "source");
+        const targetHandle = resolveTableHeaderHandleId(rightTable, "target");
         if (!sourceHandle || !targetHandle) return null;
 
         return {
@@ -412,8 +528,11 @@ export default function SttmTableRelationshipFlow({
       const rightTableId = params.target;
       const leftColumn = parseHandleId(params.sourceHandle, "source");
       const rightColumn = parseHandleId(params.targetHandle, "target");
+      const fromHeader =
+        isTableHeaderHandle(params.sourceHandle) || isTableHeaderHandle(params.targetHandle);
 
-      if (!leftTableId || !rightTableId || !leftColumn || !rightColumn) return;
+      if (!leftTableId || !rightTableId) return;
+      if (!fromHeader && (!leftColumn || !rightColumn)) return;
 
       const existing = currentJoins.find(
         (join) => join.leftTableId === leftTableId && join.rightTableId === rightTableId
@@ -426,7 +545,10 @@ export default function SttmTableRelationshipFlow({
           joinType: "INNER",
           source: "USER_DEFINED",
           locked: false,
-          conditions: [{ leftColumn, operator: "=", rightColumn }],
+          conditions:
+            leftColumn && rightColumn
+              ? [{ leftColumn, operator: "=", rightColumn }]
+              : [{ leftColumn: "", operator: "=", rightColumn: "" }],
         }
       );
       setIsJoinModalOpen(true);
@@ -444,61 +566,39 @@ export default function SttmTableRelationshipFlow({
   const joinCount = currentJoins.length;
   const joinBadgeLabel = joinCount === 1 ? "1 join" : `${joinCount} joins`;
   const queryPreviewSql = useMemo(() => {
-    if (!activeTables.length) return "";
-
-    const tableById = new Map(activeTables.map((table) => [table.id as string, table]));
-    const seedTable =
-      (effectiveDrivingTableId ? tableById.get(effectiveDrivingTableId) : undefined) ??
-      (currentJoins[0]?.leftTableId ? tableById.get(currentJoins[0].leftTableId) : undefined) ??
-      activeTables[0];
-
-    if (!seedTable) return "";
-
-    const lines = ["SELECT", "  *", `FROM ${renderSqlTableReference(seedTable)}`];
-    const visited = new Set<string>([seedTable.id as string]);
-    const remaining = [...currentJoins];
-
-    while (remaining.length > 0) {
-      const nextIndex = remaining.findIndex((join) => {
-        const leftVisited = !!join.leftTableId && visited.has(join.leftTableId);
-        const rightVisited = !!join.rightTableId && visited.has(join.rightTableId);
-        return leftVisited !== rightVisited;
-      });
-
-      if (nextIndex === -1) break;
-
-      const [join] = remaining.splice(nextIndex, 1);
-      const leftTable = join.leftTableId ? tableById.get(join.leftTableId) : undefined;
-      const rightTable = join.rightTableId ? tableById.get(join.rightTableId) : undefined;
-      if (!leftTable || !rightTable || !join.conditions?.length) {
-        continue;
-      }
-
-      const leftJoinTableId = join.leftTableId as string;
-      const rightJoinTableId = join.rightTableId as string;
-      const attachRight = visited.has(leftJoinTableId) && !visited.has(rightJoinTableId);
-      const attachingTable = attachRight ? rightTable : leftTable;
-      const validConditions = join.conditions.filter(
-        (condition) => condition.leftColumn && condition.rightColumn,
-      );
-      if (!validConditions.length) {
-        continue;
-      }
-
-      lines.push(`${join.joinType ?? "INNER"} JOIN ${renderSqlTableReference(attachingTable)}`);
-      lines.push(
-        `  ON ${validConditions
-          .map(
-            (condition) =>
-              `${renderSqlColumnReference(leftTable, condition.leftColumn as string)} ${condition.operator ?? "="} ${renderSqlColumnReference(rightTable, condition.rightColumn as string)}`,
-          )
-          .join("\n  AND ")}`,
-      );
-      visited.add(attachingTable.id as string);
-    }
-
-    return lines.join("\n");
+    return buildRelationshipQuery(activeTables, currentJoins, effectiveDrivingTableId);
   }, [activeTables, currentJoins, effectiveDrivingTableId]);
+
+  const expandedPreview = useMemo(() => {
+    const selectedDerived = (derivedSources ?? []).filter(
+      (source) => source.isSelected && source.sqlText?.trim() && activeTables.some((table) => table.id === source.id),
+    );
+    if (!selectedDerived.length) return null;
+    const aliases = new Map<string, string>();
+    const used = new Set<string>();
+    for (const source of selectedDerived) {
+      const base = `derived_${(source.sourceName || source.id).replace(/[^a-zA-Z0-9_]/g, "_").replace(/^([^a-zA-Z_])/, "_$1")}`;
+      let alias = base;
+      let suffix = 2;
+      while (used.has(alias.toLowerCase())) alias = `${base}_${suffix++}`;
+      used.add(alias.toLowerCase());
+      aliases.set(source.id, alias);
+    }
+    const query = buildRelationshipQuery(
+      activeTables,
+      currentJoins,
+      effectiveDrivingTableId,
+      (table) => aliases.get(table.id as string) ?? renderSqlTableReference(table),
+    );
+    const ctes = selectedDerived.map((source) => {
+      const sql = (source.sqlText ?? "").trim().replace(/;\s*$/, "");
+      return `${aliases.get(source.id)} AS (\n${sql.split("\n").map((line) => `  ${line}`).join("\n")}\n)`;
+    });
+    const replacements = Object.fromEntries(
+      selectedDerived.map((source) => [`DERIVED.DERIVED.${source.sourceName}`, aliases.get(source.id) as string]),
+    );
+    return { sql: `WITH\n${ctes.join(",\n")}\n${query}`, replacements };
+  }, [activeTables, currentJoins, derivedSources, effectiveDrivingTableId]);
 
   useEffect(() => {
     if (queryPreviewSql === sourceQuerySql) {
@@ -525,30 +625,47 @@ export default function SttmTableRelationshipFlow({
   return (
     <div className="flex w-full flex-col gap-3">
       <div className="canvas-area">
-        <div className="canvas-area__header">
+        <div ref={headerRef} className="canvas-area__header">
           <div className="canvas-area__title">
-            <AllInclusiveIcon sx={{ color: "#2563eb", fontSize: 22, flexShrink: 0 }} />
-            <span className="canvas-area__title-main">Table Relationships</span>
-            <span className="canvas-area__badge">{joinBadgeLabel}</span>
+            <AllInclusiveIcon
+              sx={{
+                fontSize: "calc(var(--aia-card-title-font-size) + 2px)",
+                color: "var(--aia-card-title-color)",
+                flexShrink: 0,
+              }}
+              aria-hidden
+            />
+            <AiaText
+              sx={{
+                ...textStyleCssVars("cardTitle"),
+                textTransform: "capitalize",
+                letterSpacing: "-0.01em",
+              }}
+            >
+              Table relationships
+            </AiaText>
+            <AiaChip size="small" color="primary" label={joinBadgeLabel} />
           </div>
-          <button
-            type="button"
-            className="canvas-area__add-btn"
+          <AiaButton
+            data-tour={TOUR_TARGETS.sttmAddJoin}
+            size="small"
+            variant="outlined"
+            startIcon={<AddIcon sx={{ fontSize: 18 }} />}
             onClick={() => {
               setEditingJoin(null);
               setIsJoinModalOpen(true);
             }}
             disabled={activeTables.length === 0}
-            style={{
-              opacity: activeTables.length === 0 ? 0.5 : 1,
-              cursor: activeTables.length === 0 ? "not-allowed" : "pointer",
-            }}
+            sx={{ minWidth: 0, boxShadow: "none" }}
+            customBorderColor="var(--aia-state-success-color)"
+            customColor="var(--aia-state-success-color)"
+            customHoverBackgroundColor="var(--aia-state-success-hover-bg)"
           >
-            + Add Join
-          </button>
+            Add Join
+          </AiaButton>
         </div>
 
-        <div className="canvas-area__flow-host">
+        <div className="canvas-area__flow-host" style={{ height: flowHostHeight }}>
           {nodes.length === 0 ? (
             <div className="canvas-area__empty" aria-hidden>
               <div className="canvas-area__empty-inner">{emptyStateText}</div>
@@ -563,17 +680,24 @@ export default function SttmTableRelationshipFlow({
           />
         </div>
 
-        <div className="canvas-legend">
+        <AiaResizeHandle
+          className="canvas-area__resize-handle"
+          direction="vertical"
+          onMouseDown={handleCanvasResizeMouseDown}
+        />
+
+        <div ref={legendRef} className="canvas-legend">
           <div className="canvas-legend__row">
             <span className="canvas-legend__label">LEGEND:</span>
             {joinLegend.map((item) => (
-              <span
+              <AiaChip
                 key={item.label}
-                className="canvas-legend__chip"
-                style={{ backgroundColor: item.bg }}
-              >
-                {item.label}
-              </span>
+                label={item.label}
+                size="small"
+                customColor={item.bg}
+                customBackgroundColor={`color-mix(in srgb, ${item.bg} 12%, #ffffff)`}
+                customBorderColor={`color-mix(in srgb, ${item.bg} 30%, #ffffff)`}
+              />
             ))}
             <span className="canvas-legend__hint">
               <span className="canvas-legend__dash" />
@@ -596,6 +720,10 @@ export default function SttmTableRelationshipFlow({
           tables={activeTables}
           initialGroups={sourceFilterGroups}
           previewSql={queryPreviewSql}
+          expandedPreviewSql={expandedPreview?.sql}
+          expandedReferenceReplacements={expandedPreview?.replacements}
+          relationships={currentJoins}
+          drivingTableId={effectiveDrivingTableId}
           onChange={(groups, sql) =>
             setSourceFilterConditions({
               groups,
@@ -636,6 +764,7 @@ export default function SttmTableRelationshipFlow({
                 },
               ];
             });
+            window.setTimeout(() => refreshAssistantSignals("join_completed"), 0);
           }}
         />
 

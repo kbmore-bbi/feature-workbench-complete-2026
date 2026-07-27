@@ -10,6 +10,14 @@ function emitCurrentError() {
 }
 
 export function publishAppErrorPayload(payload: AppErrorPayload) {
+  const isDuplicate = errorQueue.some(
+    (queued) =>
+      queued.title === payload.title &&
+      queued.message === payload.message &&
+      queued.code === payload.code &&
+      queued.statusCode === payload.statusCode,
+  );
+  if (isDuplicate) return;
   errorQueue.push(payload);
   emitCurrentError();
 }

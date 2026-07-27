@@ -1,4 +1,5 @@
 from typing import Annotated
+import time
 
 from fastapi import APIRouter, Depends, Query, Request
 
@@ -7,6 +8,7 @@ from app.core.semantic_context import SemanticContextService
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.schema.contracts import ApiRequestEnvelope, ApiResponseEnvelope, build_response_envelope
 from app.schema.semantic_context import SemanticContextBundleResponse, SemanticContextRefreshRequest
+from app.schema.semantic_context import SemanticProjectionRequest, SemanticProjectionResponse
 
 router = APIRouter(prefix="/semantic-context", tags=["Semantic Context"])
 
@@ -37,11 +39,15 @@ def refresh_semantic_context(
         warnings = body.warnings
         meta = body.meta
 
+    started = time.perf_counter()
     result = service.refresh_bundle(
         payload,
         agent_client=agent_client,
         allow_agent_refresh=True,
     )
+    getattr(request.state, "workbench_timings_ms", {})["semantic_refresh"] = (
+        time.perf_counter() - started
+    ) * 1000
     return build_response_envelope(
         operation="semantic_context.refresh",
         request=request,
@@ -72,8 +78,8 @@ def get_semantic_context(
             bundle_id=bundle_id or "",
             bundle_hash=bundle_hash or "",
             bundle_label=None,
-            requested_level="L1_CONTEXT",
-            achieved_level="L1_CONTEXT",
+            requested_level="FULL_REGISTRY",
+            achieved_level="FULL_REGISTRY",
             status="failed",
             summary={
                 "bundle_id": bundle_id or "",
@@ -82,7 +88,7 @@ def get_semantic_context(
                 "source_table_count": 0,
                 "derived_source_count": 0,
                 "relationship_count": 0,
-                "semantic_level": "L1_CONTEXT",
+                "semantic_level": "FULL_REGISTRY",
                 "notes": ["bundle not found"],
             },
         )
@@ -100,6 +106,15 @@ def get_semantic_context(
         requested_level=record["semantic_level"],
         achieved_level=record["semantic_level"],
         semantic_view_name=record["semantic_view_name"],
+        semantic_model_yaml=record.get("semantic_model_yaml"),
+        composed_yaml=record.get("semantic_model_yaml"),
+        registry_version=record.get("registry_version"),
+        raw_assets=record.get("raw_assets") or [],
+        derived_semantics=record.get("derived_semantics") or [],
+        excluded_relationships=record.get("excluded_relationships") or [],
+        composition_diagnostics=record.get("composition_diagnostics") or [],
+        cache_hit=True,
+        cache_status="l2",
         status=record["status"],
         promoted=bool(record["semantic_view_name"]),
         summary={
@@ -126,4 +141,43 @@ def get_semantic_context(
         request=request,
         context={"bundle_id": bundle_id, "bundle_hash": bundle_hash},
         data=response,
+    )
+
+
+@router.post(
+    "/projection",
+    response_model=ApiResponseEnvelope[SemanticProjectionResponse],
+    summary="Build or fetch a compact semantic projection for a downstream agent task",
+)
+def get_semantic_projection(
+    body: ApiRequestEnvelope[SemanticProjectionRequest] | SemanticProjectionRequest,
+    request: Request,
+    *,
+    service: Annotated[SemanticContextService, Depends(get_semantic_context_service)],
+) -> ApiResponseEnvelope[SemanticProjectionResponse]:
+    if isinstance(body, SemanticProjectionRequest):
+        payload = body
+        request_id = None
+        actor = None
+        context: dict[str, object] = {}
+        warnings = []
+        meta: dict[str, object] = {}
+    else:
+        payload = body.data
+        request_id = body.request_id
+        actor = body.actor
+        context = body.context
+        warnings = body.warnings
+        meta = body.meta
+
+    result = service.get_projection(payload)
+    return build_response_envelope(
+        operation="semantic_context.projection",
+        request=request,
+        request_id=request_id,
+        actor=actor,
+        context=context,
+        warnings=warnings,
+        meta=meta,
+        data=result,
     )

@@ -45,6 +45,42 @@ class WorkbookDbtConversionItem(BaseModel):
     source_update: WorkbookDbtSourceUpdate | None = None
 
 
+class WorkbookTestCaseGroupItem(BaseModel):
+    group: str
+    target_columns: list[str] = Field(default_factory=list)
+
+
+class WorkbookTestCaseSeedFileItem(BaseModel):
+    file_path: str
+    file_type: str
+    content: str
+
+
+class WorkbookTestCaseDocumentItem(BaseModel):
+    test_case_id: str
+    group: str
+    target_attribute: str
+    source_columns: str
+    mapping_rule: str
+    test_case_description: str
+    test_type: str
+    sample_source_input: str
+    expected_target_value: str
+    confidence: str | None = None
+
+
+class WorkbookTestCaseGenerationItem(BaseModel):
+    status: str | None = None
+    domain_name: str | None = None
+    target_layer: str | None = None
+    materialization: str | None = None
+    target_model: str | None = None
+    target_table: str | None = None
+    test_groups: list[WorkbookTestCaseGroupItem] = Field(default_factory=list)
+    seed_files: list[WorkbookTestCaseSeedFileItem] = Field(default_factory=list)
+    test_case_document: list[WorkbookTestCaseDocumentItem] = Field(default_factory=list)
+
+
 class WorkbookExportRequest(BaseModel):
     project_name: str | None = None
     summary_narrative: str | None = None
@@ -64,4 +100,5 @@ class WorkbookExportRequest(BaseModel):
     lineage_table_mermaid: str | None = None
     lineage_column_mermaid: str | None = None
     dbt_conversion: WorkbookDbtConversionItem | None = None
+    test_case_generation: WorkbookTestCaseGenerationItem | None = None
     mappings: list[MappingSqlMappingItem] = Field(default_factory=list)

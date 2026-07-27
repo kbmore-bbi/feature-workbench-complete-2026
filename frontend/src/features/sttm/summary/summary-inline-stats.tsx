@@ -1,6 +1,7 @@
 "use client";
+import { AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { Box, Typography } from "@mui/material";
 import type { SummaryMetrics } from "./summary-utils";
 
 function StatDot({
@@ -13,7 +14,7 @@ function StatDot({
   suffix: string;
 }) {
   return (
-    <Box
+    <AiaBox
       sx={{
         display: "inline-flex",
         alignItems: "center",
@@ -21,7 +22,7 @@ function StatDot({
         lineHeight: 1,
       }}
     >
-      <Box
+      <AiaBox
         sx={{
           width: 7,
           height: 7,
@@ -30,7 +31,7 @@ function StatDot({
           flexShrink: 0,
         }}
       />
-      <Typography
+      <AiaText
         component="span"
         sx={{
           fontSize: "0.76rem",
@@ -41,18 +42,18 @@ function StatDot({
         }}
       >
         {count} {suffix}
-      </Typography>
-    </Box>
+      </AiaText>
+    </AiaBox>
   );
 }
 
 export function SummaryInlineStats({ metrics }: { metrics: SummaryMetrics }) {
   return (
-    <Box sx={{ display: "flex", alignItems: "center", gap: 1.75, flexWrap: "wrap" }}>
+    <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1.75, flexWrap: "wrap" }}>
       <StatDot color="#22c55e" count={metrics.mappedCount} suffix="mapped" />
       <StatDot color="#f59e0b" count={metrics.unmappedCount} suffix="unmapped" />
       <StatDot color="#3b82f6" count={metrics.totalCount} suffix="total columns" />
-    </Box>
+    </AiaBox>
   );
 }
 
@@ -62,11 +63,11 @@ export function SummaryTargetLabel({ targetQualifiedName }: { targetQualifiedNam
   }
 
   return (
-    <Typography sx={{ fontSize: "0.76rem", color: "#64748b", whiteSpace: "nowrap" }}>
-      <Box component="span" sx={{ fontWeight: 500 }}>
+    <AiaText sx={{ fontSize: "0.76rem", color: "#64748b", whiteSpace: "nowrap" }}>
+      <AiaBox component="span" sx={{ fontWeight: 500 }}>
         Target:
-      </Box>{" "}
+      </AiaBox>{" "}
       {targetQualifiedName}
-    </Typography>
+    </AiaText>
   );
 }

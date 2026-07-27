@@ -3,8 +3,17 @@ import json
 from app.core.config import Settings
 from app.core.conversation import ConversationService
 from app.guardrails.contracts.decisions import GovernanceDecision
-from app.schema.conversation import ConversationIndexSyncRequestData, ConversationRequestEnvelope, ConversationSearchRequestData
-from app.schema.conversation import ConversationSearchHit
+from app.schema.conversation import (
+    AssistantSignal,
+    AssistantSignalStatus,
+    AssistantSignalType,
+    ConversationIndexSyncRequestData,
+    ConversationRequestEnvelope,
+    ConversationSearchRequestData,
+    ConversationSearchHit,
+    ConversationSignalEvaluationData,
+)
+from app.schema.sttm_builder import FIRLearningItem, LearningContext
 
 
 class _FakeAgentClient:
@@ -72,6 +81,14 @@ class _FakeSTTMService:
         self.captured_decision = governance_decision
         yield "event: final\ndata: {\"ok\": true}\n\n"
 
+    def resolve_usable_semantic_context(
+        self,
+        *,
+        semantic_bundle_id=None,
+        semantic_view_name=None,
+    ):  # type: ignore[no-untyped-def]
+        return semantic_bundle_id, semantic_view_name
+
 
 class _FakeMemoryService:
     def __init__(self) -> None:
@@ -115,12 +132,131 @@ class _FakeMemoryService:
         return list(self.relationship_hits)
 
 
+class _FakeLearningService:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def get_comprehensive_learning_context(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.calls.append(kwargs)
+        return LearningContext(
+            context_key=kwargs.get("context_key"),
+            retrieval_mode="exact_context",
+            fir_learnings=[
+                FIRLearningItem(
+                    learning_id="inference-1",
+                    learning_type="join_path",
+                    pattern_key="loan-portal-history",
+                    summary="Join the portal history by portal user ID.",
+                    confidence=0.91,
+                    source="fir_agent",
+                )
+            ],
+            fir_recommendations=[
+                {
+                    "recommendation_id": "recommendation-1",
+                    "display_message": "Preserve the loan object-type filter.",
+                    "confidence": 0.88,
+                }
+            ],
+        )
+
+
 def _settings() -> Settings:
     return Settings(
         SNOWFLAKE_DATABASE="DB",
         SNOWFLAKE_SCHEMA="SCH",
         SNOWFLAKE_WORKBENCH_CONVERSATION_AGENT="DB.SCH.AGT_WORKBENCH_CONVERSATION",
+        SNOWFLAKE_RAG_SEARCH_SERVICE="DB.SCH.CSS_WORKBENCH_RAG",
     )
+
+
+def test_signal_filter_requires_new_status_and_exact_context_key() -> None:
+    data = ConversationSignalEvaluationData.model_validate(
+        {
+            "page": "builder",
+            "surface": "SOURCE_SELECTION",
+            "source_tables": [
+                {"database": "DB", "schema": "SRC", "table": "LOAN"},
+                {"database": "DB", "schema": "SRC", "table": "NOTE"},
+            ],
+        }
+    )
+
+    def signal(signal_id: str, status: AssistantSignalStatus, context_key: str | None) -> AssistantSignal:
+        return AssistantSignal(
+            signal_id=signal_id,
+            signal_type=AssistantSignalType.RECOMMENDATION,
+            layer="recommendation",
+            status=status,
+            source="fir_agent",
+            title="Join guidance",
+            message="Review the relationship.",
+            entity_ids=["DB.SRC.LOAN", "DB.SRC.NOTE"],
+            attributes={
+                "page": "builder",
+                "surface": "SOURCE_SELECTION",
+                **({"context_key": context_key} if context_key else {}),
+            },
+        )
+
+    filtered = ConversationService._filter_signals_for_context(
+        [
+            signal("legacy", AssistantSignalStatus.NEW, None),
+            signal("acknowledged", AssistantSignalStatus.ACKNOWLEDGED, "ctx-current"),
+            signal("other-context", AssistantSignalStatus.NEW, "ctx-other"),
+            signal("current", AssistantSignalStatus.NEW, "ctx-current"),
+        ],
+        data,
+        context_key="ctx-current",
+    )
+
+    assert [item.signal_id for item in filtered] == ["current"]
+
+
+def test_direct_conversation_receives_exact_fir_learning_context() -> None:
+    learning = _FakeLearningService()
+    service = ConversationService(
+        _FakeAgentClient(),
+        sttm_builder_service=_FakeSTTMService(),
+        memory_service=_FakeMemoryService(),
+        settings=_settings(),
+        learning_service=learning,
+    )
+    req = ConversationRequestEnvelope.model_validate(
+        {
+            "contract_version": "1.0",
+            "request_id": "req-fir-context",
+            "operation": "conversation.ask",
+            "context": {
+                "trace_id": "trace-fir-context",
+                "source_tables": [
+                    {"database": "DB", "schema": "SRC", "table": "LOAN"}
+                ],
+                "target_table": {"database": "DB", "schema": "TGT", "table": "LOAN"},
+                "workspace_context": {
+                    "context_version": "2.0",
+                    "project_id": "project-1",
+                    "sttm_id": "sttm-1",
+                    "milestone": "target_selected",
+                    "source_tables": [
+                        {"database": "DB", "schema": "SRC", "table": "LOAN"}
+                    ],
+                    "target_table": {"database": "DB", "schema": "TGT", "table": "LOAN"},
+                },
+            },
+            "data": {"message": "What should I check next?"},
+        }
+    )
+
+    enriched = service._with_learning_context(req)
+    compact = service._compact_learning_context(enriched.context.learning_context)
+
+    assert learning.calls[0]["target_agent"] == "AGT_STTM_BUILDER"
+    assert enriched.context.prepared_context_hash
+    assert learning.calls[0]["project_id"] == "project-1"
+    assert learning.calls[0]["context_key"] == req.context.workspace_context.context_key
+    assert compact is not None
+    assert compact["fir_recommendations"][0]["recommendation_id"] == "recommendation-1"
 
 
 def test_conversation_service_returns_feedback_receipt() -> None:
@@ -259,7 +395,7 @@ def test_conversation_service_keeps_free_text_handoffs_chat_shaped_even_for_tran
     assert sttm_service.captured_request.data.intent.value == "CHAT"
 
 
-def test_conversation_service_keeps_relationship_questions_in_conversation_path() -> None:
+def test_conversation_service_routes_relationship_questions_to_sttm_builder() -> None:
     sttm_service = _FakeSTTMService()
     memory = _FakeMemoryService()
     agent = _FakeAgentClient()
@@ -305,10 +441,9 @@ def test_conversation_service_keeps_relationship_questions_in_conversation_path(
         ),
     )
 
-    assert sttm_service.captured_request is None
-    assert response.data.route == "conversation"
-    assert response.data.intent_class in {"quick_answer", "rag_lookup"}
-    assert response.data.artifact.route_reason is not None
+    assert sttm_service.captured_request is not None
+    assert sttm_service.captured_request.operation.value == "sttm.chat"
+    assert response["operation"] == "sttm.chat"
 
 
 def test_conversation_service_answers_capability_question_in_single_pass() -> None:
@@ -351,7 +486,7 @@ def test_conversation_service_answers_capability_question_in_single_pass() -> No
 
     response = service.invoke(req)
 
-    assert response.data.route == "conversation"
+    assert response.data.route == "sttm_builder"
     assert "relationships" in (response.data.message or "")
     assert response.data.citations[0].source_id == "builtin:workbench_capabilities"
     assert memory.search_calls == 0
@@ -401,9 +536,7 @@ def test_conversation_service_answers_selected_relationship_from_exact_match() -
 
     response = service.invoke(req)
 
-    assert response.data.route == "conversation"
-    assert "Join type" in (response.data.message or "")
-    assert response.data.citations[0].source_id == "bundle-rel:1"
+    assert response["operation"] == "sttm.chat"
 
 
 def test_conversation_service_explains_selected_relationship_in_natural_language() -> None:
@@ -450,9 +583,7 @@ def test_conversation_service_explains_selected_relationship_in_natural_language
 
     response = service.invoke(req)
 
-    assert response.data.route == "conversation"
-    assert "does not match" in (response.data.message or "") or "do not match" in (response.data.message or "")
-    assert "weak or suspicious join candidate" in (response.data.message or "")
+    assert response["operation"] == "sttm.chat"
 
 
 def test_conversation_service_search_returns_backend_hits() -> None:

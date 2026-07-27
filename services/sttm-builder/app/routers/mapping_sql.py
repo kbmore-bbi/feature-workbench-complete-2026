@@ -2,11 +2,18 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from app.api.deps import get_mapping_sql_service
+from app.api.deps import (
+    get_mapping_sql_execution_service,
+    get_mapping_sql_service,
+)
 from app.core.exceptions import SnowflakeQueryError
 from app.core.mapping_sql import MappingSqlService
-from app.schema.contracts import ApiRequestEnvelope, ApiResponseEnvelope, build_response_envelope
+from app.schema.contracts import ApiRequestEnvelope, ApiResponseEnvelope, ApiWarning, build_response_envelope
 from app.schema.mapping_sql import (
+    MappingSqlCompileRequest,
+    MappingSqlCompileResponse,
+    MappingSqlParseRequest,
+    MappingSqlParseResponse,
     MappingSqlPreviewRequest,
     MappingSqlPreviewResponse,
     MappingSqlReviewRequest,
@@ -16,11 +23,67 @@ from app.schema.mapping_sql import (
 router = APIRouter(prefix="/workbench/mapping-sql", tags=["Mapping SQL"])
 
 
+@router.post("/compile", response_model=ApiResponseEnvelope[MappingSqlCompileResponse])
+def compile_mapping_sql(
+    body: ApiRequestEnvelope[MappingSqlCompileRequest] | MappingSqlCompileRequest,
+    request: Request,
+    service: Annotated[
+        MappingSqlService,
+        Depends(get_mapping_sql_execution_service),
+    ],
+) -> ApiResponseEnvelope[MappingSqlCompileResponse]:
+    if isinstance(body, MappingSqlCompileRequest):
+        payload, request_id, actor, context = body, None, None, {}
+    else:
+        payload, request_id, actor, context = body.data, body.request_id, body.actor, body.context
+    try:
+        result = service.compile(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return build_response_envelope(
+        operation="mapping_sql.compile",
+        request=request,
+        request_id=request_id,
+        actor=actor,
+        context=context,
+        warnings=[
+            ApiWarning(code="MAPPING_SQL_WARNING", message=warning)
+            for warning in result.warnings
+        ],
+        data=result,
+    )
+
+
+@router.post("/parse", response_model=ApiResponseEnvelope[MappingSqlParseResponse])
+def parse_mapping_sql(
+    body: ApiRequestEnvelope[MappingSqlParseRequest] | MappingSqlParseRequest,
+    request: Request,
+    service: Annotated[MappingSqlService, Depends(get_mapping_sql_service)],
+) -> ApiResponseEnvelope[MappingSqlParseResponse]:
+    if isinstance(body, MappingSqlParseRequest):
+        payload, request_id, actor, context = body, None, None, {}
+    else:
+        payload, request_id, actor, context = body.data, body.request_id, body.actor, body.context
+    result = service.parse(payload)
+    return build_response_envelope(
+        operation="mapping_sql.parse",
+        request=request,
+        request_id=request_id,
+        actor=actor,
+        context=context,
+        warnings=result.warnings,
+        data=result,
+    )
+
+
 @router.post("/review", response_model=ApiResponseEnvelope[MappingSqlReviewResponse])
 def review_mapping_sql(
     body: ApiRequestEnvelope[MappingSqlReviewRequest] | MappingSqlReviewRequest,
     request: Request,
-    service: Annotated[MappingSqlService, Depends(get_mapping_sql_service)],
+    service: Annotated[
+        MappingSqlService,
+        Depends(get_mapping_sql_execution_service),
+    ],
 ) -> ApiResponseEnvelope[MappingSqlReviewResponse]:
     if isinstance(body, MappingSqlReviewRequest):
         payload = body
@@ -58,7 +121,10 @@ def review_mapping_sql(
 def preview_mapping_sql(
     body: ApiRequestEnvelope[MappingSqlPreviewRequest] | MappingSqlPreviewRequest,
     request: Request,
-    service: Annotated[MappingSqlService, Depends(get_mapping_sql_service)],
+    service: Annotated[
+        MappingSqlService,
+        Depends(get_mapping_sql_execution_service),
+    ],
 ) -> ApiResponseEnvelope[MappingSqlPreviewResponse]:
     if isinstance(body, MappingSqlPreviewRequest):
         payload = body

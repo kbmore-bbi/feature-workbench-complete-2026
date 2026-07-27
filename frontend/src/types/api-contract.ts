@@ -71,16 +71,58 @@ export type TargetAttributeItem = {
   source_mappings?: AttributeRef[] | null;
 };
 
+export type RelationNode = {
+  relation_id: string;
+  kind: "PHYSICAL_TABLE" | "DERIVED_SOURCE" | "CTE";
+  alias: string;
+  table?: TableRef | null;
+  derived_source_id?: string | null;
+  physical_view_name?: string | null;
+  sql_text?: string | null;
+  output_columns?: Array<Record<string, unknown>>;
+  column_semantics?: Array<Record<string, unknown>>;
+  grain?: string | null;
+  keys?: string[];
+  dependency_hash?: string | null;
+  parent_relation_ids?: string[];
+};
+
+export type RelationEdge = {
+  edge_id: string;
+  left_relation_id: string;
+  right_relation_id: string;
+  join_type?: string;
+  conditions?: RelationshipContextItem["conditions"];
+  additional_predicate?: string | null;
+  provenance?: string | null;
+  validation_status?: string | null;
+};
+
+export type RelationGraphContext = {
+  nodes: RelationNode[];
+  edges: RelationEdge[];
+  value_bindings: Array<{
+    binding_id: string;
+    value: string;
+    resolved_value?: string | null;
+    data_type?: string | null;
+    is_placeholder?: boolean;
+    allow_project_specific_value?: boolean;
+    resolution_status?: string;
+  }>;
+};
+
 export type STTMIntent = "AUTO_MAP" | "CHAT" | "TRANSFORM";
 export type STTMOperation = "sttm.auto_map" | "sttm.chat" | "sttm.transform";
 export type STTMStatus = "completed" | "needs_input" | "failed";
 export type STTMAgent = "SOURCE_MAPPING_AGENT" | "TRANSFORMATION_AGENT";
 export type SemanticSurface = "SOURCE_SELECTION" | "DERIVED_SOURCE" | "MAPPING";
 export type SemanticLevel =
-  | "L0_RELATIONSHIP"
-  | "L1_CONTEXT"
-  | "L2_ANALYST_READY"
-  | "L3_MAPPING_ENRICHED";
+  | "FULL_REGISTRY"  // Recommended default - full semantic views with reading instructions
+  | "L0_RELATIONSHIP"  // Deprecated
+  | "L1_CONTEXT"  // Deprecated
+  | "L2_ANALYST_READY"  // Deprecated
+  | "L3_MAPPING_ENRICHED";  // Deprecated
 export type STTMArtifactType =
   | "none"
   | "semantic_context"
@@ -97,6 +139,7 @@ export type SemanticRefreshStatus = {
   achieved_level: SemanticLevel;
   status: "ready" | "refreshed" | "promoted" | "partial" | "failed";
   semantic_view_name?: string | null;
+  semantic_model_yaml?: string | null;
   promoted?: boolean;
   cache_hit?: boolean;
   stale_reason?: string | null;
@@ -109,6 +152,7 @@ export type SemanticContextBundleResponse = {
   requested_level: SemanticLevel;
   achieved_level: SemanticLevel;
   semantic_view_name?: string | null;
+  semantic_model_yaml?: string | null;
   status: "ready" | "refreshed" | "promoted" | "partial" | "failed";
   promoted?: boolean;
   cache_hit?: boolean;
@@ -120,6 +164,8 @@ export type SemanticContextBundleResponse = {
 
 export type STTMBuilderContext = {
   thread_id?: string | null;
+  logical_conversation_id?: string | null;
+  physical_thread_segment?: number | null;
   parent_message_id?: number | null;
   session_id?: string | null;
   current_role?: string | null;
@@ -136,12 +182,145 @@ export type STTMBuilderContext = {
   target_table?: TableRef | null;
   selected_derived_sources?: string[] | null;
   semantic_bundle_id?: string | null;
+  semantic_bundle_hash?: string | null;
+  learning_context_id?: string | null;
+  learning_context_hash?: string | null;
+  artifact_refs?: Array<Record<string, unknown>> | null;
   semantic_bundle_label?: string | null;
   semantic_view_name?: string | null;
   derived_source_lineage?: Array<Record<string, unknown>> | null;
   datahub_context?: Record<string, unknown> | null;
   mapping_intent?: MappingIntent | null;
+  project_id?: string | null;
+  sttm_id?: string | null;
+  workspace_context?: WorkbenchContextSnapshotV2 | null;
+  relation_graph?: RelationGraphContext | null;
+  prepared_context_hash?: string | null;
 };
+
+export type WorkbenchContextSnapshotV2 = {
+  context_version: "2.0";
+  context_hash: string;
+  context_key: string;
+  snapshot_id?: string | null;
+  captured_at: string;
+  page: string;
+  surface: string;
+  action?: string | null;
+  milestone?: string | null;
+  checkpoint?: string | null;
+  scope_type?: "project" | "schema" | "table" | "table_set" | "target" | "mapping" | "column" | "derived_source" | null;
+  scope_key?: string;
+  candidate_action?: string | null;
+  browsing_context?: {
+    side?: "source" | "target" | null;
+    database?: string | null;
+    schema?: string | null;
+    visible_candidate_tables?: string[];
+    search_text?: string | null;
+  } | null;
+  session_id?: string | null;
+  thread_id?: string | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  project_description?: string | null;
+  project_domain?: string | null;
+  project_outcome?: string | null;
+  sttm_id?: string | null;
+  sttm_name?: string | null;
+  sttm_description?: string | null;
+  mapping_lifecycle?: string | null;
+  business_goal?: string | null;
+  source_tables: TableRef[];
+  target_table?: TableRef | null;
+  driving_table?: TableRef | null;
+  selected_columns_by_table: Record<string, string[]>;
+  derived_sources: Array<{
+    id: string;
+    name?: string | null;
+    sql_hash?: string | null;
+    sql_text?: string | null;
+    physical_view_name?: string | null;
+    generated_by_request_id?: string | null;
+    semantic_bundle_id?: string | null;
+    semantic_bundle_label?: string | null;
+    semantic_view_name?: string | null;
+    semantic_level?: string | null;
+    upstream_hash?: string | null;
+    source_dependency_hash?: string | null;
+    purpose?: string | null;
+    business_description?: string | null;
+    grain?: string | null;
+    keys?: string[];
+    output_columns?: Array<Record<string, unknown>>;
+    column_semantics?: Array<Record<string, unknown>>;
+    semantic_projection?: Record<string, unknown>;
+    semantic_quality?: string | null;
+    lineage_depth?: number;
+    base_source_tables?: TableRef[];
+    table_ids?: string[];
+    alias?: string | null;
+    columns?: Array<unknown>;
+    joins?: Array<Record<string, unknown>>;
+    filters?: Array<Record<string, unknown>>;
+    selected_columns_by_table?: Record<string, string[]>;
+    lineage?: Array<Record<string, unknown>>;
+  }>;
+  relation_graph?: RelationGraphContext | null;
+  relationships: RelationshipContextItem[];
+  filters: {
+    filter_sql?: string | null;
+    base_query_sql?: string | null;
+    group_by_sql?: string | null;
+    order_by_sql?: string | null;
+    groups?: Array<Record<string, unknown>>;
+  };
+  mapping_sql?: string | null;
+  mapping_preview_sql?: string | null;
+  compiled_mapping_sql?: string | null;
+  compiled_mapping_preview_sql?: string | null;
+  compiled_mapping_context_hash?: string | null;
+  semantic: {
+    bundle_id?: string | null;
+    bundle_hash?: string | null;
+    bundle_label?: string | null;
+    level?: string | null;
+    status?: string | null;
+    view_name?: string | null;
+    composed_model_hash?: string | null;
+    asset_versions?: Record<string, string>;
+  };
+  semantic_bundle?: {
+    bundle_id?: string | null;
+    bundle_hash?: string | null;
+    bundle_label?: string | null;
+    semantic_view_name?: string | null;
+    level?: string | null;
+    status?: string | null;
+    source_tables?: TableRef[];
+    target_table?: TableRef | null;
+    driving_table?: TableRef | null;
+    derived_source_ids?: string[];
+    relationship_hash?: string | null;
+    asset_versions?: Record<string, string>;
+    composed_model_hash?: string | null;
+  } | null;
+  mapping_intent?: MappingIntent | null;
+  mapping_rows?: Array<Record<string, unknown>>;
+  checked_mapping_row_ids?: string[];
+  active_mapping_row_id?: string | null;
+  mapping_artifacts?: Array<Record<string, unknown>>;
+  validation_history?: Array<Record<string, unknown>>;
+  conversation_history?: Array<{
+    role: "user" | "assistant";
+    content: string;
+  }>;
+  source_set_hash?: string;
+  derived_set_hash?: string;
+};
+
+/** Transitional name retained for call sites and WebSocket clients during the V2 rollout. */
+export type WorkbenchContextSnapshotV1 = WorkbenchContextSnapshotV2;
 
 export type STTMBuilderRequestData = {
   intent: STTMIntent;
@@ -160,16 +339,61 @@ export type AttributeMapping = {
   preprocessing_nl_rule?: string | null;
   processing_order?: number | null;
   description?: string | null;
+  used_inference_ids?: string[];
+  used_recommendation_ids?: string[];
+  used_learning_ids?: string[];
+  mapping_mode?: "source" | "constant";
+  constant_value?: string | null;
+  source_dependencies?: string[];
+  value_binding_ids?: string[];
+  transformation_classification?: "value" | "direct" | "reused" | "simple_multi_source" | "complex" | "unresolved" | null;
+  precedent_decision?: "accept_precedent" | "override_precedent" | "unresolved" | null;
+  pattern_decision?: "accept_exact_precedent" | "adapt_pattern" | "override_pattern" | "unresolved" | null;
+  precedent_mapping_id?: string | null;
+  override_evidence?: string[];
 };
 
 export type SourceMappingResult = {
   mappings: Record<string, AttributeMapping>;
 };
 
+export type AutoMappingReviewRecommendation = {
+  target_attribute: string;
+  category: "missing_derived_output" | "unresolved_mapping" | "low_confidence" | "precedent_override";
+  severity: "action_required" | "review";
+  title: string;
+  detail: string;
+  recommended_action: string;
+  candidate_sources: string[];
+  evidence_ids: string[];
+};
+
+export type AutoMappingReview = {
+  headline: string;
+  total_count: number;
+  mapped_count: number;
+  unresolved_count: number;
+  low_confidence_count: number;
+  precedent_override_count: number;
+  missing_derived_output_count: number;
+  completed_without_review_count?: number;
+  mapped_with_review_count?: number;
+  action_required_count?: number;
+  recommendations: AutoMappingReviewRecommendation[];
+};
+
 export type TransformationRule = {
   target_attribute: string;
   rule: string;
   description?: string | null;
+  used_inference_ids?: string[];
+  used_recommendation_ids?: string[];
+  learning_evidence?: string[];
+  pattern_decision?: "accept_exact_precedent" | "adapt_pattern" | "override_pattern" | "unresolved" | null;
+  precedent_decision?: "accept_precedent" | "override_precedent" | "unresolved" | null;
+  source_dependencies?: string[];
+  value_binding_ids?: string[];
+  override_evidence?: string[];
 };
 
 export type TransformationResult = {
@@ -301,16 +525,118 @@ export type AssistantSignal = {
   updated_at?: string | null;
 };
 
+export type FIRRecommendationAction = {
+  id: string;
+  label: string;
+  action:
+    | "select_table"
+    | "preview_join"
+    | "draft_derived_source"
+    | "preview_filter"
+    | "open_mapping_precedent"
+    | "open_assistant_explanation"
+    | "confirm"
+    | "correct"
+    | "dismiss"
+    | string;
+  payload?: Record<string, unknown>;
+  requires_confirmation?: boolean;
+  requires_comment?: boolean;
+};
+
+export type FIRRecommendationEvidence = {
+  evidence_id: string;
+  source_type?: string | null;
+  title: string;
+  summary: string;
+  redacted_excerpt?: string | null;
+  document_location?: string | null;
+  polarity?: string | null;
+  evidence_weight?: number | null;
+};
+
+export type FIRRecommendation = {
+  recommendation_id: string;
+  title?: string | null;
+  fir_record_id?: string | null;
+  fir_inference_id?: string | null;
+  recommendation_type?: string | null;
+  recommendation_category?: string | null;
+  recommendation_priority?: number | null;
+  confidence?: number | null;
+  display_message: string;
+  current_understanding?: string | null;
+  topic?: string | null;
+  entity_label?: string | null;
+  reason_now?: string | null;
+  display_rank?: number | null;
+  urgency?: "low" | "normal" | "high" | "critical" | string;
+  blocking?: boolean;
+  checkpoint?: string | null;
+  question_id?: string | null;
+  retrieval_mode?: "exact_context" | "exact_scope" | "structured" | "project" | "similar_context" | string;
+  scope_type?: string | null;
+  scope_key?: string | null;
+  group_key?: string | null;
+  content_version?: number;
+  evidence_summary?: string | null;
+  evidence?: FIRRecommendationEvidence[];
+  actions: FIRRecommendationAction[];
+  agent_payload?: Record<string, unknown>;
+};
+
+export type FIRRecommendationEvaluationResponse = {
+  checkpoint?: string | null;
+  context_key: string;
+  scope_key: string;
+  primary_question?: FIRRecommendation | null;
+  items: FIRRecommendation[];
+  total: number;
+  retrieval_mode?: string | null;
+};
+
 export type MappingSqlMappingItem = {
   target_column: string;
   target_type?: string | null;
   source_column?: string | null;
   source_columns?: string[];
+  mapping_mode?: "source" | "constant";
+  constant_value?: string | null;
   expression?: string | null;
   rule?: string | null;
   status?: string | null;
   nl_rule?: string | null;
   description?: string | null;
+  source_dependencies?: string[];
+  value_binding_ids?: string[];
+  precedent_decision?: string | null;
+  precedent_mapping_id?: string | null;
+};
+
+export type MappingSqlCompileRequest = {
+  relation_graph: RelationGraphContext;
+  mappings: MappingSqlMappingItem[];
+  target_table?: TableRef | null;
+  driving_relation_id?: string | null;
+  where_predicates?: string[];
+  group_by_expressions?: string[];
+  qualify_predicates?: string[];
+  order_by_expressions?: string[];
+  self_contained_derived?: boolean;
+  validate_with_explain?: boolean;
+  allow_unresolved_placeholders?: boolean;
+  accepted_precedent_sttm_id?: string | null;
+};
+
+export type MappingSqlCompileResponse = {
+  valid: boolean;
+  ready: boolean;
+  preview_sql: string;
+  generated_sql: string;
+  relation_aliases: Record<string, string>;
+  required_relation_ids: string[];
+  unresolved_placeholders: string[];
+  warnings: string[];
 };
 
 export type MappingSqlReviewRequest = {
@@ -323,6 +649,8 @@ export type MappingSqlReviewRequest = {
   semantic_bundle_id?: string | null;
   semantic_bundle_label?: string | null;
   semantic_view_name?: string | null;
+  semantic_model_yaml?: string | null;
+  relation_graph?: RelationGraphContext | null;
   source_query_sql: string;
   preview_sql: string;
   generated_sql: string;
@@ -336,6 +664,8 @@ export type MappingSqlReviewResponse = {
   syntax_valid: boolean;
   execution_ready: boolean;
   review_summary: string;
+  validation_error?: string | null;
+  review_kind?: "none" | "optimization" | "repair";
   optimized: boolean;
   requires_approval: boolean;
   original_preview_sql: string;
@@ -344,6 +674,13 @@ export type MappingSqlReviewResponse = {
   optimized_generated_sql?: string | null;
   semantic_view_name?: string | null;
   warnings: string[];
+  repair_options?: Array<{
+    code: "apply_suggested_sql" | "resolve_value_binding" | "verify_source_contract" | "edit_sql";
+    title: string;
+    description: string;
+    action: "review_suggested_sql" | "open_mapping" | "edit_sql";
+    identifier?: string | null;
+  }>;
 };
 
 export type MappingSqlPreviewColumn = {
@@ -374,6 +711,32 @@ export type MappingSqlPreviewResponse = {
   warnings: string[];
 };
 
+export type MappingSqlParseRequest = {
+  sql: string;
+  current_workspace?: Record<string, unknown>;
+  known_tables?: TableRef[];
+};
+
+export type MappingSqlParseResponse = {
+  valid: boolean;
+  parsed_workspace: {
+    source_tables?: string[];
+    target_table?: string | null;
+    mapping_rows?: Array<Record<string, unknown>>;
+    relationships?: Array<Record<string, unknown>>;
+    filters?: Array<Record<string, unknown>>;
+    ctes?: Array<Record<string, unknown>>;
+    derived_sources?: Array<Record<string, unknown>>;
+    business_rules?: Array<Record<string, unknown>>;
+    transformations?: string[];
+    sql?: string;
+  };
+  diff: Record<string, unknown[]>;
+  warnings: string[];
+  unresolved_references: string[];
+  ambiguous_references: Record<string, string[]>;
+};
+
 export type WorkbookDerivedSourceItem = {
   derived_source_id: string;
   derived_source_name: string;
@@ -395,6 +758,88 @@ export type WorkbookDbtConversionPayload = {
   source_update?: DbtConversionSourceUpdate | null;
 };
 
+export type TestCaseDerivedBaseSource = {
+  table: TableRef;
+  attribute_semantic_model?: Array<Record<string, unknown>>;
+};
+
+export type TestCaseDerivedSourceItem = {
+  derived_source_name: string;
+  sql_text?: string | null;
+  semantic_view_name?: string | null;
+  base_sources?: TestCaseDerivedBaseSource[];
+};
+
+export type TestCaseGenerationRequest = {
+  project_id?: string | null;
+  sttm_id?: string | null;
+  project_name?: string | null;
+  domain_name?: string | null;
+  target_layer?: "raw" | "curated" | "mart" | string | null;
+  materialization?: "incremental" | "table" | "view" | string | null;
+  source_tables: TableRef[];
+  target_table: TableRef;
+  relationships?: RelationshipContextItem[];
+  validated_sql: string;
+  mappings?: MappingSqlMappingItem[];
+  semantic_context?: SemanticContextItem[];
+  derived_sources?: TestCaseDerivedSourceItem[];
+};
+
+export type TestCaseGroup = {
+  group: string;
+  target_columns: string[];
+};
+
+export type TestCaseSeedFile = {
+  file_path: string;
+  file_type: string;
+  content: string;
+};
+
+export type TestCaseDocumentItem = {
+  test_case_id: string;
+  group: string;
+  target_attribute: string;
+  source_columns: string;
+  mapping_rule: string;
+  test_case_description: string;
+  test_type: string;
+  sample_source_input: string;
+  expected_target_value: string;
+  confidence?: string | null;
+};
+
+export type TestCaseGenerationResponse = {
+  status: "completed" | "failed" | string;
+  domain_name?: string | null;
+  target_layer?: string | null;
+  materialization?: string | null;
+  target_model?: string | null;
+  target_table?: string | null;
+  test_groups: TestCaseGroup[];
+  seed_files: TestCaseSeedFile[];
+  test_case_document: TestCaseDocumentItem[];
+  agent_name: string;
+  retrieved_inference_ids?: string[];
+  retrieved_recommendation_ids?: string[];
+  used_inference_ids?: string[];
+  used_recommendation_ids?: string[];
+};
+
+export type WorkbookTestCaseGenerationPayload = Pick<
+  TestCaseGenerationResponse,
+  | "status"
+  | "domain_name"
+  | "target_layer"
+  | "materialization"
+  | "target_model"
+  | "target_table"
+  | "test_groups"
+  | "seed_files"
+  | "test_case_document"
+>;
+
 export type WorkbookExportRequest = {
   project_name?: string | null;
   summary_narrative?: string | null;
@@ -414,10 +859,13 @@ export type WorkbookExportRequest = {
   lineage_table_mermaid?: string | null;
   lineage_column_mermaid?: string | null;
   dbt_conversion?: WorkbookDbtConversionPayload | null;
+  test_case_generation?: WorkbookTestCaseGenerationPayload | null;
   mappings?: MappingSqlMappingItem[];
 };
 
 export type DbtConversionRequest = {
+  project_id?: string | null;
+  sttm_id?: string | null;
   project_name?: string | null;
   domain_name?: string | null;
   target_layer?: "raw" | "curated" | "mart" | string | null;
@@ -470,6 +918,10 @@ export type DbtConversionResponse = {
   domain_name?: string | null;
   target_layer?: string | null;
   branch: string;
+  retrieved_inference_ids?: string[];
+  retrieved_recommendation_ids?: string[];
+  used_inference_ids?: string[];
+  used_recommendation_ids?: string[];
 };
 
 export type AssistantInferenceRecord = {

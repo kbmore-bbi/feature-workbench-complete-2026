@@ -1,6 +1,7 @@
 "use client";
-
-import { Box, Paper, Typography } from "@mui/material";
+import { AiaBox, AiaPaper } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
+import { CAPTION_SX, SECONDARY_TEXT_SX } from '@/config/typography-tokens';
 
 const quickStats = [
     { label: "Completion Rate", value: 48, color: "#6B7280" },
@@ -10,38 +11,38 @@ const quickStats = [
 
 export default function QuickStatsPanel() {
     return (
-        <Paper
+        <AiaPaper
             elevation={0}
             className="rounded-[20px] border border-[#EEF2F7] bg-white p-5"
         >
-            <Typography className="text-[12px] font-semibold uppercase tracking-[0.08em] text-[#6B7280]">
+            <AiaText sx={{ ...CAPTION_SX, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em" }}>
                 Quick Stats
-            </Typography>
+            </AiaText>
 
-            <Box className="mt-5 flex flex-col gap-5">
+            <AiaBox className="mt-5 flex flex-col gap-5">
                 {quickStats.map((item) => (
-                    <Box key={item.label}>
-                        <Box className="mb-2 flex items-center justify-between">
-                            <Typography className="text-[13px] font-medium text-[#4B5563]">
+                    <AiaBox key={item.label}>
+                        <AiaBox className="mb-2 flex items-center justify-between">
+                            <AiaText sx={{ ...SECONDARY_TEXT_SX, fontWeight: 500, color: "#4B5563" }}>
                                 {item.label}
-                            </Typography>
-                            <Typography className="text-[12px] font-semibold text-[#111827]">
+                            </AiaText>
+                            <AiaText sx={{ ...CAPTION_SX, fontWeight: 600, color: "#111827" }}>
                                 {item.value}%
-                            </Typography>
-                        </Box>
+                            </AiaText>
+                        </AiaBox>
 
-                        <Box className="h-[6px] rounded-full bg-[#ECEFF3]">
-                            <Box
+                        <AiaBox className="h-[6px] rounded-full bg-[#ECEFF3]">
+                            <AiaBox
                                 className="h-[6px] rounded-full"
                                 sx={{
                                     width: `${item.value}%`,
                                     backgroundColor: item.color,
                                 }}
                             />
-                        </Box>
-                    </Box>
+                        </AiaBox>
+                    </AiaBox>
                 ))}
-            </Box>
-        </Paper>
+            </AiaBox>
+        </AiaPaper>
     );
 }

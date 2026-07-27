@@ -32,7 +32,9 @@ def test_auth_session_route_returns_current_principal() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert payload["operation"] == "auth.session"
+    assert payload["data"] == {
         "user_id": 7,
         "email": "publisher@example.com",
         "display_name": "publisher",
@@ -57,7 +59,7 @@ def test_auth_permissions_route_returns_permission_set() -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json()["can_publish"] is True
+    assert response.json()["data"]["can_publish"] is True
 
 
 class _Cursor:
@@ -99,13 +101,18 @@ def test_snowflake_context_route_uses_connection_factory(monkeypatch) -> None:
         app.dependency_overrides.clear()
 
     assert response.status_code == 200
-    assert response.json()["current_role"] == "WORKBENCH_PUBLISHER"
+    assert response.json()["data"]["current_role"] == "WORKBENCH_PUBLISHER"
 
 
 def test_auth_session_requires_proxy_headers_by_default() -> None:
     client = TestClient(app)
     response = client.get("/api/v1/auth/session")
     assert response.status_code == 401
+    payload = response.json()
+    assert payload["contract_version"] == "1.0"
+    assert payload["operation"] == "get_session"
+    assert payload["data"] is None
+    assert payload["error"]["code"] == "UNAUTHENTICATED"
 
 
 def test_auth_session_allows_local_dev_auth_without_proxy_headers(monkeypatch) -> None:
@@ -121,11 +128,11 @@ def test_auth_session_allows_local_dev_auth_without_proxy_headers(monkeypatch) -
     monkeypatch.setattr("app.auth.dependencies.get_settings", lambda: settings)
 
     def _resolve(context: dict[str, str], _: Settings) -> CurrentPrincipal:
-        assert context == {
-            "snowflake_user": "DEV_USER",
-            "email": "dev@example.com",
-            "snowflake_user_token": "",
-        }
+        assert context["snowflake_user"] == "DEV_USER"
+        assert context["email"] == "dev@example.com"
+        assert context["snowflake_user_token"] == ""
+        assert context["snowflake_role"] is None
+        assert context["oauth_session_id"] is None
         return CurrentPrincipal(
             user_id=99,
             snowflake_user="DEV_USER",
@@ -141,5 +148,5 @@ def test_auth_session_allows_local_dev_auth_without_proxy_headers(monkeypatch) -
     response = client.get("/api/v1/auth/session")
 
     assert response.status_code == 200
-    assert response.json()["email"] == "dev@example.com"
-    assert response.json()["app_persona"] == "VIEWER"
+    assert response.json()["data"]["email"] == "dev@example.com"
+    assert response.json()["data"]["app_persona"] == "VIEWER"

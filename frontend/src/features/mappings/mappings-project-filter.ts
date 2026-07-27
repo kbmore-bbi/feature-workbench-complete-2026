@@ -1,5 +1,3 @@
-import { INITIAL_PROJECT_ITEMS } from "@/features/projects/projects-data";
-
 export const PROJECT_FILTER_ALL = "all";
 
 export type ProjectFilterOption = {
@@ -8,13 +6,7 @@ export type ProjectFilterOption = {
 };
 
 export function getProjectFilterOptions(): ProjectFilterOption[] {
-  return [
-    { value: PROJECT_FILTER_ALL, label: "All Projects" },
-    ...INITIAL_PROJECT_ITEMS.map((project) => ({
-      value: project.id,
-      label: project.name,
-    })),
-  ];
+  return [{ value: PROJECT_FILTER_ALL, label: "All Projects" }];
 }
 
 export function resolveProjectFilterFromParam(projectParam: string | null): string {
@@ -22,12 +14,12 @@ export function resolveProjectFilterFromParam(projectParam: string | null): stri
     return PROJECT_FILTER_ALL;
   }
 
-  const isKnownProject = INITIAL_PROJECT_ITEMS.some((project) => project.id === projectParam);
-  return isKnownProject ? projectParam : PROJECT_FILTER_ALL;
+  return projectParam;
 }
 
 export function getProjectNameById(projectId: string): string | undefined {
-  return INITIAL_PROJECT_ITEMS.find((project) => project.id === projectId)?.name;
+  void projectId;
+  return undefined;
 }
 
 export function buildMappingsUrl(projectId?: string): string {

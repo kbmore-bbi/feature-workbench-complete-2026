@@ -1,6 +1,7 @@
 "use client";
+import { AiaAvatar, AiaBox } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 
-import { Avatar, Box, Typography } from "@mui/material";
 import type { ProjectPerson } from "./projects-data";
 
 type ProjectCardMetaProps = {
@@ -10,8 +11,8 @@ type ProjectCardMetaProps = {
 
 export default function ProjectCardMeta({ label, person }: ProjectCardMetaProps) {
   return (
-    <Box sx={{ minWidth: 0, flex: 1 }}>
-      <Typography
+    <AiaBox sx={{ minWidth: 0, flex: 1 }}>
+      <AiaText
         sx={{
           fontSize: 10,
           fontWeight: 700,
@@ -21,9 +22,9 @@ export default function ProjectCardMeta({ label, person }: ProjectCardMetaProps)
         }}
       >
         {label}
-      </Typography>
-      <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-        <Avatar
+      </AiaText>
+      <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+        <AiaAvatar
           sx={{
             width: 24,
             height: 24,
@@ -34,9 +35,9 @@ export default function ProjectCardMeta({ label, person }: ProjectCardMetaProps)
           }}
         >
           {person.initials}
-        </Avatar>
-        <Box sx={{ minWidth: 0 }}>
-          <Typography
+        </AiaAvatar>
+        <AiaBox sx={{ minWidth: 0 }}>
+          <AiaText
             sx={{
               fontSize: 12,
               fontWeight: 600,
@@ -48,12 +49,12 @@ export default function ProjectCardMeta({ label, person }: ProjectCardMetaProps)
             }}
           >
             {person.name}
-          </Typography>
-          <Typography sx={{ fontSize: 11, color: "#94A3B8", lineHeight: 1.25 }}>
+          </AiaText>
+          <AiaText sx={{ fontSize: 11, color: "#94A3B8", lineHeight: 1.25 }}>
             {person.timestamp}
-          </Typography>
-        </Box>
-      </Box>
-    </Box>
+          </AiaText>
+        </AiaBox>
+      </AiaBox>
+    </AiaBox>
   );
 }

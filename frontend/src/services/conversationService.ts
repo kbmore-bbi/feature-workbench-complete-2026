@@ -18,13 +18,22 @@ import type {
   SemanticSurface,
   TableRef,
 } from "@/types/api-contract";
-import { mockInvokeStream } from "@/services/mock/workbenchMockData";
-import { throwMockError, useMockDb } from "@/services/mock/mockConfig";
+import {
+  buildMockConversationInvokeResponse,
+  getMockAssistantSettings,
+  listMockAssistantSignals,
+  mockConversationInvokeStream,
+  respondToMockAssistantSignal,
+  updateMockAssistantSettings,
+} from "@/data/mock/conversation";
+import { mockDelay, throwMockError, useMockDb } from "@/services/mock/mockConfig";
 import { extractSseChunk } from "@/services/streaming/sse";
 
 export type ConversationRequestPayload = {
   operation?: Extract<ConversationOperation, "conversation.ask" | "conversation.recommend" | "conversation.feedback">;
   thread_id?: string | null;
+  logical_conversation_id?: string | null;
+  physical_thread_segment?: number | null;
   parent_message_id?: number | null;
   message: string;
   requested_sources?: string[] | null;
@@ -39,19 +48,40 @@ export type ConversationRequestPayload = {
   session_id?: string | null;
   selected_derived_sources?: string[] | null;
   semantic_bundle_id?: string | null;
+  semantic_bundle_hash?: string | null;
+  learning_context_id?: string | null;
+  learning_context_hash?: string | null;
+  workspace_context_id?: string | null;
+  workspace_context_hash?: string | null;
+  artifact_refs?: Array<Record<string, unknown>> | null;
   semantic_bundle_label?: string | null;
   semantic_view_name?: string | null;
   derived_source_lineage?: Array<Record<string, unknown>> | null;
   datahub_context?: Record<string, unknown> | null;
   mapping_intent?: Record<string, unknown> | null;
+  project_id?: string | null;
+  sttm_id?: string | null;
+  checked_mapping_row_ids?: string[] | null;
+  mapping_rows?: Array<Record<string, unknown>> | null;
+  workspace_context?: Record<string, unknown> | null;
 };
 
 type ConversationStreamEvent =
   | { event: "status"; data: Record<string, unknown> }
+  | { event: "context.resolved"; data: Record<string, unknown> }
+  | { event: "activity.started" | "activity.progress" | "activity.completed"; data: Record<string, unknown> }
   | { event: "delta"; data: { text: string } }
+  | { event: "response.text.delta" | "response.sql.delta"; data: { text: string } }
   | { event: "suggestions"; data: { items: string[] } }
+  | { event: "suggestions.delta"; data: { items?: string[]; index?: number; text?: string } }
+  | { event: "thread_checkpointed"; data: Record<string, unknown> }
+  | { event: "thread_rolled_over"; data: Record<string, unknown> }
+  | { event: "thread.checkpointed" | "thread.rolled_over"; data: Record<string, unknown> }
+  | { event: "artifact_created"; data: Record<string, unknown> }
+  | { event: "artifact.created"; data: Record<string, unknown> }
   | { event: "final"; data: ConversationEnvelopeResponse | Record<string, unknown> }
-  | { event: "error"; data: { message?: string; code?: string } };
+  | { event: "response.completed"; data: ConversationEnvelopeResponse | Record<string, unknown> }
+  | { event: "error" | "response.failed"; data: { message?: string; code?: string; error?: { title?: string; detail?: string; code?: string } } };
 
 function parseChunk(chunk: string) {
   let eventName = "message";
@@ -84,6 +114,8 @@ function toEnvelope(payload: ConversationRequestPayload): ConversationEnvelopeRe
     },
     {
       thread_id: payload.thread_id ?? null,
+      logical_conversation_id: payload.logical_conversation_id ?? null,
+      physical_thread_segment: payload.physical_thread_segment ?? null,
       parent_message_id: payload.parent_message_id ?? null,
       session_id: payload.session_id ?? null,
       source_tables: payload.source_tables ?? null,
@@ -92,15 +124,26 @@ function toEnvelope(payload: ConversationRequestPayload): ConversationEnvelopeRe
       semantic_context: payload.semantic_context ?? null,
       selected_columns_by_table: payload.selected_columns_by_table ?? null,
       surface: payload.surface ?? "SOURCE_SELECTION",
-      semantic_level_requested: payload.semantic_level_requested ?? "L1_CONTEXT",
+      semantic_level_requested: payload.semantic_level_requested ?? "FULL_REGISTRY",
       target_table: payload.target_table ?? null,
       selected_derived_sources: payload.selected_derived_sources ?? null,
       semantic_bundle_id: payload.semantic_bundle_id ?? null,
+      semantic_bundle_hash: payload.semantic_bundle_hash ?? null,
+      learning_context_id: payload.learning_context_id ?? null,
+      learning_context_hash: payload.learning_context_hash ?? null,
+      workspace_context_id: payload.workspace_context_id ?? null,
+      workspace_context_hash: payload.workspace_context_hash ?? null,
+      artifact_refs: payload.artifact_refs ?? [],
       semantic_bundle_label: payload.semantic_bundle_label ?? null,
       semantic_view_name: payload.semantic_view_name ?? null,
       derived_source_lineage: payload.derived_source_lineage ?? null,
       datahub_context: payload.datahub_context ?? null,
       mapping_intent: payload.mapping_intent ?? null,
+      project_id: payload.project_id ?? null,
+      sttm_id: payload.sttm_id ?? null,
+      checked_mapping_row_ids: payload.checked_mapping_row_ids ?? null,
+      mapping_rows: payload.mapping_rows ?? null,
+      workspace_context: payload.workspace_context ?? null,
     },
   ) as ConversationEnvelopeRequest;
 }
@@ -126,6 +169,8 @@ export const conversationService = {
       },
       {
         thread_id: payload.thread_id ?? null,
+        logical_conversation_id: payload.logical_conversation_id ?? null,
+        physical_thread_segment: payload.physical_thread_segment ?? null,
         parent_message_id: payload.parent_message_id ?? null,
         session_id: payload.session_id ?? null,
         source_tables: payload.source_tables ?? null,
@@ -134,17 +179,37 @@ export const conversationService = {
         semantic_context: payload.semantic_context ?? null,
         selected_columns_by_table: payload.selected_columns_by_table ?? null,
         surface: payload.surface ?? "SOURCE_SELECTION",
-        semantic_level_requested: payload.semantic_level_requested ?? "L1_CONTEXT",
+        semantic_level_requested: payload.semantic_level_requested ?? "FULL_REGISTRY",
         target_table: payload.target_table ?? null,
         selected_derived_sources: payload.selected_derived_sources ?? null,
         semantic_bundle_id: payload.semantic_bundle_id ?? null,
+        semantic_bundle_hash: payload.semantic_bundle_hash ?? null,
+        learning_context_id: payload.learning_context_id ?? null,
+        learning_context_hash: payload.learning_context_hash ?? null,
+        workspace_context_id: payload.workspace_context_id ?? null,
+        workspace_context_hash: payload.workspace_context_hash ?? null,
+        artifact_refs: payload.artifact_refs ?? [],
         semantic_bundle_label: payload.semantic_bundle_label ?? null,
         semantic_view_name: payload.semantic_view_name ?? null,
         derived_source_lineage: payload.derived_source_lineage ?? null,
         datahub_context: payload.datahub_context ?? null,
         mapping_intent: payload.mapping_intent ?? null,
+        project_id: payload.project_id ?? null,
+        sttm_id: payload.sttm_id ?? null,
+        workspace_context: payload.workspace_context ?? null,
       },
     ) as ConversationEnvelopeRequest;
+
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(
+        buildMockConversationInvokeResponse({
+          ...payload,
+          operation: payload.operation,
+        }),
+      );
+    }
+
     const response = await api.post<ConversationEnvelopeResponse>("/v1/workbench/conversation/invoke", envelope, {
       timeout: 60000,
     });
@@ -155,9 +220,24 @@ export const conversationService = {
   ): AsyncGenerator<ConversationStreamEvent> {
     if (useMockDb) {
       throwMockError();
-      for await (const event of mockInvokeStream({
+      for await (const event of mockConversationInvokeStream({
         interface: "CHAT",
         message: payload.message,
+        thread_id: payload.thread_id ?? null,
+        source_tables: payload.source_tables ?? null,
+        driving_table: payload.driving_table ?? null,
+        relationships: payload.relationships ?? null,
+        semantic_context: payload.semantic_context ?? null,
+        selected_columns_by_table: payload.selected_columns_by_table ?? null,
+        surface: payload.surface ?? "SOURCE_SELECTION",
+        semantic_level_requested: payload.semantic_level_requested ?? "FULL_REGISTRY",
+        target_table: payload.target_table ?? null,
+        selected_derived_sources: payload.selected_derived_sources ?? null,
+        semantic_bundle_id: payload.semantic_bundle_id ?? null,
+        semantic_view_name: payload.semantic_view_name ?? null,
+        derived_source_lineage: payload.derived_source_lineage ?? null,
+        datahub_context: payload.datahub_context ?? null,
+        mapping_intent: payload.mapping_intent ?? null,
       })) {
         if (event.event === "final") {
           yield { event: "final", data: event.data as unknown as Record<string, unknown> };
@@ -210,25 +290,33 @@ export const conversationService = {
     }
   },
   getAssistantSettings: async (): Promise<ConversationSettingsResponseData> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(getMockAssistantSettings());
+    }
+
     const envelope = buildApiEnvelope("conversation.settings.get", {}, {}) as ConversationEnvelopeRequest;
     const response = await api.post("/v1/workbench/conversation/settings", envelope, { timeout: 30000 });
     return response.data.data as ConversationSettingsResponseData;
   },
   updateAssistantSettings: async (settings: AssistantPreferenceState): Promise<ConversationSettingsResponseData> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(updateMockAssistantSettings(settings));
+    }
+
     const envelope = buildApiEnvelope("conversation.settings.update", settings, {}) as ConversationEnvelopeRequest;
     const response = await api.post("/v1/workbench/conversation/settings", envelope, { timeout: 30000 });
     return response.data.data as ConversationSettingsResponseData;
   },
   listSignals: async (): Promise<ConversationSignalsResponseData> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(listMockAssistantSignals());
+    }
+
     const envelope = buildApiEnvelope("conversation.signals.list", {}, {}) as ConversationEnvelopeRequest;
     const response = await api.post("/v1/workbench/conversation/signals", envelope, { timeout: 30000 });
-    return response.data.data as ConversationSignalsResponseData;
-  },
-  evaluateSignals: async (payload: Record<string, unknown>): Promise<ConversationSignalsResponseData> => {
-    const envelope = buildApiEnvelope("conversation.signals.evaluate", payload, {}) as ConversationEnvelopeRequest;
-    const response = await api.post("/v1/workbench/conversation/signals/evaluate", envelope, {
-      timeout: 18000,
-    });
     return response.data.data as ConversationSignalsResponseData;
   },
   respondToSignal: async (payload: {
@@ -239,8 +327,18 @@ export const conversationService = {
     comment?: string | null;
     feedback_type?: string;
   }): Promise<AssistantSignalResponseData> => {
+    if (useMockDb) {
+      throwMockError();
+      return mockDelay(
+        respondToMockAssistantSignal({
+          signal_id: payload.signal_id,
+          status: payload.status,
+        }),
+      );
+    }
+
     const envelope = buildApiEnvelope("conversation.signals.respond", payload, {}) as ConversationEnvelopeRequest;
-    const response = await api.post("/v1/workbench/conversation/signals/respond", envelope, { timeout: 30000 });
+    const response = await api.post("/v1/workbench/conversation/signals/respond", envelope, { timeout: 60000 });
     return response.data.data as AssistantSignalResponseData;
   },
 };

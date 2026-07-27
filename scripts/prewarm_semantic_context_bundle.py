@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_ROOT = REPO_ROOT / "services" / "sttm-builder"
@@ -97,6 +99,11 @@ def main() -> int:
         action="store_true",
         help="Skip AGT_SEMANTIC_MODEL refresh and only reuse existing/cached semantics.",
     )
+    parser.add_argument(
+        "--summary-only",
+        action="store_true",
+        help="Print a compact validation summary instead of the full composed semantic payload.",
+    )
     args = parser.parse_args()
 
     settings = Settings(_env_file=str(APP_ROOT / ".env.local"), DATAHUB_ENABLED=False)
@@ -130,7 +137,33 @@ def main() -> int:
     )
 
     payload = response.model_dump(mode="json", exclude_none=True)
-    print(json.dumps(payload, indent=2, default=str))
+    if args.summary_only:
+        summary = payload.get("summary") or {}
+        semantic_context = payload.get("semantic_context") or []
+        semantic_model_yaml = payload.get("semantic_model_yaml") or summary.get("semantic_model_yaml")
+        analyst_model = yaml.safe_load(semantic_model_yaml) if isinstance(semantic_model_yaml, str) else {}
+        tables = analyst_model.get("tables") if isinstance(analyst_model, dict) else None
+        relationships_out = analyst_model.get("relationships") if isinstance(analyst_model, dict) else None
+        print(
+            json.dumps(
+                {
+                    "success": payload.get("success"),
+                    "bundle_id": payload.get("bundle_id"),
+                    "bundle_hash": payload.get("bundle_hash"),
+                    "composed_model_hash": summary.get("composed_model_hash"),
+                    "asset_versions": summary.get("asset_versions"),
+                    "semantic_context_count": len(semantic_context) if isinstance(semantic_context, list) else None,
+                    "analyst_table_count": len(tables) if isinstance(tables, list) else None,
+                    "analyst_relationship_count": len(relationships_out) if isinstance(relationships_out, list) else None,
+                    "notes": payload.get("notes") or [],
+                    "warnings": payload.get("warnings") or [],
+                },
+                indent=2,
+                default=str,
+            )
+        )
+    else:
+        print(json.dumps(payload, indent=2, default=str))
     return 0
 
 

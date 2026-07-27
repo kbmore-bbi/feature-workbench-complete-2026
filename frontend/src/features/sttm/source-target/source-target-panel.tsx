@@ -1,49 +1,32 @@
 "use client";
+import { AiaBox, AiaButton, AiaStack } from '@/components/ui';
+import { AiaText } from '@/components/ui/aia-text';
 import React from "react";
 import SourceTargetList from "./source-target-list";
-import { Box, Typography, Button, Stack } from "@mui/material";
-import { AddIcon, FilterListRoundedIcon } from '@/utils/icons';
+import DerivedWorkspaceList from "./derived-workspace-list";
 
+import { AddIcon } from '@/utils/icons';
+import { SttmSidebarSectionIcon } from '@/features/sttm/layout/sttm-sidebar-icons';
+import { CAPTION_SX, textStyleCssVars, TYPOGRAPHY_TOKENS } from '@/config/typography-tokens';
 
 import { useSttmBuilderContext } from "@/features/sttm/context/sttm-builder-context";
-import { AiaButton } from "@/components/ui/aia-button";
 import { AiaSearchbox } from "@/components/ui/aia-searchbox";
 import { AddDerivedModal } from "./add-derived-modal";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
+import {
+  parseDerivedWorkspaceDragPayload,
+  parseWorkspaceDragPayload,
+} from "./source-workspace-dnd";
+import { useWorkspaceListSelection } from "./use-workspace-list-selection";
+import {
+  resolveSelectedSourceTables,
+  resolveSelectedTargetTable,
+} from "@/features/sttm/shared/sttm-selection-utils";
 
-/** Shared with search field + Filters control */
-const fieldChrome = {
-  borderRadius: "8px",
-  backgroundColor: "#f3f4f6",
-  border: "1px solid #e5e7eb",
-  minHeight: 40,
-} as const;
-
-const fieldChromeActive = {
-  backgroundColor: "#ffffff",
-  borderColor: "#d1d5db",
-  boxShadow: "0 0 0 1px rgba(15, 23, 42, 0.06)",
-} as const;
-
-const filtersControlSx = {
-  display: "inline-flex",
-  alignItems: "center",
-  gap: 0.75,
-  px: 1.5,
-  py: 0.75,
-  flexShrink: 0,
-  ...fieldChrome,
-  fontSize: 14,
-  fontWeight: 600,
-  color: "#374151",
-  textTransform: "none" as const,
-  boxShadow: "none",
-  "&:hover": fieldChromeActive,
-} as const;
-
-export default function SourceTargetPanel({ type }: { type: "source" | "target" }) {
+export default function SourceTargetPanel({ type }: { type: "source" | "target" | "derived" }) {
   const {
+    selectAllSources,
     clearSources,
-    clearTargets,
     fullData,
     drivingTableId,
     addDerivedSource,
@@ -51,12 +34,20 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
     derivedSourceDraftRequested,
     acknowledgePendingDerivedSourceDraft,
     dismissPendingDerivedSourceDraft,
+    sources,
+    targets,
+    derivedSources,
+    toggleSource,
+    selectTarget,
+    toggleDerivedSource,
   } = useSttmBuilderContext();
   const [isDerivedModalOpen, setIsDerivedModalOpen] = React.useState(false);
   const [searchTerm, setSearchTerm] = React.useState("");
+  const [isDropActive, setIsDropActive] = React.useState(false);
+  const workspaceSelection = useWorkspaceListSelection();
 
   React.useEffect(() => {
-    if (type === "source" && derivedSourceDraftRequested && pendingDerivedSourceDraft) {
+    if (type === "derived" && derivedSourceDraftRequested && pendingDerivedSourceDraft) {
       setIsDerivedModalOpen(true);
       acknowledgePendingDerivedSourceDraft();
     }
@@ -67,9 +58,29 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
     type,
   ]);
 
-  const title = type === "source" ? "SOURCE TABLES" : "TARGET TABLES";
+  const title =
+    type === "source"
+      ? "Source tables"
+      : type === "target"
+        ? "Target tables"
+        : "Derived sources";
   const selectedCount = React.useMemo(() => {
+    if (type === "derived") {
+      return derivedSources.filter((source) => source.isSelected).length;
+    }
     const branch = type === "source" ? fullData?.sources : fullData?.targets;
+    if (type === "source") {
+      return resolveSelectedSourceTables({
+        sourceDatabases: branch ?? [],
+        sources,
+      }).length;
+    }
+    if (type === "target") {
+      return resolveSelectedTargetTable({
+        targetDatabases: branch ?? [],
+        targets,
+      }) ? 1 : 0;
+    }
     let count = 0;
     for (const db of branch ?? []) {
       for (const sch of db.schemas ?? []) {
@@ -79,29 +90,92 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
       }
     }
     return count;
-  }, [fullData, type]);
+  }, [derivedSources, fullData, sources, targets, type]);
 
   const drivingTableDetails = React.useMemo(() => {
-    if (type !== 'source' || !fullData?.sources || !drivingTableId) return null;
-    for (const db of fullData.sources) {
-      for (const sch of db.schemas ?? []) {
-        for (const tbl of sch.tables ?? []) {
-          if (tbl.tableId === drivingTableId) {
-            return { dbName: db.dbName, schemaName: sch.schemaName, tableName: tbl.tableName };
-          }
-        }
-      }
-    }
-    return null;
-  }, [fullData, drivingTableId, type]);
+    if (type !== 'source' || !drivingTableId) return null;
+    const table = resolveSelectedSourceTables({
+      sourceDatabases: fullData?.sources ?? [],
+      sources,
+    }).find((candidate) => candidate.tableId === drivingTableId);
+    if (!table) return null;
+    const [dbName = "", schemaName = ""] = table.qualifiedName.split(".");
+    return { dbName, schemaName, tableName: table.tableName };
+  }, [fullData, drivingTableId, sources, type]);
+
+  const onSelectAll = () => {
+    if (type === "source") selectAllSources();
+  };
 
   const onClear = () => {
     if (type === "source") clearSources();
-    else clearTargets();
+  };
+
+  const resolveDraggedTableIds = React.useCallback(
+    (items: NonNullable<ReturnType<typeof parseWorkspaceDragPayload>>["items"]) => {
+      const branch = type === "target" ? fullData?.targets : fullData?.sources;
+      const ids: string[] = [];
+      for (const item of items) {
+        if (item.kind === "table") {
+          ids.push(item.tableId);
+          continue;
+        }
+        if (item.kind === "database") {
+          const database = branch?.find((entry) => entry.dbId === item.dbId);
+          ids.push(
+            ...(database?.schemas.flatMap((schema) =>
+              schema.tables.map((table) => table.tableId),
+            ) ?? []),
+          );
+          continue;
+        }
+        const database = branch?.find((entry) => entry.dbId === item.dbId);
+        const schema = database?.schemas.find((entry) => entry.schemaId === item.schemaId);
+        ids.push(...(schema?.tables.map((table) => table.tableId) ?? []));
+      }
+      return Array.from(new Set(ids));
+    },
+    [fullData, type],
+  );
+
+  const handleDrop = (event: React.DragEvent) => {
+    event.preventDefault();
+    setIsDropActive(false);
+
+    if (type === "derived") {
+      const payload = parseDerivedWorkspaceDragPayload(event.dataTransfer);
+      for (const id of payload?.derivedSourceIds ?? []) {
+        const source = derivedSources.find((item) => item.id === id);
+        if (source && !source.isSelected) {
+          toggleDerivedSource(id);
+        }
+      }
+      return;
+    }
+
+    const payload = parseWorkspaceDragPayload(event.dataTransfer);
+    if (!payload) return;
+    const tableIds = resolveDraggedTableIds(payload.items);
+    if (type === "target") {
+      const firstTarget = tableIds[0];
+      if (firstTarget) selectTarget(firstTarget);
+      return;
+    }
+    const selectedIds = new Set(
+      resolveSelectedSourceTables({
+        sourceDatabases: fullData?.sources ?? [],
+        sources,
+      }).map((table) => table.tableId),
+    );
+    for (const tableId of tableIds) {
+      if (!selectedIds.has(tableId)) {
+        toggleSource(tableId);
+      }
+    }
   };
 
   return (
-    <Box
+    <AiaBox
       sx={{
         width: "100%",
         maxWidth: "100%",
@@ -110,63 +184,149 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
         flexDirection: "column",
         backgroundColor: "transparent",
         p: 2,
+        outline: isDropActive ? "2px dashed var(--color-primary-save)" : "none",
+        outlineOffset: -4,
       }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        setIsDropActive(true);
+      }}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setIsDropActive(false);
+        }
+      }}
+      onDrop={handleDrop}
     >
-      <Box
+      <AiaBox
         sx={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
           mt: -2,
           mx: -2,
-          pt: 2,
-          pb: 1.5,
           px: 2,
           mb: 1.5,
+          minHeight: "var(--aia-workspace-section-header-min-height)",
           borderBottom: "1px solid #e5e7eb",
           gap: 2,
+          overflow: "visible",
         }}
       >
-        <Typography
+        <AiaBox
           sx={{
-            fontSize: 12,
-            fontWeight: 800,
-            color: "#374151",
-            letterSpacing: "0.06em",
-            lineHeight: 1.2,
+            display: "flex",
+            alignItems: "center",
+            gap: 1,
+            minWidth: 0,
+            overflow: "visible",
           }}
         >
-          {title}
-        </Typography>
-        <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, flexShrink: 0 }}>
-          <Typography sx={{ fontSize: 12, fontWeight: 600, color: "#6b7280" }}>
-            {selectedCount} selected
-          </Typography>
-          <Button
-            variant="text"
-            size="small"
-            onClick={onClear}
+          <AiaBox
             sx={{
-              minWidth: 0,
-              px: 0.75,
-              py: 0.25,
-              fontSize: 12,
-              fontWeight: 600,
-              color: "#2563eb",
-              textTransform: "none",
-              backgroundColor: "transparent",
-              "&:hover": {
-                backgroundColor: "rgba(37, 99, 235, 0.06)",
-                color: "#1d4ed8",
-              },
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 24,
+              height: 24,
+              flexShrink: 0,
+              overflow: "visible",
+              color: TYPOGRAPHY_TOKENS.cardTitle.color,
+              "& .MuiSvgIcon-root": { color: "inherit" },
             }}
           >
-            Clear all
-          </Button>
-        </Box>
-      </Box>
+            <SttmSidebarSectionIcon
+              kind={type}
+              sx={{
+                fontSize: "calc(var(--aia-card-title-font-size) + 2px)",
+                color: "var(--aia-card-title-color)",
+                flexShrink: 0,
+              }}
+            />
+          </AiaBox>
+          <AiaText
+            sx={{
+              ...textStyleCssVars("cardTitle"),
+              textTransform: "capitalize",
+              letterSpacing: "-0.01em",
+            }}
+          >
+            {title}
+          </AiaText>
+        </AiaBox>
+        <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1.25, flexShrink: 0 }}>
+          <AiaText sx={CAPTION_SX}>
+            {selectedCount} selected
+          </AiaText>
+          {type === "source" ? (
+            <>
+              <AiaButton
+                variant="text"
+                size="small"
+                onClick={onSelectAll}
+                sx={{
+                  minWidth: 0,
+                  px: 0.75,
+                  py: 0.25,
+                  fontSize: "var(--aia-caption-font-size)",
+                  fontWeight: 600,
+                  textTransform: "none",
+                  color: "var(--aia-button-color)",
+                  backgroundColor: "transparent",
+                  boxShadow: "none",
+                  "&:hover": {
+                    backgroundColor: "color-mix(in srgb, var(--aia-button-color) 6%, transparent)",
+                    color: "var(--aia-button-color)",
+                    boxShadow: "none",
+                  },
+                }}
+              >
+                Select all
+              </AiaButton>
+              <AiaButton
+                variant="text"
+                size="small"
+                onClick={onClear}
+                sx={{
+                  minWidth: 0,
+                  px: 0.75,
+                  py: 0.25,
+                  fontSize: "var(--aia-caption-font-size)",
+                  fontWeight: 600,
+                  textTransform: "none",
+                  color: "var(--aia-button-color)",
+                  backgroundColor: "transparent",
+                  boxShadow: "none",
+                  "&:hover": {
+                    backgroundColor: "color-mix(in srgb, var(--aia-button-color) 6%, transparent)",
+                    color: "var(--aia-button-color)",
+                    boxShadow: "none",
+                  },
+                }}
+              >
+                Clear all
+              </AiaButton>
+            </>
+          ) : type === "derived" ? (
+            <AiaButton
+              data-tour={TOUR_TARGETS.sttmAddDerived}
+              size="small"
+              variant="outlined"
+              startIcon={<AddIcon sx={{ fontSize: 18 }} />}
+              onClick={() => setIsDerivedModalOpen(true)}
+              sx={{ minWidth: 0, boxShadow: "none" }}
+              customBorderColor="var(--aia-state-success-color)"
+              customColor="var(--aia-state-success-color)"
+              customHoverBackgroundColor="var(--aia-state-success-hover-bg)"
+            >
+              Add Derived
+            </AiaButton>
+          ) : null}
+        </AiaBox>
+      </AiaBox>
 
-      <Box
+      {type !== "derived" ? <AiaBox
         sx={{
           display: "flex",
           alignItems: "stretch",
@@ -181,66 +341,78 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
           sx={{ flex: 1, mb: 0 }}
         />
 
-        {/* <Button
+        {/* <AiaButton
           variant="text"
           size="small"
           startIcon={<FilterListRoundedIcon sx={{ fontSize: 18, color: "#6b7280" }} />}
           sx={filtersControlSx}
         >
           Filters
-        </Button> */}
-      </Box>
+        </AiaButton> */}
+      </AiaBox> : null}
 
       {type === "source" && (
-        <Box sx={{ mx: -2, borderBottom: "1px solid #eef2f7", mb: 1.5 }}>
-          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", pb: 1.5, px: 2, flexWrap: "wrap", gap: 1 }}>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5 }}>
-              <Typography
-                sx={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: "#94a3b8",
-                  letterSpacing: "0.08em",
-                }}
-              >
-                ADD SOURCE:
-              </Typography>
-              <AiaButton
-                size="small"
-                variant="outlined"
-                rounded="full"
-                startIcon={<AddIcon sx={{ fontSize: 18 }} />}
-                customBorderColor="#22c55e"
-                customColor="#15803d"
-                customBackgroundColor="transparent"
-                customHoverBackgroundColor="rgba(34, 197, 94, 0.08)"
-                onClick={() => setIsDerivedModalOpen(true)}
-              >
-                Add Derived
-              </AiaButton>
-            </Box>
-            {drivingTableDetails && (
-              <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-                <Typography sx={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.05em", textTransform: 'uppercase' }}>
-                  Driving Table:
-                </Typography>
-                <Typography sx={{ fontSize: 12, fontWeight: 700, color: "#1e293b", backgroundColor: '#f1f5f9', px: 1, py: 0.25, borderRadius: '4px' }}>
-                  {drivingTableDetails.dbName} &bull; {drivingTableDetails.schemaName} &bull; {drivingTableDetails.tableName}
-                </Typography>
-              </Box>
+        <AiaBox sx={{ mx: -2, borderBottom: "1px solid #eef2f7", mb: 1.5 }}>
+          <AiaBox
+            sx={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              pb: 1.5,
+              px: 2,
+              flexWrap: "wrap",
+              gap: 1,
+            }}
+          >
+            {drivingTableDetails ? (
+              <AiaBox sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                <AiaText
+                  sx={{
+                    fontSize: 14,
+                    fontWeight: 400,
+                    color: "#9ca3af",
+                    letterSpacing: "0.05em",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  Driving table:
+                </AiaText>
+                <AiaText
+                  sx={{
+                    fontSize: 14,
+                    fontWeight: 400,
+                    color: "#1e293b",
+                    px: 1,
+                    py: 0.25,
+                    borderRadius: "4px",
+                  }}
+                >
+                  {drivingTableDetails.dbName} &bull; {drivingTableDetails.schemaName} &bull;{" "}
+                  {drivingTableDetails.tableName}
+                </AiaText>
+              </AiaBox>
+            ) : (
+              <AiaBox />
             )}
-          </Box>
-
-        </Box>
+          </AiaBox>
+        </AiaBox>
       )}
 
-      <Box sx={{ pr: 0.5 }}>
-        <Stack spacing={0.5}>
-          <SourceTargetList type={type} searchTerm={searchTerm} />
-        </Stack>
-      </Box>
+      <AiaBox sx={{ pr: 0.5, minHeight: type === "derived" ? 130 : undefined }}>
+        <AiaStack spacing={0.5}>
+          {type === "derived" ? (
+            <DerivedWorkspaceList
+              orderedIds={derivedSources.filter((source) => source.isSelected).map((source) => source.id)}
+              isSelected={workspaceSelection.isSelected}
+              onSelect={workspaceSelection.handleSelect}
+            />
+          ) : (
+            <SourceTargetList type={type} searchTerm={searchTerm} />
+          )}
+        </AiaStack>
+      </AiaBox>
 
-      {type === "source" && (
+      {type === "derived" && (
         <AddDerivedModal
           isOpen={isDerivedModalOpen}
           onClose={() => setIsDerivedModalOpen(false)}
@@ -252,6 +424,6 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
           }}
         />
       )}
-    </Box>
+    </AiaBox>
   );
 }

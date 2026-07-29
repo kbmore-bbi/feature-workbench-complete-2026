@@ -18,6 +18,7 @@ import { useRouter } from "next/navigation";
 import { useAppDispatch } from "@/store/hooks";
 import { resetBuilderForNewMapping } from "@/features/sttm/store/sttm-builder-slice";
 import { markExplicitNewDraftIntent } from "@/features/sttm/context/sttm-session-intent";
+import { getAllProjectsSummary } from "@/services/projectService";
 
 type UploadResult = {
   asset_id: string;
@@ -33,11 +34,26 @@ type UploadResult = {
 
 type MappingCreationMode = "sql" | "excel" | "manual" | null;
 
+export type NewMappingManualDetails = {
+  name: string;
+  description: string;
+  linkedMappingIds: string[];
+  projectId?: string;
+};
+
+export type NewMappingProjectOption = {
+  value: string;
+  label: string;
+};
+
 type NewMappingDialogProps = {
   open: boolean;
   onClose: () => void;
-  onBuildManually: (details?: { name: string; description: string; linkedMappingIds: string[] }) => void;
+  onBuildManually: (details: NewMappingManualDetails) => void;
+  /** Preselected project when opened from a project page or project filter. */
   projectId?: string;
+  /** Optional project list; when omitted, options load from the projects API. */
+  projectOptions?: NewMappingProjectOption[];
   precedentMappings?: Array<{ id: string; name: string; projectName: string }>;
 };
 
@@ -85,16 +101,20 @@ export default function NewMappingDialog({
   onClose,
   onBuildManually,
   projectId,
+  projectOptions: projectOptionsProp,
   precedentMappings = [],
 }: NewMappingDialogProps) {
   const dispatch = useAppDispatch();
   const { registerModalTour, startTour } = useTour();
   const [selectedMode, setSelectedMode] = useState<MappingCreationMode>(null);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [mappingName, setMappingName] = useState("");
   const [mappingDescription, setMappingDescription] = useState("");
   const [sourceTableHints, setSourceTableHints] = useState("");
   const [targetTableHint, setTargetTableHint] = useState("");
   const [linkedMappingIds, setLinkedMappingIds] = useState<string[]>([]);
+  const [loadedProjectOptions, setLoadedProjectOptions] = useState<NewMappingProjectOption[]>([]);
+  const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const sqlInputRef = useRef<HTMLInputElement | null>(null);
   const excelInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -107,13 +127,68 @@ export default function NewMappingDialog({
     return () => registerModalTour(null);
   }, [open, registerModalTour]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setSelectedProjectId(projectId?.trim() || "");
+  }, [open, projectId]);
+
+  useEffect(() => {
+    if (!open || (projectOptionsProp && projectOptionsProp.length > 0)) {
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingProjects(true);
+    getAllProjectsSummary()
+      .then(({ projects }) => {
+        if (cancelled) {
+          return;
+        }
+        setLoadedProjectOptions(
+          projects.map((project) => ({
+            value: project.project_id,
+            label: project.project_name,
+          })),
+        );
+      })
+      .catch((error) => {
+        if (process.env.NODE_ENV === "development") {
+          console.warn("Failed to load projects for New Mapping dialog.", error);
+        }
+        if (!cancelled) {
+          setLoadedProjectOptions([]);
+        }
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setIsLoadingProjects(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, projectOptionsProp]);
+
+  const projectOptions = useMemo(() => {
+    if (projectOptionsProp && projectOptionsProp.length > 0) {
+      return projectOptionsProp;
+    }
+    return loadedProjectOptions;
+  }, [projectOptionsProp, loadedProjectOptions]);
+
   const selectedOption = useMemo(
     () => OPTIONS.find((option) => option.id === selectedMode) ?? null,
     [selectedMode],
   );
 
+  const canSubmitManual = Boolean(mappingName.trim() && mappingDescription.trim());
+
   const handleClose = () => {
     setSelectedMode(null);
+    setSelectedProjectId(projectId?.trim() || "");
     setMappingName("");
     setMappingDescription("");
     setSourceTableHints("");
@@ -138,18 +213,20 @@ export default function NewMappingDialog({
     }
 
     if (selectedMode === "manual") {
+      if (!canSubmitManual) {
+        return;
+      }
+      const details: NewMappingManualDetails = {
+        name: mappingName.trim(),
+        description: mappingDescription.trim(),
+        linkedMappingIds,
+        projectId: selectedProjectId.trim() || undefined,
+      };
       setSelectedMode(null);
       setMappingName("");
       setMappingDescription("");
-      if (projectId) {
-        onBuildManually({
-          name: mappingName.trim(),
-          description: mappingDescription.trim(),
-          linkedMappingIds,
-        });
-      } else {
-        onBuildManually();
-      }
+      setLinkedMappingIds([]);
+      onBuildManually(details);
       return;
     }
 
@@ -178,7 +255,7 @@ export default function NewMappingDialog({
     try {
       const formData = new FormData();
       formData.append("file", file);
-      formData.append("project_id", projectId || "default");
+      formData.append("project_id", selectedProjectId || projectId || "default");
       formData.append("mode", "auto_populate");
       formData.append("source_table_hints", sourceTableHints.trim());
       formData.append("target_table_hint", targetTableHint.trim());
@@ -221,7 +298,7 @@ export default function NewMappingDialog({
     try {
       const formData = new FormData();
       formData.append("asset_id", uploadResult.asset_id);
-      formData.append("project_id", projectId || "default");
+      formData.append("project_id", selectedProjectId || projectId || "default");
       const response = await fetch(`/api${API_ROUTES.upload.triggerLearning}`, {
         method: "POST",
         body: formData,
@@ -628,11 +705,27 @@ export default function NewMappingDialog({
           </AiaBox>
           )}
 
-          {selectedMode === "manual" && projectId && !uploadResult && (
+          {selectedMode && !uploadResult && (
+            <AiaBox sx={{ px: 4, pb: selectedMode === "manual" ? 0 : 3 }}>
+              <AiaText sx={{ fontSize: 11, fontWeight: 700, color: "#64748B", mb: 0.75 }}>
+                PROJECT NAME
+              </AiaText>
+              <AiaSelect
+                value={selectedProjectId}
+                options={projectOptions}
+                placeholder={isLoadingProjects ? "Loading projects..." : "Select a project"}
+                disabled={isLoadingProjects && projectOptions.length === 0}
+                onChange={(value) => setSelectedProjectId(typeof value === "string" ? value : "")}
+              />
+            </AiaBox>
+          )}
+
+          {selectedMode === "manual" && !uploadResult && (
             <AiaBox
               sx={{
                 px: 4,
                 pb: 3,
+                pt: 2,
                 display: "flex",
                 flexDirection: "column",
                 gap: 2,
@@ -750,10 +843,7 @@ export default function NewMappingDialog({
                 rounded="lg"
                 size="medium"
                 endIcon={<ArrowForwardRoundedIcon sx={{ fontSize: 16 }} />}
-                disabled={
-                  !selectedMode ||
-                  (selectedMode === "manual" && !!projectId && (!mappingName.trim() || !mappingDescription.trim()))
-                }
+                disabled={!selectedMode || (selectedMode === "manual" && !canSubmitManual)}
                 onClick={handleProceed}
                 sx={{
                   minWidth: 156,

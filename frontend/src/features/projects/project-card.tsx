@@ -1,8 +1,12 @@
 "use client";
-import { AiaBox, AiaPaper } from '@/components/ui';
+import { AiaBox, AiaButton, AiaPaper } from '@/components/ui';
 import { AiaText } from '@/components/ui/aia-text';
 
-import { FolderOutlinedIcon, KeyboardArrowRightRoundedIcon } from '@/utils/icons';
+import {
+  FolderOutlinedIcon,
+  KeyboardArrowRightRoundedIcon,
+  LockOutlinedIcon,
+} from '@/utils/icons';
 
 import type { ProjectItem } from "./projects-data";
 import ProjectCardMeta from "./project-card-meta";
@@ -12,9 +16,14 @@ import ProjectStatusBadge from "./project-status-badge";
 type ProjectCardProps = {
   project: ProjectItem;
   onClick: () => void;
+  onHardcodedValues: () => void;
 };
 
-export default function ProjectCard({ project, onClick }: ProjectCardProps) {
+export default function ProjectCard({
+  project,
+  onClick,
+  onHardcodedValues,
+}: ProjectCardProps) {
   return (
     <AiaPaper
       elevation={0}
@@ -100,6 +109,35 @@ export default function ProjectCard({ project, onClick }: ProjectCardProps) {
           {project.draftCount > 0 ? (
             <ProjectStatusBadge variant="draft" label={`${project.draftCount} draft`} />
           ) : null}
+        </AiaBox>
+
+        <AiaBox sx={{ mt: 1.75 }}>
+          <AiaButton
+            variant="outlined"
+            size="small"
+            startIcon={<LockOutlinedIcon sx={{ fontSize: 16 }} />}
+            onClick={(event) => {
+              event.stopPropagation();
+              onHardcodedValues();
+            }}
+            sx={{
+              width: "100%",
+              height: 36,
+              borderRadius: "10px",
+              borderColor: "#E5E7EB",
+              color: "#374151",
+              fontSize: 13,
+              fontWeight: 600,
+              textTransform: "none",
+              bgcolor: "#FFFFFF",
+              "&:hover": {
+                borderColor: "#D1D5DB",
+                bgcolor: "#F8FAFC",
+              },
+            }}
+          >
+            Hardcoded Values
+          </AiaButton>
         </AiaBox>
       </AiaBox>
 

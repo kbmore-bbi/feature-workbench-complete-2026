@@ -7,7 +7,8 @@ import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 import { useTour } from '@/features/tour/engine/tour-context';
 
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
-import type { MappingRuleType } from '@/features/sttm/types/sttm.types';
+import type { MappingMode, MappingRuleType } from '@/features/sttm/types/sttm.types';
+import { getAttributesForProject } from '@/features/attributes/attributes-data';
 import {
   buildSourceColumnOptions,
   formatSqlType,
@@ -374,6 +375,8 @@ const SourceTargetAttributeMapping = () => {
     autoMapProcessingIds,
     sourceAttributeGroups,
     derivedSources,
+    activeProjectId,
+    activeProjectName,
   } = useSttmBuilderContext();
   const { notifyTourContextChanged } = useTour();
 
@@ -383,6 +386,18 @@ const SourceTargetAttributeMapping = () => {
 
   const sortedMappings = mappings;
   const sourceColumnOptions = buildSourceColumnOptions(sourceAttributeGroups, derivedSources);
+  const projectAttributes = useMemo(
+    () => getAttributesForProject(activeProjectId, activeProjectName),
+    [activeProjectId, activeProjectName],
+  );
+  const attributeOptions = useMemo(
+    () =>
+      projectAttributes.map((attribute) => ({
+        label: attribute.attributeName,
+        value: attribute.attributeName,
+      })),
+    [projectAttributes],
+  );
 
   const allSelected = mappings.length > 0 && selectedMappingIds.length === mappings.length;
   const someSelected = selectedMappingIds.length > 0 && selectedMappingIds.length < mappings.length;
@@ -440,7 +455,11 @@ const SourceTargetAttributeMapping = () => {
       if (
         columnFilters.sourceColumn
         && !includes(
-          row.mappingMode === "constant" ? row.constantValue : row.sourceColumn,
+          row.mappingMode === "constant"
+            ? row.constantValue
+            : row.mappingMode === "attribute"
+              ? row.attributeName
+              : row.sourceColumn,
           columnFilters.sourceColumn,
         )
       ) {
@@ -962,30 +981,38 @@ const SourceTargetAttributeMapping = () => {
                   <MappingSourceColumnsCell
                     value={row.sourceColumn}
                     options={sourceColumnOptions}
-                    disabled={!resolvedRule && row.mappingMode !== "constant"}
-                    displayAsPlainText={resolvedRule === 'Custom' && row.mappingMode !== "constant"}
+                    disabled={!resolvedRule && row.mappingMode !== "constant" && row.mappingMode !== "attribute"}
+                    displayAsPlainText={resolvedRule === 'Custom' && row.mappingMode !== "constant" && row.mappingMode !== "attribute"}
                     mappingMode={row.mappingMode ?? "source"}
                     constantValue={row.constantValue}
-                    onMappingModeChange={(mode) => {
+                    attributeName={row.attributeName}
+                    attributeOptions={attributeOptions}
+                    onMappingModeChange={(mode: MappingMode) => {
                       const isConstant = mode === "constant";
+                      const isAttribute = mode === "attribute";
                       updateMapping(row.id, {
                         mappingMode: mode,
                         constantValue: isConstant ? row.constantValue ?? "" : null,
-                        sourceColumn: isConstant ? null : row.sourceColumn,
-                        sourceColumns: isConstant ? [] : row.sourceColumns,
-                        sourceType: isConstant ? null : row.sourceType,
-                        expression: isConstant ? null : row.expression,
-                        rule: isConstant ? "Direct" : row.rule,
+                        attributeName: isAttribute ? row.attributeName ?? null : null,
+                        sourceColumn: isConstant || isAttribute ? null : row.sourceColumn,
+                        sourceColumns: isConstant || isAttribute ? [] : row.sourceColumns,
+                        sourceType: isConstant || isAttribute ? null : row.sourceType,
+                        expression: isConstant || isAttribute ? null : row.expression,
+                        rule: isConstant || isAttribute ? "Direct" : row.rule,
                         status:
                           isConstant && (row.constantValue ?? "").trim()
                             ? "MAPPED"
-                            : !isConstant && (row.sourceColumns?.length || row.sourceColumn)
+                            : isAttribute && (row.attributeName ?? "").trim()
                               ? "MAPPED"
-                              : "UNMAPPED",
+                              : !isConstant && !isAttribute && (row.sourceColumns?.length || row.sourceColumn)
+                                ? "MAPPED"
+                                : "UNMAPPED",
                         confidenceScore: null,
                         confidenceReason: isConstant
                           ? "A hard-coded value was assigned manually."
-                          : null,
+                          : isAttribute
+                            ? "A project attribute was assigned manually."
+                            : null,
                         usedInferenceIds: [],
                         usedRecommendationIds: [],
                         usedLearningIds: [],
@@ -993,13 +1020,16 @@ const SourceTargetAttributeMapping = () => {
                           ? row.description
                           : isConstant
                             ? `Assign a hard-coded value to ${row.targetColumn}.`
-                            : null,
+                            : isAttribute
+                              ? `Assign a project attribute to ${row.targetColumn}.`
+                              : null,
                       });
                     }}
                     onConstantValueChange={(constantValue) => {
                       updateMapping(row.id, {
                         mappingMode: "constant",
                         constantValue,
+                        attributeName: null,
                         status: constantValue.trim() ? "MAPPED" : "UNMAPPED",
                         confidenceScore: null,
                         confidenceReason: constantValue.trim()
@@ -1015,6 +1045,34 @@ const SourceTargetAttributeMapping = () => {
                             : null,
                       });
                     }}
+                    onAttributeChange={(nextAttributeName) => {
+                      const selectedAttribute = projectAttributes.find(
+                        (attribute) => attribute.attributeName === nextAttributeName,
+                      );
+                      updateMapping(row.id, {
+                        mappingMode: "attribute",
+                        attributeName: nextAttributeName || null,
+                        constantValue: selectedAttribute?.attributeValue ?? null,
+                        sourceColumn: null,
+                        sourceColumns: [],
+                        sourceType: selectedAttribute?.attributeType ?? null,
+                        expression: null,
+                        rule: "Direct",
+                        status: nextAttributeName.trim() ? "MAPPED" : "UNMAPPED",
+                        confidenceScore: null,
+                        confidenceReason: nextAttributeName.trim()
+                          ? "A project attribute was assigned manually."
+                          : null,
+                        usedInferenceIds: [],
+                        usedRecommendationIds: [],
+                        usedLearningIds: [],
+                        description: row.descriptionEdited
+                          ? row.description
+                          : nextAttributeName.trim()
+                            ? `Assign the project attribute ${nextAttributeName.trim()} to ${row.targetColumn}.`
+                            : null,
+                      });
+                    }}
                     onChange={(nextValue) => {
                       const nextColumns = parseSourceColumns(nextValue);
                       const rule = resolveMappingRuleSelectValue(row.rule);
@@ -1023,6 +1081,7 @@ const SourceTargetAttributeMapping = () => {
                         sourceColumns: nextColumns,
                         mappingMode: "source",
                         constantValue: null,
+                        attributeName: null,
                         status: nextColumns.length > 0 ? 'MAPPED' : 'UNMAPPED',
                         confidenceScore: null,
                         confidenceReason: nextColumns.length

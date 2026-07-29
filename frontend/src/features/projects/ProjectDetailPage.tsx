@@ -235,16 +235,34 @@ export default function ProjectDetailPage({ projectId }: ProjectDetailPageProps)
     openMappingInBuilder(dispatch, { sttmId: item.id, projectId: item.projectId });
   };
 
-  const handleBuildManually = async (details?: { name: string; description: string }) => {
-    if (!details?.name) return;
+  const handleBuildManually = async (details: {
+    name: string;
+    description: string;
+    linkedMappingIds?: string[];
+    projectId?: string;
+  }) => {
+    const targetProjectId = details.projectId?.trim() || projectId;
+    if (!details?.name || !targetProjectId) return;
     setIsNewMappingOpen(false);
     setIsOpening(true);
     try {
-      const sttm = await createProjectSttm(projectId, {
+      const sttm = await createProjectSttm(targetProjectId, {
         sttm_name: details.name,
         description: details.description || null,
+        precedent_links: (details.linkedMappingIds ?? []).map((sttmId, index) => ({
+          precedent_sttm_id: sttmId,
+          priority: Math.max(1, 100 - index),
+          knowledge_categories: [
+            "column_mapping",
+            "relationship",
+            "transformation",
+            "query_shaping",
+            "derived_lineage",
+          ],
+          allow_project_specific_values: false,
+        })),
       });
-      dispatch(openSttmFromBackend({ sttmId: sttm.sttm_id, projectId }));
+      dispatch(openSttmFromBackend({ sttmId: sttm.sttm_id, projectId: targetProjectId }));
     } catch (err) {
       if (process.env.NODE_ENV === "development") {
         console.warn("Failed to create STTM.", err);

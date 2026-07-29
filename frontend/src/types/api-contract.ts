@@ -342,8 +342,9 @@ export type AttributeMapping = {
   used_inference_ids?: string[];
   used_recommendation_ids?: string[];
   used_learning_ids?: string[];
-  mapping_mode?: "source" | "constant";
+  mapping_mode?: "source" | "constant" | "attribute";
   constant_value?: string | null;
+  attribute_name?: string | null;
   source_dependencies?: string[];
   value_binding_ids?: string[];
   transformation_classification?: "value" | "direct" | "reused" | "simple_multi_source" | "complex" | "unresolved" | null;
@@ -600,8 +601,9 @@ export type MappingSqlMappingItem = {
   target_type?: string | null;
   source_column?: string | null;
   source_columns?: string[];
-  mapping_mode?: "source" | "constant";
+  mapping_mode?: "source" | "constant" | "attribute";
   constant_value?: string | null;
+  attribute_name?: string | null;
   expression?: string | null;
   rule?: string | null;
   status?: string | null;

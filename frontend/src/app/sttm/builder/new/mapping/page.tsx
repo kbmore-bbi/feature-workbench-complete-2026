@@ -708,13 +708,14 @@ function MappingPageContent() {
             source_columns: mapping.sourceColumns ?? parseSourceColumns(mapping.sourceColumn),
             mapping_mode: mapping.mappingMode ?? 'source',
             constant_value: mapping.constantValue ?? null,
+            attribute_name: mapping.attributeName ?? null,
             expression: mapping.expression,
             rule: mapping.rule,
             status: mapping.status,
             nl_rule: mapping.nlRule,
             description: mapping.description,
             source_dependencies: mapping.sourceDependencies ?? mapping.sourceColumns ?? parseSourceColumns(mapping.sourceColumn),
-            value_binding_ids: mapping.mappingMode === 'constant'
+            value_binding_ids: mapping.mappingMode === 'constant' || mapping.mappingMode === 'attribute'
               ? (mapping.valueBindingIds?.length ? mapping.valueBindingIds : [mapping.id])
               : [],
             precedent_decision: mapping.precedentDecision,
@@ -833,31 +834,39 @@ function MappingPageContent() {
       const sourceColumns = Array.isArray(item.source_columns)
         ? item.source_columns.map(String)
         : [];
+      const mappingModeRaw = String(item.mapping_mode ?? '').toLowerCase();
+      const isValueBinding = mappingModeRaw === 'constant' || mappingModeRaw === 'attribute';
       return {
         id: `sql:${targetColumn}:${index}`,
         targetColumn,
         targetType:
           targetAttributeGroup?.columns.find((column) => column.name === targetColumn)?.type ?? 'TEXT',
         sourceColumn:
-          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+          isValueBinding
             ? null
             : sourceColumns[0] ?? (String(item.source_column ?? '') || null),
         sourceColumns,
         sourceType: null,
         mappingMode:
-          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+          mappingModeRaw === 'constant'
             ? 'constant'
-            : 'source',
+            : mappingModeRaw === 'attribute'
+              ? 'attribute'
+              : 'source',
         constantValue:
-          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+          isValueBinding
             ? String(item.constant_value ?? '')
             : null,
+        attributeName:
+          mappingModeRaw === 'attribute'
+            ? String(item.attribute_name ?? '')
+            : null,
         expression:
-          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+          isValueBinding
             ? null
             : item.expression ? String(item.expression) : null,
         rule:
-          String(item.mapping_mode ?? '').toLowerCase() === 'constant'
+          isValueBinding
             ? 'Value'
             : item.expression ? 'Custom' : 'Direct',
         status: 'MAPPED',
@@ -929,6 +938,7 @@ function MappingPageContent() {
               : parseSourceColumns(mapping.sourceColumn),
           mapping_mode: mapping.mappingMode ?? "source",
           constant_value: mapping.constantValue ?? null,
+          attribute_name: mapping.attributeName ?? null,
           expression: mapping.expression,
           rule: mapping.rule,
           status: mapping.status,

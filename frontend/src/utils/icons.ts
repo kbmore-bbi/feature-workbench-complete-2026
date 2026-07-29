@@ -34,6 +34,7 @@ import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
 import CreateNewFolderOutlinedIcon from '@mui/icons-material/CreateNewFolderOutlined';
 import DarkModeRoundedIcon from '@mui/icons-material/DarkModeRounded';
 import DashboardRoundedIcon from '@mui/icons-material/DashboardRounded';
+import DeleteOutlinedIcon from '@mui/icons-material/DeleteOutlined';
 import SwapHorizRoundedIcon from '@mui/icons-material/SwapHorizRounded';
 import EastRoundedIcon from '@mui/icons-material/EastRounded';
 import EditNoteRoundedIcon from '@mui/icons-material/EditNoteRounded';
@@ -147,6 +148,7 @@ export {
   CreateNewFolderOutlinedIcon,
   DarkModeRoundedIcon,
   DashboardRoundedIcon,
+  DeleteOutlinedIcon,
   EastRoundedIcon,
   EditNoteRoundedIcon,
   EditOutlinedIcon,

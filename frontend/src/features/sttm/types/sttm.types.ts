@@ -210,6 +210,8 @@ export type MappingSuggestion = {
   usedLearningIds?: string[];
 };
 
+export type MappingMode = "source" | "constant" | "attribute";
+
 export type PendingAiMappingReview = {
   mappingId: string;
   targetColumn: string;
@@ -226,8 +228,9 @@ export type PendingAiMappingReview = {
   usedInferenceIds?: string[];
   usedRecommendationIds?: string[];
   usedLearningIds?: string[];
-  mappingMode?: "source" | "constant";
+  mappingMode?: MappingMode;
   constantValue?: string | null;
+  attributeName?: string | null;
   sourceDependencies?: string[];
   valueBindingIds?: string[];
   transformationClassification?: string | null;
@@ -509,8 +512,9 @@ export interface MappingState {
   sourceColumn: string | null;
   sourceType: string | null;
   sourceColumns?: string[];
-  mappingMode?: "source" | "constant";
+  mappingMode?: MappingMode;
   constantValue?: string | null;
+  attributeName?: string | null;
   expression: string | null;
   rule: MappingRuleType;
   status: MappingStatus;

@@ -239,14 +239,20 @@ function relationGraph(
       }];
     }),
     value_bindings: mappings.flatMap((mapping) => {
-      if (mapping.mappingMode !== "constant" || !mapping.constantValue) return [];
+      if (
+        (mapping.mappingMode !== "constant" && mapping.mappingMode !== "attribute")
+        || !mapping.constantValue
+      ) {
+        return [];
+      }
       return [{
         binding_id: `value:${mapping.id}`,
         value: mapping.constantValue,
         data_type: mapping.targetType ?? null,
         is_placeholder: mapping.constantValue.startsWith("$"),
-        allow_project_specific_value: false,
+        allow_project_specific_value: mapping.mappingMode === "attribute",
         resolution_status: mapping.constantValue.startsWith("$") ? "unresolved" : "resolved",
+        attribute_name: mapping.mappingMode === "attribute" ? mapping.attributeName ?? null : null,
       }];
     }),
   };
@@ -354,6 +360,7 @@ export function buildWorkbenchContextSnapshot(
       source_type: mapping.sourceType,
       mapping_mode: mapping.mappingMode ?? "source",
       constant_value: mapping.constantValue ?? null,
+      attribute_name: mapping.attributeName ?? null,
       rule: mapping.rule,
       expression: mapping.expression,
       natural_language_rule: mapping.nlRule,

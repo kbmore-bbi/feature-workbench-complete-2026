@@ -316,16 +316,21 @@ function buildRelationGraph(
     }))
     .filter((edge) => edge.conditions.length > 0);
   const value_bindings = mappings
-    .filter((mapping) => mapping.mappingMode === "constant" && mapping.constantValue != null)
+    .filter(
+      (mapping) =>
+        (mapping.mappingMode === "constant" || mapping.mappingMode === "attribute")
+        && mapping.constantValue != null,
+    )
     .map((mapping) => ({
       binding_id: mapping.valueBindingIds?.[0] ?? mapping.id,
       value: String(mapping.constantValue),
       data_type: mapping.targetType || null,
       is_placeholder: String(mapping.constantValue).trim().startsWith("$"),
-      allow_project_specific_value: false,
+      allow_project_specific_value: mapping.mappingMode === "attribute",
       resolution_status: String(mapping.constantValue).trim().startsWith("$")
         ? "placeholder_contract"
         : "resolved",
+      attribute_name: mapping.mappingMode === "attribute" ? mapping.attributeName ?? null : null,
     }));
   return { nodes, edges, value_bindings };
 }
@@ -1214,8 +1219,9 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
   usedInferenceIds?: string[];
   usedRecommendationIds?: string[];
   usedLearningIds?: string[];
-  mappingMode?: "source" | "constant";
+  mappingMode?: "source" | "constant" | "attribute";
   constantValue?: string | null;
+  attributeName?: string | null;
   sourceDependencies?: string[];
   valueBindingIds?: string[];
   transformationClassification?: string | null;
@@ -1223,8 +1229,14 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
   precedentMappingId?: string | null;
   overrideEvidence?: string[];
 }) {
-  const mappingMode = suggestion.mappingMode === "constant" ? "constant" : "source";
-  const sourceAttributes = mappingMode === "constant" ? [] : suggestion.sourceAttributes ?? [];
+  const mappingMode =
+    suggestion.mappingMode === "constant"
+      ? "constant"
+      : suggestion.mappingMode === "attribute"
+        ? "attribute"
+        : "source";
+  const sourceAttributes =
+    mappingMode === "constant" || mappingMode === "attribute" ? [] : suggestion.sourceAttributes ?? [];
   const sourceColumn = sourceAttributes.length ? sourceAttributes.join(", ") : null;
   const inferredRuleType = suggestion.preprocessingRuleType?.trim() || null;
   const inferredRule = suggestion.preprocessingRule?.trim() || null;
@@ -1241,7 +1253,11 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
         : inferredRuleType || inferredRule || (sourceAttributes.length ? "Direct" : "Select...");
 
   mapping.mappingMode = mappingMode;
-  mapping.constantValue = mappingMode === "constant" ? suggestion.constantValue ?? null : null;
+  mapping.constantValue =
+    mappingMode === "constant" || mappingMode === "attribute"
+      ? suggestion.constantValue ?? null
+      : null;
+  mapping.attributeName = mappingMode === "attribute" ? suggestion.attributeName ?? null : null;
   mapping.sourceColumns = sourceAttributes;
   mapping.sourceColumn = sourceColumn;
   mapping.confidenceScore = suggestion.confidenceScore ?? 0;
@@ -1253,8 +1269,11 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
   mapping.usedLearningIds = suggestion.usedLearningIds ?? [];
   mapping.aiSuggestedRule = inferredRule;
   mapping.aiSuggestedRuleType = inferredRuleType;
-  mapping.rule = mappingMode === "constant" ? "Value" : nextRule;
-  mapping.expression = mappingMode === "constant" ? null : (shouldPersistExpression ? inferredRule : null);
+  mapping.rule = mappingMode === "constant" || mappingMode === "attribute" ? "Value" : nextRule;
+  mapping.expression =
+    mappingMode === "constant" || mappingMode === "attribute"
+      ? null
+      : (shouldPersistExpression ? inferredRule : null);
   mapping.nlRule = suggestion.preprocessingNlRule ?? mapping.nlRule ?? null;
   mapping.loadOrder =
     suggestion.processingOrder !== null && suggestion.processingOrder !== undefined
@@ -1275,9 +1294,10 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
   mapping.status =
     requiresReview
       ? "UNMAPPED"
-      : mappingMode === "constant" && mapping.constantValue !== null
-      ? "MAPPED"
-      : sourceAttributes.length > 0
+      : (mappingMode === "constant" && mapping.constantValue !== null)
+        || (mappingMode === "attribute" && Boolean(mapping.attributeName))
+        ? "MAPPED"
+        : sourceAttributes.length > 0
         ? "MAPPED"
         : "UNMAPPED";
 }
@@ -2154,8 +2174,9 @@ function applyAutoMapResponseToState(
       used_inference_ids?: string[];
       used_recommendation_ids?: string[];
       used_learning_ids?: string[];
-      mapping_mode?: "source" | "constant";
+      mapping_mode?: "source" | "constant" | "attribute";
       constant_value?: string | null;
+      attribute_name?: string | null;
       source_dependencies?: string[];
       value_binding_ids?: string[];
       transformation_classification?: string | null;
@@ -2192,6 +2213,7 @@ function applyAutoMapResponseToState(
       usedLearningIds: val?.used_learning_ids ?? [],
       mappingMode: val?.mapping_mode ?? "source",
       constantValue: val?.constant_value ?? null,
+      attributeName: val?.attribute_name ?? null,
       sourceDependencies: val?.source_dependencies ?? val?.source_attributes ?? [],
       valueBindingIds: val?.value_binding_ids ?? [],
       transformationClassification: val?.transformation_classification ?? null,
@@ -2242,6 +2264,7 @@ function applyAutoMapResponseToState(
       usedLearningIds: val?.used_learning_ids ?? [],
       mappingMode: val?.mapping_mode ?? "source",
       constantValue: val?.constant_value ?? null,
+      attributeName: val?.attribute_name ?? null,
       sourceDependencies: val?.source_dependencies ?? val?.source_attributes ?? [],
       valueBindingIds: val?.value_binding_ids ?? [],
       transformationClassification: val?.transformation_classification ?? null,
@@ -3146,6 +3169,7 @@ export const sendChatMessage = createAsyncThunk(
                     source_columns: m.sourceColumns ?? [],
                     mapping_mode: m.mappingMode ?? "source",
                     constant_value: m.constantValue ?? null,
+                    attribute_name: m.attributeName ?? null,
                     expression: m.expression,
                     rule: m.rule,
                     status: m.status,
@@ -5014,6 +5038,13 @@ export const sttmBuilderSlice = createSlice({
           const ruleRaw = String(row.rule ?? row.preprocessing_rule ?? row.PREPROCESSING_RULE ?? 'Direct') || 'Direct';
           const statusRaw = String(row.status ?? row.STATUS ?? '').toUpperCase();
           const confidenceRaw = row.confidence ?? row.CONFIDENCE;
+          const mappingModeRaw = String(row.mapping_mode ?? row.MAPPING_MODE ?? "source").toLowerCase();
+          const mappingMode =
+            mappingModeRaw === "constant"
+              ? "constant"
+              : mappingModeRaw === "attribute"
+                ? "attribute"
+                : "source";
           return {
             id: String(row.id ?? row.mapping_row_id ?? row.MAPPING_ROW_ID ?? row.attribute_id ?? ''),
             targetColumn: String(row.target_column ?? row.TARGET_COLUMN ?? row.ATTRIBUTE_NAME ?? ''),
@@ -5021,14 +5052,13 @@ export const sttmBuilderSlice = createSlice({
             sourceColumn: sourceColumns[0] ?? null,
             sourceType: null,
             sourceColumns,
-            mappingMode:
-              String(row.mapping_mode ?? row.MAPPING_MODE ?? "source").toLowerCase() === "constant"
-                ? "constant"
-                : "source",
+            mappingMode,
             constantValue:
               (row.constant_value ?? row.CONSTANT_VALUE ?? null) as string | null,
+            attributeName:
+              (row.attribute_name ?? row.ATTRIBUTE_NAME_ATTR ?? null) as string | null,
             expression:
-              String(row.mapping_mode ?? row.MAPPING_MODE ?? "source").toLowerCase() === "constant"
+              mappingMode === "constant" || mappingMode === "attribute"
                 ? null
                 : (row.expression ?? row.TRANSFORMATION_EXPR ?? row.TRANSFORMATION_LOGIC ?? null) as string | null,
             rule: ruleRaw as MappingRuleType,

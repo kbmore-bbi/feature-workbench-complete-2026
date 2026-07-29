@@ -140,6 +140,11 @@ export default function ProjectsPage() {
                   <ProjectCard
                     project={project}
                     onClick={() => router.push(`/mappings?project=${encodeURIComponent(project.id)}`)}
+                    onHardcodedValues={() =>
+                      router.push(
+                        `/attributes?project_id=${encodeURIComponent(project.id)}&project_name=${encodeURIComponent(project.name)}`,
+                      )
+                    }
                   />
                 </AiaBox>
               ))

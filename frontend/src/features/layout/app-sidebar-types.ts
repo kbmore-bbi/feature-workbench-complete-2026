@@ -30,6 +30,9 @@ export function resolveAppNavItem(pathname: string): AppNavItem | undefined {
   if (pathname === APP_NAV_ROUTES.Projects || pathname.startsWith(`${APP_NAV_ROUTES.Projects}/`)) {
     return "Projects";
   }
+  if (pathname === "/attributes" || pathname.startsWith("/attributes/")) {
+    return "Projects";
+  }
   if (pathname === APP_NAV_ROUTES.Mappings || pathname.startsWith(`${APP_NAV_ROUTES.Mappings}/`)) {
     return "Mappings";
   }

@@ -3,6 +3,7 @@
 import React, { useCallback, useMemo } from 'react';
 import { Autocomplete, TextField } from '@mui/material';
 import type { SxProps, Theme } from '@mui/material/styles';
+import { AiaChip } from './aia-chip';
 
 export interface AiaAutocompleteOption {
   label: string;
@@ -180,6 +181,7 @@ const AiaAutocomplete = ({
       disabled={disabled}
       fullWidth={fullWidth}
       groupBy={groupBy}
+      disableCloseOnSelect={multiple}
       getOptionLabel={(option) =>
         typeof option === 'string' ? option : option.label
       }
@@ -192,7 +194,7 @@ const AiaAutocomplete = ({
       onChange={handleChange}
       slotProps={{
         popper: {
-          sx: { zIndex: 1500 },
+          sx: { zIndex: 1600 },
         },
         paper: {
           sx: {
@@ -211,6 +213,25 @@ const AiaAutocomplete = ({
           },
         },
       }}
+      renderTags={
+        multiple
+          ? (tagValue, getTagProps) =>
+              tagValue.map((option, index) => {
+                const { key, ...tagProps } = getTagProps({ index });
+                const label = typeof option === 'string' ? option : option.label;
+                return (
+                  <AiaChip
+                    key={key}
+                    label={label}
+                    size="small"
+                    color="primary"
+                    onDelete={tagProps.onDelete}
+                    sx={{ m: '2px' }}
+                  />
+                );
+              })
+          : undefined
+      }
       renderInput={renderInput}
     />
   );

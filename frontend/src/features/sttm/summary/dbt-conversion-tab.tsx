@@ -152,8 +152,9 @@ function mapSummaryMappings(
     targetType: string;
     sourceColumn: string | null;
     sourceColumns?: string[];
-    mappingMode?: "source" | "constant";
+    mappingMode?: "source" | "constant" | "attribute";
     constantValue?: string | null;
+    attributeName?: string | null;
     expression: string | null;
     rule: string;
     status: string;
@@ -168,6 +169,7 @@ function mapSummaryMappings(
     source_columns: mapping.sourceColumns ?? [],
     mapping_mode: mapping.mappingMode ?? "source",
     constant_value: mapping.constantValue ?? null,
+    attribute_name: mapping.attributeName ?? null,
     expression: mapping.expression ?? null,
     rule: mapping.rule ?? null,
     status: mapping.status ?? null,

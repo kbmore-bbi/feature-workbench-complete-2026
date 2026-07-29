@@ -269,44 +269,50 @@ export default function AllMappingsPage() {
     openMappingInBuilder(dispatch, { sttmId: item.id, projectId: item.projectId });
   };
 
-  const handleBuildManually = async (details?: {
+  const handleBuildManually = async (details: {
     name: string;
     description: string;
     linkedMappingIds: string[];
+    projectId?: string;
   }) => {
-    if (projectFilter !== PROJECT_FILTER_ALL) {
-      if (!details?.name) return;
-      setIsNewMappingOpen(false);
-      setIsOpening(true);
-      try {
-        const sttm = await createProjectSttm(projectFilter, {
-          sttm_name: details.name,
-          description: details.description || null,
-          precedent_links: details.linkedMappingIds.map((sttmId, index) => ({
-            precedent_sttm_id: sttmId,
-            priority: Math.max(1, 100 - index),
-            knowledge_categories: [
-              'column_mapping',
-              'relationship',
-              'transformation',
-              'query_shaping',
-              'derived_lineage',
-            ],
-            allow_project_specific_values: false,
-          })),
-        });
-        dispatch(openSttmFromBackend({ sttmId: sttm.sttm_id, projectId: projectFilter }));
-      } catch (err) {
-        if (process.env.NODE_ENV === "development") {
-          console.warn("Failed to create STTM.", err);
-        }
-        setIsOpening(false);
-      }
-    } else {
-      setIsNewMappingOpen(false);
+    const targetProjectId = details.projectId?.trim();
+    if (!details.name.trim()) {
+      return;
+    }
+
+    setIsNewMappingOpen(false);
+
+    if (!targetProjectId) {
       markExplicitNewDraftIntent();
       dispatch(resetBuilderForNewMapping());
       router.push("/sttm/builder/new");
+      return;
+    }
+
+    setIsOpening(true);
+    try {
+      const sttm = await createProjectSttm(targetProjectId, {
+        sttm_name: details.name,
+        description: details.description || null,
+        precedent_links: details.linkedMappingIds.map((sttmId, index) => ({
+          precedent_sttm_id: sttmId,
+          priority: Math.max(1, 100 - index),
+          knowledge_categories: [
+            "column_mapping",
+            "relationship",
+            "transformation",
+            "query_shaping",
+            "derived_lineage",
+          ],
+          allow_project_specific_values: false,
+        })),
+      });
+      dispatch(openSttmFromBackend({ sttmId: sttm.sttm_id, projectId: targetProjectId }));
+    } catch (err) {
+      if (process.env.NODE_ENV === "development") {
+        console.warn("Failed to create STTM.", err);
+      }
+      setIsOpening(false);
     }
   };
 
@@ -539,6 +545,7 @@ export default function AllMappingsPage() {
         onClose={() => setIsNewMappingOpen(false)}
         onBuildManually={handleBuildManually}
         projectId={projectFilter !== PROJECT_FILTER_ALL ? projectFilter : undefined}
+        projectOptions={projectOptions.filter((option) => option.value !== PROJECT_FILTER_ALL)}
         precedentMappings={mappingRows
           .filter((mapping) => mapping.status === "Complete")
           .map((mapping) => ({

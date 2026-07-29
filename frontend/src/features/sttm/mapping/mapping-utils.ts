@@ -1,4 +1,4 @@
-import type { ColumnGroup, DerivedSource, MappingState } from '@/features/sttm/types/sttm.types';
+import type { ColumnGroup, DerivedSource, MappingMode, MappingState } from '@/features/sttm/types/sttm.types';
 import type { RelationGraphContext, RelationshipContextItem, TableRef } from '@/types/api-contract';
 import type { JoinConfig } from '@/features/sttm/types/sttm.types';
 
@@ -80,7 +80,11 @@ export function buildCompilerRelationGraph(params: {
     }))
     .filter((edge) => edge.conditions.length > 0);
   const value_bindings = mappings
-    .filter((mapping) => mapping.mappingMode === 'constant' && mapping.constantValue != null)
+    .filter(
+      (mapping) =>
+        (mapping.mappingMode === 'constant' || mapping.mappingMode === 'attribute')
+        && mapping.constantValue != null,
+    )
     .map((mapping) => {
       const placeholder = String(mapping.constantValue).trim().startsWith('$');
       return {
@@ -225,9 +229,19 @@ function applyPreviewTransform(
   }
 }
 
+export function parseMappingMode(value: unknown): MappingMode {
+  const mode = String(value ?? "source").toLowerCase();
+  if (mode === "constant") return "constant";
+  if (mode === "attribute") return "attribute";
+  return "source";
+}
+
 export function getMappingSourceColumnLabel(mapping: MappingState): string | null {
   if (mapping.mappingMode === "constant") {
     return mapping.constantValue?.trim() || null;
+  }
+  if (mapping.mappingMode === "attribute") {
+    return mapping.attributeName?.trim() || null;
   }
   const sourceColumns =
     mapping.sourceColumns && mapping.sourceColumns.length
@@ -261,13 +275,13 @@ function toSafePreviewText(value: unknown, maxLength = 160): string | null {
 }
 
 export function buildMappingDataPreview(mapping: MappingState): MappingDataPreviewResult {
-  if (mapping.mappingMode === "constant") {
+  if (mapping.mappingMode === "constant" || mapping.mappingMode === "attribute") {
     const constantValue = toSafePreviewText(mapping.constantValue);
     return {
       sourceValue: constantValue,
       transformedValue: constantValue,
       displayValue: constantValue,
-      ruleLabel: "VALUE",
+      ruleLabel: mapping.mappingMode === "attribute" ? "ATTRIBUTE" : "VALUE",
       hasTransform: true,
     };
   }
@@ -693,7 +707,7 @@ export function buildResolvedMappingExpression(
     derivedSources?: DerivedSource[];
   },
 ) {
-  if (mapping.mappingMode === "constant") {
+  if (mapping.mappingMode === "constant" || mapping.mappingMode === "attribute") {
     return buildSnowflakeConstantExpression(mapping.constantValue, mapping.targetType);
   }
   const sourceColumns =

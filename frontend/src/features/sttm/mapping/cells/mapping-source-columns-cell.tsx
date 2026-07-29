@@ -9,6 +9,8 @@ import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 import { aiaTableCellSx } from '@/components/ui/aia-table';
 import { AiaAutocomplete } from '@/components/ui/aia-auto-complete';
 import type { AiaAutocompleteOption } from '@/components/ui/aia-auto-complete';
+import { AiaSelect } from '@/components/ui/aia-select';
+import type { MappingMode } from '@/features/sttm/types/sttm.types';
 import {
   MAPPING_TABLE_BODY_TEXT_SX,
   MAPPING_TABLE_SECONDARY_INPUT_SX,
@@ -19,10 +21,13 @@ type MappingSourceColumnsCellProps = {
   value: string | null;
   options: AiaAutocompleteOption[];
   onChange: (value: string) => void;
-  mappingMode?: "source" | "constant";
+  mappingMode?: MappingMode;
   constantValue?: string | null;
-  onMappingModeChange?: (mode: "source" | "constant") => void;
+  attributeName?: string | null;
+  attributeOptions?: Array<{ label: string; value: string }>;
+  onMappingModeChange?: (mode: MappingMode) => void;
   onConstantValueChange?: (value: string) => void;
+  onAttributeChange?: (attributeName: string) => void;
   disabled?: boolean;
   displayAsPlainText?: boolean;
   width?: number | string;
@@ -132,8 +137,11 @@ export const MappingSourceColumnsCell = ({
   onChange,
   mappingMode = "source",
   constantValue,
+  attributeName,
+  attributeOptions = [],
   onMappingModeChange,
   onConstantValueChange,
+  onAttributeChange,
   disabled = false,
   displayAsPlainText = false,
   width,
@@ -206,11 +214,22 @@ export const MappingSourceColumnsCell = ({
     </AiaBox>
   ) : null;
 
+  const modeToggleSx = {
+    minHeight: 26,
+    px: 1,
+    borderRadius: "6px",
+    textTransform: "none",
+    fontSize: "0.7rem",
+    boxShadow: "none",
+  } as const;
+
   if (displayAsPlainText) {
     const displayValue =
       mappingMode === "constant"
         ? constantValue?.trim() ?? ""
-        : value?.trim() ?? '';
+        : mappingMode === "attribute"
+          ? attributeName?.trim() ?? ""
+          : value?.trim() ?? '';
 
     return (
       <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx })}>
@@ -236,7 +255,9 @@ export const MappingSourceColumnsCell = ({
           >
             {displayValue || (mappingMode === "constant"
               ? "Enter a hard-coded value..."
-              : "Use Pre-process to add source columns...")}
+              : mappingMode === "attribute"
+                ? "Select a project attribute..."
+                : "Use Pre-process to add source columns...")}
           </AiaText>
 
           <ConfidenceMeta confidenceScore={confidenceScore} helperText={tooltipContent ?? ''} />
@@ -248,19 +269,12 @@ export const MappingSourceColumnsCell = ({
   return (
     <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx }, { overflow: 'hidden' })}>
       <AiaBox sx={{ display: 'grid', gap: 0.55 }}>
-        <AiaBox sx={{ display: "flex", alignItems: "center", gap: 0.5 }}>
+        <AiaBox sx={{ display: "flex", alignItems: "center", gap: 0.5, flexWrap: "wrap" }}>
           <AiaButton
             size="small"
             variant={mappingMode === "source" ? "contained" : "text"}
             onClick={() => onMappingModeChange?.("source")}
-            sx={{
-              minHeight: 26,
-              px: 1,
-              borderRadius: "6px",
-              textTransform: "none",
-              fontSize: "0.7rem",
-              boxShadow: "none",
-            }}
+            sx={modeToggleSx}
           >
             Column
           </AiaButton>
@@ -268,16 +282,17 @@ export const MappingSourceColumnsCell = ({
             size="small"
             variant={mappingMode === "constant" ? "contained" : "text"}
             onClick={() => onMappingModeChange?.("constant")}
-            sx={{
-              minHeight: 26,
-              px: 1,
-              borderRadius: "6px",
-              textTransform: "none",
-              fontSize: "0.7rem",
-              boxShadow: "none",
-            }}
+            sx={modeToggleSx}
           >
             Value
+          </AiaButton>
+          <AiaButton
+            size="small"
+            variant={mappingMode === "attribute" ? "contained" : "text"}
+            onClick={() => onMappingModeChange?.("attribute")}
+            sx={modeToggleSx}
+          >
+            Attribute
           </AiaButton>
         </AiaBox>
         <AiaBox
@@ -302,6 +317,25 @@ export const MappingSourceColumnsCell = ({
                     minHeight: 38,
                     borderRadius: "6px",
                     backgroundColor: "#fff",
+                  },
+                }}
+              />
+            ) : mappingMode === "attribute" ? (
+              <AiaSelect
+                label=""
+                fullWidth
+                size="small"
+                value={attributeName ?? ""}
+                options={attributeOptions}
+                placeholder="Select attribute..."
+                onChange={(next) => onAttributeChange?.(Array.isArray(next) ? next[0] ?? "" : next)}
+                sx={{
+                  ...MAPPING_TABLE_SECONDARY_INPUT_SX,
+                  "& .MuiOutlinedInput-root": {
+                    ...MAPPING_TABLE_SECONDARY_INPUT_TYPOGRAPHY,
+                    minHeight: 38,
+                    borderRadius: "6px",
+                    bgcolor: attributeOptions.length === 0 ? DISABLED_SOURCE_FIELD_BG : "#fff",
                   },
                 }}
               />

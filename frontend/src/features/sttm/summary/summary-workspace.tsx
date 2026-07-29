@@ -569,6 +569,7 @@ export function SummaryWorkspace() {
               : parseSourceColumns(mapping.sourceColumn),
           mapping_mode: mapping.mappingMode ?? "source",
           constant_value: mapping.constantValue ?? null,
+          attribute_name: mapping.attributeName ?? null,
           expression: mapping.expression,
           rule: mapping.rule,
           status: mapping.status,

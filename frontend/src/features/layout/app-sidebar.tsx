@@ -262,11 +262,14 @@ export default function AppSidebar({
             router.replace(APP_NAV_ROUTES.Dashboard);
           }
         }}
-        onBuildManually={(_details) => {
+        onBuildManually={(details) => {
           setIsNewMappingOpen(false);
           markExplicitNewDraftIntent();
           dispatch(resetBuilderForNewMapping());
-          router.push("/sttm/builder/new");
+          const query = details.projectId
+            ? `?project_id=${encodeURIComponent(details.projectId)}`
+            : "";
+          router.push(`/sttm/builder/new${query}`);
         }}
       />
     </>

@@ -290,8 +290,13 @@ $autoMappingWorkerConcurrency = if ($cfg.ContainsKey("AUTO_MAPPING_WORKER_MAX_CO
 $autoMappingProxyBatchSize = if ($cfg.ContainsKey("AUTO_MAPPING_PROXY_BATCH_SIZE") -and $cfg["AUTO_MAPPING_PROXY_BATCH_SIZE"]) { $cfg["AUTO_MAPPING_PROXY_BATCH_SIZE"] } else { "17" }
 $autoMappingProxyMaxInFlight = if ($cfg.ContainsKey("AUTO_MAPPING_PROXY_MAX_IN_FLIGHT") -and $cfg["AUTO_MAPPING_PROXY_MAX_IN_FLIGHT"]) { $cfg["AUTO_MAPPING_PROXY_MAX_IN_FLIGHT"] } else { "2" }
 $autoMapPipelineV2 = if ($cfg.ContainsKey("AUTO_MAP_PIPELINE_V2") -and $cfg["AUTO_MAP_PIPELINE_V2"]) { $cfg["AUTO_MAP_PIPELINE_V2"] } else { "false" }
-$agentSpecSourceMappingSha256 = if ($cfg.ContainsKey("AGENT_SPEC_SOURCE_MAPPING_SHA256") -and $cfg["AGENT_SPEC_SOURCE_MAPPING_SHA256"]) { $cfg["AGENT_SPEC_SOURCE_MAPPING_SHA256"] } else { "b3a312d41aeff743a62522e7595098f9e61d9c0fd3735deb530feceb8cac91b3" }
-$agentSpecTransformationRuleSha256 = if ($cfg.ContainsKey("AGENT_SPEC_TRANSFORMATION_RULE_SHA256") -and $cfg["AGENT_SPEC_TRANSFORMATION_RULE_SHA256"]) { $cfg["AGENT_SPEC_TRANSFORMATION_RULE_SHA256"] } else { "216ce641971e55b921462f26e117ec08479505d232f64bb1107fc926c3b4a999" }
+$sourceMappingSpec = Join-Path $RootDir "infra\snowflake\agents\agent_spec_source_mapping.yaml"
+$transformationRuleSpec = Join-Path $RootDir "infra\snowflake\agents\agent_spec_transformation_rule.yaml"
+if (-not (Test-Path $sourceMappingSpec) -or -not (Test-Path $transformationRuleSpec)) {
+    throw "Agent specification files are missing from the extracted release."
+}
+$agentSpecSourceMappingSha256 = (Get-FileHash -Algorithm SHA256 $sourceMappingSpec).Hash.ToLowerInvariant()
+$agentSpecTransformationRuleSha256 = (Get-FileHash -Algorithm SHA256 $transformationRuleSpec).Hash.ToLowerInvariant()
 
 if ($deployAutomap) {
     $autoMappingServiceNameDns = Convert-ToDnsLabel $cfg["AUTO_MAPPING_SERVICE_NAME"]

@@ -55,6 +55,9 @@ instructions:
        connecting path. Reject unresolved identifiers and disconnected dependencies.
     10. Return exactly one attribute-level expression. Reject SELECT, WITH, FROM, JOIN, WHERE,
         QUALIFY, GROUP BY, HAVING, and ORDER BY at any nesting level.
+    11. A project-scoped value binding is a governed dependency. Reference its compiler binding
+        placeholder exactly; never inline resolved_value, copy another project's literal, or
+        reinterpret it as a physical source column.
 
     ## Tool use rules
     - Normal web-app requests must not call metadata/profiling/semantic tools. The backend

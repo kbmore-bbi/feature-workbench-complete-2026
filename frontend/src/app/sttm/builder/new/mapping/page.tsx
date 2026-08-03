@@ -49,6 +49,8 @@ import type {
   TableRef,
 } from '@/types/api-contract';
 import type { JoinConfig, MappingState } from '@/features/sttm/types/sttm.types';
+import type { SqlUploadResult } from '@/features/sttm/mapping/sql-bundle-review-panel';
+import { buildSqlUploadWorkspace } from '@/features/sttm/mapping/sql-upload-workspace';
 
 type MappingTab = 'mapping' | 'sql-preview' | 'data-preview' | 'data-lineage';
 
@@ -272,6 +274,7 @@ function MappingPageContent() {
     sources,
     targets,
     loadState,
+    errorState,
     relationships,
     derivedSources,
     drivingTableId,
@@ -299,6 +302,24 @@ function MappingPageContent() {
     setCompiledMappingResult,
     applyParsedSqlWorkspace,
   } = useSttmBuilderContext();
+  const uploadHydratedRef = useRef(false);
+
+  useEffect(() => {
+    if (uploadHydratedRef.current || loadState.initial !== 'success') return;
+    const raw = sessionStorage.getItem('upload_parsed_data');
+    if (!raw) return;
+    let uploaded: SqlUploadResult;
+    try {
+      uploaded = JSON.parse(raw) as SqlUploadResult;
+    } catch {
+      sessionStorage.removeItem('upload_parsed_data');
+      return;
+    }
+    applyParsedSqlWorkspace(buildSqlUploadWorkspace(uploaded));
+    uploadHydratedRef.current = true;
+    sessionStorage.removeItem('upload_parsed_data');
+    refreshAssistantSignals('sql.upload.applied');
+  }, [applyParsedSqlWorkspace, loadState.initial, refreshAssistantSignals]);
 
   const hasSelectedSources = useMemo(
     () => sources.some((table) => table.isSelected),
@@ -319,14 +340,23 @@ function MappingPageContent() {
     () => (targetAttributeGroup?.columns?.filter((col) => col.name).length ?? 0) > 0,
     [targetAttributeGroup],
   );
+  const selectedTargetQualifiedNameForHydration =
+    targets.find((table) => table.isSelected)?.qualifiedName ?? null;
+  const selectedTargetMetadataLoaded = Boolean(
+    selectedTargetQualifiedNameForHydration
+    && targetAttributeGroup?.qualifiedName === selectedTargetQualifiedNameForHydration
+    && hasTargetColumns,
+  );
+  const isSavedWorkspace = Boolean(activeProjectId && activeSttmId);
 
   const savedWorkspaceHydrating =
     !sessionHydrated ||
     openSttmStatus === 'loading' ||
-    (Boolean(activeProjectId && activeSttmId) &&
+    (isSavedWorkspace &&
       (openSttmStatus !== 'success' ||
-        loadState.attributes === 'idle' ||
-        loadState.attributes === 'loading'));
+        (!selectedTargetMetadataLoaded &&
+          loadState.attributes !== 'error' &&
+          !errorState.attributes)));
 
   const totalCount = mappings.length;
   const mappedCount = mappings.filter((m) => m.status === 'MAPPED').length;
@@ -391,13 +421,17 @@ function MappingPageContent() {
       return;
     }
 
-    if (!hasTargetColumns) {
+    // A saved mapping already has durable mapping rows. Do not send it back to
+    // Selection simply because source metadata completed before target metadata.
+    // The selected-target hydration effect will populate the target group.
+    if (!hasTargetColumns && !isSavedWorkspace) {
       router.replace('/sttm/builder/new');
     }
   }, [
     hasSelectedInputs,
     hasSelectedTarget,
     hasTargetColumns,
+    isSavedWorkspace,
     loadState.attributes,
     router,
     savedWorkspaceHydrating,
@@ -789,7 +823,7 @@ function MappingPageContent() {
       : compiledMappingContextHash === compilerContextHash && compiledMappingPreviewSql.trim()
         ? compiledMappingPreviewSql
         : compiledSql?.preview_sql ?? previewSql),
-    [compiledMappingContextHash, compiledMappingPreviewSql, compiledSql, compilerContextHash, compilerError, mappingSql, previewSql],
+    [compiledMappingContextHash, compiledMappingPreviewSql, compiledSql, compilerContextHash, mappingSql, previewSql],
   );
 
   const canonicalOrGeneratedExecutionSql = useMemo(
@@ -798,7 +832,7 @@ function MappingPageContent() {
       : compiledMappingContextHash === compilerContextHash && compiledMappingSql.trim()
         ? compiledMappingSql
         : compiledSql?.generated_sql ?? generatedInsertSql),
-    [compiledMappingContextHash, compiledMappingSql, compiledSql, compilerContextHash, compilerError, generatedInsertSql, mappingSql],
+    [compiledMappingContextHash, compiledMappingSql, compiledSql, compilerContextHash, generatedInsertSql, mappingSql],
   );
 
   useEffect(() => {
@@ -1287,6 +1321,34 @@ function MappingPageContent() {
     }
   };
 
+  const handleAiSqlRepair = useCallback(async () => {
+    setReviewLoading(true);
+    setReviewError(null);
+    setReviewStage('AI is repairing the syntax and Snowflake will validate the candidate...');
+    try {
+      const result = await dbService.reviewMappingSql({
+        ...mappingSqlRequestPayload,
+        attempt_ai_repair: true,
+      });
+      setReviewResult(result);
+      setReviewSelectionVariant(result.requires_approval ? 'original' : null);
+      if (result.optimized_preview_sql) {
+        setApprovedPreviewSql(result.original_preview_sql);
+        setMappingPreviewSql(result.original_preview_sql);
+        setMappingSqlVariant('original');
+        setReviewDialogOpen(true);
+        setReviewStage('AI prepared a repair that passed Snowflake validation. Compare and approve it.');
+      } else {
+        setReviewStage(result.review_summary || 'AI could not produce a safe validated repair.');
+      }
+    } catch (error) {
+      setReviewError(error instanceof Error ? error.message : 'Unable to generate an AI SQL repair.');
+      setReviewStage('AI SQL repair failed. The current SQL was not changed.');
+    } finally {
+      setReviewLoading(false);
+    }
+  }, [mappingSqlRequestPayload, setMappingPreviewSql, setMappingSqlVariant]);
+
   const handleApproveReviewedSql = useCallback(async (variant: 'original' | 'optimized') => {
     if (!reviewResult) {
       setReviewDialogOpen(false);
@@ -1590,6 +1652,16 @@ function MappingPageContent() {
                         <AiaButton color="inherit" size="small" sx={{ textTransform: 'none', fontWeight: 700 }} onClick={() => setReviewDialogOpen(true)}>
                           Compare repair
                         </AiaButton>
+                      ) : option.action === 'request_ai_repair' ? (
+                        <AiaButton
+                          color="inherit"
+                          size="small"
+                          disabled={reviewLoading}
+                          sx={{ textTransform: 'none', fontWeight: 700 }}
+                          onClick={() => { void handleAiSqlRepair(); }}
+                        >
+                          {reviewLoading ? 'Repairing…' : 'Fix with AI'}
+                        </AiaButton>
                       ) : option.action === 'open_mapping' ? (
                         <AiaButton color="inherit" size="small" sx={{ textTransform: 'none', fontWeight: 700 }} onClick={() => setActiveTab('mapping')}>
                           Open mapping
@@ -1619,6 +1691,7 @@ function MappingPageContent() {
     reviewSelectionVariant,
     reviewStage,
     handleApproveReviewedSql,
+    handleAiSqlRepair,
   ]);
 
   return (

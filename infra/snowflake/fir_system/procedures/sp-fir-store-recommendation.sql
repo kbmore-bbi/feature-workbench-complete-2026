@@ -226,6 +226,11 @@ def store_recommendation(
 
     # Parse JSON string parameters
     payload_parsed = _parse_json_safe(agent_payload) or {}
+    bundle_version_id = str(
+        payload_parsed.get('bundle_version_id')
+        or (payload_parsed.get('bundle_curation') or {}).get('bundle_version_id')
+        or ''
+    ).strip()
     options_parsed = _parse_json_safe(display_options)
     projects_parsed = _parse_json_safe(applicable_projects)
     tables_parsed = _parse_json_safe(applicable_tables)
@@ -389,6 +394,7 @@ def store_recommendation(
     columns_json = json.dumps(columns_parsed) if columns_parsed else ''
     schemas_json = json.dumps(schemas_parsed) if schemas_parsed else ''
     action_contract_json = json.dumps(action_contract_parsed) if action_contract_parsed else ''
+    recommendation_status = 'draft' if bundle_version_id else 'active'
 
     session.sql("""
         INSERT INTO __STTM_METADATA_NAMESPACE__.TBL_FIR_AGENT_RECOMMENDATIONS (
@@ -397,7 +403,7 @@ def store_recommendation(
             AGENT_PAYLOAD, APPLICABLE_PROJECTS, APPLICABLE_TABLES, APPLICABLE_COLUMNS,
             APPLICABLE_SCHEMAS, SCOPE_TYPE, SCOPE_KEY, RECOMMENDATION_CATEGORY,
             ACTION_CONTRACT, GROUP_KEY, CONTENT_VERSION, SUPERSEDES_RECOMMENDATION_ID,
-            EVIDENCE_SUMMARY,
+            EVIDENCE_SUMMARY, BUNDLE_VERSION_ID,
             CONFIDENCE, USAGE_COUNT, SUCCESS_COUNT, LAST_USED_AT,
             CREATED_AT, UPDATED_AT, STATUS,
             AGENT_NOTES, DISPLAY_MESSAGE, DISPLAY_OPTIONS, NOTIFICATION_LAYER,
@@ -409,8 +415,9 @@ def store_recommendation(
             NULL, ?, ?,
             PARSE_JSON(?), TRY_PARSE_JSON(?), TRY_PARSE_JSON(?), TRY_PARSE_JSON(?),
             TRY_PARSE_JSON(?), ?, ?, ?, TRY_PARSE_JSON(?), ?, ?, ?, ?,
+            NULLIF(?, ''),
             ?, 0, 0, NULL,
-            CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), 'active',
+            CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), ?,
             ?, ?, TRY_PARSE_JSON(?), ?,
             ?, '2.0', ?, ?, ?, ?, ?, PARSE_JSON(?), ?
     """, [
@@ -419,8 +426,8 @@ def store_recommendation(
         json.dumps(payload_parsed), projects_json, tables_json, columns_json,
         schemas_json, scope_type, scope_key, recommendation_category,
         action_contract_json, group_key, max(1, int(content_version or 1)),
-        supersedes_recommendation_id, evidence_summary,
-        confidence,
+        supersedes_recommendation_id, evidence_summary, bundle_version_id,
+        confidence, recommendation_status,
         agent_notes, display_message, options_json, notification_layer,
         context_key, source_set_hash, target_fqn, derived_set_hash, milestone,
         question_id, json.dumps(evidence_parsed), validation_status

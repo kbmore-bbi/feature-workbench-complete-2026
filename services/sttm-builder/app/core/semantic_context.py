@@ -94,8 +94,47 @@ class SemanticContextService:
         self._bundle_table = settings.qualify_table_name(settings.snowflake_semantic_bundles_table)
         self._overrides_table = settings.qualify_table_name(settings.snowflake_semantic_overrides_table)
         self._projection_table = settings.qualify_table_name(settings.snowflake_semantic_projections_table)
+        self._bundle_versions_table = settings.qualify_metadata_object_name(
+            "TBL_SEMANTIC_BUNDLE_VERSIONS"
+        )
         effective_scope = access_scope if access_scope != "default" else f"session:{id(session)}"
         self._access_fingerprint = hashlib.sha256(effective_scope.encode("utf-8")).hexdigest()
+
+    def _active_curation_overlay(self, bundle_id: str) -> dict[str, Any]:
+        """Return the promoted mapping overlay without making bundle refresh brittle."""
+        try:
+            rows = self._session.sql(
+                f"""
+                SELECT BUNDLE_VERSION_ID, MAPPING_SEMANTICS, KNOWLEDGE_GRAPH,
+                       VALIDATION_SUMMARY
+                FROM {self._bundle_versions_table}
+                WHERE SEMANTIC_BUNDLE_ID = ? AND STATUS = 'active'
+                ORDER BY PROMOTED_AT DESC, UPDATED_AT DESC
+                LIMIT 1
+                """,
+                [bundle_id],
+            ).collect()
+        except Exception as exc:
+            logger.debug("No active bundle curation overlay for %s: %s", bundle_id, exc)
+            return {}
+        if not rows:
+            return {}
+        row = rows[0].as_dict() if hasattr(rows[0], "as_dict") else dict(rows[0])
+        return {
+            "active_bundle_curation_version": row.get("BUNDLE_VERSION_ID"),
+            "curated_mapping_overlay": _variant_to_python(
+                row.get("MAPPING_SEMANTICS")
+            )
+            or [],
+            "curated_knowledge_graph": _variant_to_python(
+                row.get("KNOWLEDGE_GRAPH")
+            )
+            or {},
+            "curation_validation_summary": _variant_to_python(
+                row.get("VALIDATION_SUMMARY")
+            )
+            or {},
+        }
 
     def refresh_bundle(
         self,
@@ -468,13 +507,15 @@ class SemanticContextService:
             datahub_context=datahub_context,
             reading_instructions=reading_instructions,
         )
+        bundle_artifact = response.model_dump(mode="json")
+        curation_overlay = self._active_curation_overlay(bundle_id)
+        if curation_overlay:
+            bundle_artifact.update(curation_overlay)
         try:
-            self._session.sql(
-                f"UPDATE {self._bundle_table} "
-                f"SET BUNDLE_ARTIFACT = PARSE_JSON({_json_literal(response.model_dump(mode='json'))}), "
-                "UPDATED_AT = CURRENT_TIMESTAMP() "
-                f"WHERE SEMANTIC_BUNDLE_ID = {_quote_literal(bundle_id)}"
-            ).collect()
+            self._persist_bundle_artifact(
+                bundle_id=bundle_id,
+                bundle_artifact=bundle_artifact,
+            )
         except Exception as exc:
             logger.warning("Failed to persist semantic bundle artifact %s: %s", bundle_id, exc)
         cached_record = {
@@ -494,7 +535,7 @@ class SemanticContextService:
             "derived_semantics": derived_semantics,
             "excluded_relationships": excluded_relationships,
             "composition_diagnostics": composition_diagnostics,
-            "bundle_artifact": response.model_dump(mode="json"),
+            "bundle_artifact": bundle_artifact,
             "updated_at": datetime.now(timezone.utc),
             "status": status.value,
             "stale_reason": "; ".join(notes) or None,
@@ -505,6 +546,26 @@ class SemanticContextService:
                 copy.deepcopy(cached_record),
             )
         return response
+
+    def _persist_bundle_artifact(
+        self,
+        *,
+        bundle_id: str,
+        bundle_artifact: dict[str, Any],
+    ) -> None:
+        """Persist composed bundle JSON without interpolating JSON into SQL."""
+        self._session.sql(
+            f"""
+            UPDATE {self._bundle_table}
+            SET BUNDLE_ARTIFACT = PARSE_JSON(?),
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE SEMANTIC_BUNDLE_ID = ?
+            """,
+            params=[
+                json.dumps(bundle_artifact, default=str),
+                bundle_id,
+            ],
+        ).collect()
 
     def _legacy_refresh_bundle(
         self,
@@ -1061,7 +1122,7 @@ class SemanticContextService:
                         {_quote_literal(str(projection.get("semantic_bundle_id") or ""))} AS SEMANTIC_BUNDLE_ID,
                         {_quote_literal(str(projection.get("bundle_hash") or ""))} AS BUNDLE_HASH,
                         {_quote_literal(str(projection.get("projection_hash") or ""))} AS PROJECTION_HASH,
-                        PARSE_JSON({_json_literal(projection.get("payload") or {})}) AS PROJECTION_PAYLOAD
+                        PARSE_JSON(?) AS PROJECTION_PAYLOAD
                 ) AS source
                 ON target.PROJECTION_KEY = source.PROJECTION_KEY
                 WHEN MATCHED THEN UPDATE SET
@@ -1093,7 +1154,10 @@ class SemanticContextService:
                     CURRENT_TIMESTAMP(),
                     CURRENT_TIMESTAMP()
                 )
-                """
+                """,
+                params=[
+                    json.dumps(projection.get("payload") or {}, default=str),
+                ],
             ).collect()
         except Exception as exc:  # pragma: no cover - projection cache is best-effort
             logger.warning("Failed to cache semantic projection %s: %s", projection.get("projection_id"), exc)
@@ -3556,10 +3620,6 @@ def _dedupe_tables(tables: Iterable[TableRef]) -> list[TableRef]:
 
 def _quote_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
-
-
-def _json_literal(value: Any) -> str:
-    return _quote_literal(json.dumps(value, default=str))
 
 
 def _variant_to_python(value: Any) -> Any:

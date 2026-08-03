@@ -1,5 +1,11 @@
 import { API_ROUTES } from "@/api/routes";
-import { buildApiEnvelope, getApiData, postEnvelopeData } from "@/api/axiosInstance";
+import {
+  buildApiEnvelope,
+  deleteApiData,
+  getApiData,
+  postEnvelopeData,
+  putEnvelopeData,
+} from "@/api/axiosInstance";
 import { getProjectColorById, PROJECT_COLOR_OPTIONS } from "@/features/projects/project-color-options";
 import type { ProjectItem, ProjectPerson } from "@/features/projects/projects-data";
 
@@ -82,6 +88,23 @@ export type STTMPublishPayload = {
 export type ProjectsSummary = {
   projects: ProjectRecord[];
   sttms: STTMRecord[];
+};
+
+export type ProjectAttributeRecord = {
+  attribute_id: string;
+  project_id: string;
+  project_name?: string | null;
+  attribute_name: string;
+  attribute_type: string;
+  attribute_value: string;
+  source_project_id?: string | null;
+  source_project_name?: string | null;
+  source_attribute_id?: string | null;
+  status: string;
+  created_by?: string | null;
+  updated_by?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
 };
 
 const PROJECT_METADATA_CACHE_TTL_MS = 30_000;
@@ -317,6 +340,63 @@ export async function listProjectSttms(projectId: string): Promise<STTMRecord[]>
     skipGlobalError: true,
     timeout: 15000,
   });
+}
+
+export async function listProjectAttributes(projectId: string): Promise<ProjectAttributeRecord[]> {
+  return getApiData<ProjectAttributeRecord[]>(API_ROUTES.projects.attributes(projectId), {
+    skipGlobalError: true,
+    timeout: 30000,
+  });
+}
+
+export async function createProjectAttribute(
+  projectId: string,
+  payload: { attribute_name: string; attribute_type: string; attribute_value: string },
+): Promise<ProjectAttributeRecord> {
+  return postEnvelopeData<ProjectAttributeRecord>(
+    API_ROUTES.projects.attributes(projectId),
+    buildApiEnvelope("projects.attributes.create", payload, { project_id: projectId }),
+  );
+}
+
+export async function updateProjectAttribute(
+  projectId: string,
+  attributeId: string,
+  payload: {
+    attribute_name?: string;
+    attribute_type?: string;
+    attribute_value?: string;
+    status?: "ACTIVE" | "INACTIVE";
+  },
+): Promise<ProjectAttributeRecord> {
+  return putEnvelopeData<ProjectAttributeRecord>(
+    API_ROUTES.projects.attribute(projectId, attributeId),
+    buildApiEnvelope("projects.attributes.update", payload, {
+      project_id: projectId,
+      attribute_id: attributeId,
+    }),
+  );
+}
+
+export async function deleteProjectAttribute(
+  projectId: string,
+  attributeId: string,
+): Promise<void> {
+  await deleteApiData(API_ROUTES.projects.attribute(projectId, attributeId));
+}
+
+export async function importProjectAttributes(
+  projectId: string,
+  payload: {
+    source_project_id: string;
+    attribute_ids: string[];
+    overwrite_existing?: boolean;
+  },
+): Promise<ProjectAttributeRecord[]> {
+  return postEnvelopeData<ProjectAttributeRecord[]>(
+    API_ROUTES.projects.importAttributes(projectId),
+    buildApiEnvelope("projects.attributes.import", payload, { project_id: projectId }),
+  );
 }
 
 /**

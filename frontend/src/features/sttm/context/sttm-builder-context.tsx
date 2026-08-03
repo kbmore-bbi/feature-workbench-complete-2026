@@ -193,7 +193,7 @@ function persistBrowserWorkspace(
 }
 
 // Debounce times for different state categories
-const CRITICAL_STATE_DEBOUNCE_MS = 250;    // mappings, relationships, sources/targets
+const CRITICAL_STATE_DEBOUNCE_MS = 1500;   // mappings, relationships, sources/targets
 const NON_CRITICAL_STATE_DEBOUNCE_MS = 5000; // chat, semantic context
 const SELECTION_METADATA_DEBOUNCE_MS = 750;
 const PREPARED_CONTEXT_DEBOUNCE_MS = 750;
@@ -270,6 +270,7 @@ export function SttmBuilderProvider({
   const selectionMetadataTimerRef = useRef<number | null>(null);
   const semanticPrefetchTimerRef = useRef<number | null>(null);
   const backendAutosaveInFlightRef = useRef(false);
+  const lastBackendAutosaveSignatureRef = useRef<string | null>(null);
   const pendingBackendAutosaveRef = useRef<{
     sttmId: string;
     payload: Parameters<typeof autosaveSttm>[1];
@@ -292,6 +293,7 @@ export function SttmBuilderProvider({
         try {
           await autosaveSttm(pending.sttmId, pending.payload);
         } catch (error) {
+          lastBackendAutosaveSignatureRef.current = null;
           console.warn("Unable to autosave the active STTM workspace.", error);
         }
       }
@@ -330,7 +332,12 @@ export function SttmBuilderProvider({
         // Authentication errors are handled by the normal database bootstrap.
       }
       if (cancelled) return;
-      const explicitNewDraft = isNewSession && consumeExplicitNewDraftIntent();
+      // Uploads navigate directly to /sttm/builder/new/mapping. Consume the
+      // explicit-new marker anywhere under the new-builder route so an old
+      // backend workspace pointer cannot hydrate over the uploaded preview.
+      const explicitNewDraft =
+        pathname.startsWith("/sttm/builder/new") &&
+        consumeExplicitNewDraftIntent();
       if (explicitNewDraft) {
         window.localStorage.removeItem(getActiveWorkspacePointerKey(userId));
       }
@@ -706,6 +713,7 @@ export function SttmBuilderProvider({
   const latestPersistedSessionRef = useRef(persistedBuilderSession);
   const latestAssistantPageRef = useRef(currentAssistantPage);
   const latestAssistantSurfaceRef = useRef(currentAssistantSurface);
+  const latestCriticalSignatureRef = useRef("");
   latestStateRef.current = state;
   latestPersistedSessionRef.current = persistedBuilderSession;
   latestAssistantPageRef.current = currentAssistantPage;
@@ -769,6 +777,7 @@ export function SttmBuilderProvider({
     state.sourceOrderBySql,
     state.cacheMetadata,
   ]);
+  latestCriticalSignatureRef.current = criticalStateSignature;
 
   const nonCriticalStateSignature = useMemo(() => {
     return JSON.stringify({
@@ -826,7 +835,11 @@ export function SttmBuilderProvider({
             snapshotId: latestState.activeSnapshotId,
           }),
         );
-        if (persistBackend) {
+        if (
+          persistBackend
+          && latestCriticalSignatureRef.current !== lastBackendAutosaveSignatureRef.current
+        ) {
+          lastBackendAutosaveSignatureRef.current = latestCriticalSignatureRef.current;
           const workspaceSnapshot = snapshotFromState(latestState, "workspace.autosaved", {
             page: latestAssistantPageRef.current,
             surface: latestAssistantSurfaceRef.current,
@@ -850,7 +863,71 @@ export function SttmBuilderProvider({
     }
   }, [enqueueBackendAutosave]);
 
-  // Critical state persistence (250ms debounce)
+  const flushWorkspace = useCallback(async () => {
+    persistState(true);
+    while (
+      pendingBackendAutosaveRef.current
+      || backendAutosaveInFlightRef.current
+    ) {
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 25));
+    }
+  }, [persistState]);
+
+  const getWorkspaceSnapshot = useCallback(() => (
+    snapshotFromState(latestStateRef.current, "recommendation.preview", {
+      page: latestAssistantPageRef.current,
+      surface: latestAssistantSurfaceRef.current,
+      milestone: "mapping",
+    }) as unknown as Record<string, unknown>
+  ), []);
+
+  const previousWorkflowPathRef = useRef(pathname);
+  useEffect(() => {
+    if (
+      previousWorkflowPathRef.current !== pathname
+      && sessionHydrated
+      && isInSttmBuilder
+    ) {
+      // Route changes cancel debounce timers, so capture the newest state
+      // before the old workflow stage unmounts.
+      persistState(true);
+    }
+    previousWorkflowPathRef.current = pathname;
+  }, [isInSttmBuilder, pathname, persistState, sessionHydrated]);
+
+  useEffect(() => {
+    if (!sessionHydrated || !isInSttmBuilder) return;
+    const flushHiddenWorkspace = () => {
+      if (document.visibilityState === "hidden") {
+        persistState(true);
+      }
+    };
+    const flushPage = () => persistState(true);
+    document.addEventListener("visibilitychange", flushHiddenWorkspace);
+    window.addEventListener("pagehide", flushPage);
+    return () => {
+      document.removeEventListener("visibilitychange", flushHiddenWorkspace);
+      window.removeEventListener("pagehide", flushPage);
+    };
+  }, [isInSttmBuilder, persistState, sessionHydrated]);
+
+  useEffect(() => {
+    if (!sessionHydrated || !isInSttmBuilder) return;
+    const flushForExplicitAction = () => {
+      void flushWorkspace();
+    };
+    const events = [
+      "sttm:explicit-save",
+      "sttm:run-validation",
+      "sttm:before-publish",
+    ];
+    events.forEach((event) => window.addEventListener(event, flushForExplicitAction));
+    return () => {
+      events.forEach((event) => window.removeEventListener(event, flushForExplicitAction));
+    };
+  }, [flushWorkspace, isInSttmBuilder, sessionHydrated]);
+
+  // Critical state persistence (1.5s backend debounce)
   useEffect(() => {
     if (!sessionHydrated || !isInSttmBuilder || state.openSttmStatus === "loading") {
       return;
@@ -1441,6 +1518,8 @@ export function SttmBuilderProvider({
         }
       },
       refreshPreparedWorkspaceContext,
+      flushWorkspace,
+      getWorkspaceSnapshot,
       respondToAssistantSignal: ({ signalId, status, optionSelected, rating, comment }) => {
         dispatch(
           respondToAssistantSignalThunk({
@@ -1543,6 +1622,8 @@ export function SttmBuilderProvider({
     currentAssistantSurface,
     sessionHydrated,
     refreshPreparedWorkspaceContext,
+    flushWorkspace,
+    getWorkspaceSnapshot,
   ]);
 
   return (

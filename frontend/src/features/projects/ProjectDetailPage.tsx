@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect -- Navigation and pagination state follow external route/filter state. */
 import { AiaBox, AiaButton, AiaMenu, AiaMenuItem, AiaPaper, AiaStack } from '@/components/ui';
 import { AiaText } from '@/components/ui/aia-text';
 import { useEffect, useMemo, useState } from "react";
@@ -13,7 +14,6 @@ import { AiaSearchbox } from "@/components/ui/aia-searchbox";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   getAllProjectsSummary,
-  createProjectSttm,
   type ProjectRecord,
   type STTMRecord,
 } from "@/services/projectService";
@@ -31,7 +31,6 @@ import {
 import { openMappingInBuilder } from "@/features/mappings/load-mapping-workspace";
 import {
   clearOpenSttmNavigation,
-  openSttmFromBackend,
 } from "@/features/sttm/store/sttm-builder-slice";
 import NewMappingDialog from "@/features/dashboard/NewMappingDialog";
 import MappingsTableFooter from "@/features/mappings/mappings-table-footer";
@@ -233,42 +232,6 @@ export default function ProjectDetailPage({ projectId }: ProjectDetailPageProps)
   const handleOpenMapping = (item: AllMappingListItem) => {
     setIsOpening(true);
     openMappingInBuilder(dispatch, { sttmId: item.id, projectId: item.projectId });
-  };
-
-  const handleBuildManually = async (details: {
-    name: string;
-    description: string;
-    linkedMappingIds?: string[];
-    projectId?: string;
-  }) => {
-    const targetProjectId = details.projectId?.trim() || projectId;
-    if (!details?.name || !targetProjectId) return;
-    setIsNewMappingOpen(false);
-    setIsOpening(true);
-    try {
-      const sttm = await createProjectSttm(targetProjectId, {
-        sttm_name: details.name,
-        description: details.description || null,
-        precedent_links: (details.linkedMappingIds ?? []).map((sttmId, index) => ({
-          precedent_sttm_id: sttmId,
-          priority: Math.max(1, 100 - index),
-          knowledge_categories: [
-            "column_mapping",
-            "relationship",
-            "transformation",
-            "query_shaping",
-            "derived_lineage",
-          ],
-          allow_project_specific_values: false,
-        })),
-      });
-      dispatch(openSttmFromBackend({ sttmId: sttm.sttm_id, projectId: targetProjectId }));
-    } catch (err) {
-      if (process.env.NODE_ENV === "development") {
-        console.warn("Failed to create STTM.", err);
-      }
-      setIsOpening(false);
-    }
   };
 
   const coveragePercent = project ? Math.round(project.coverage_percent || 0) : 0;
@@ -507,7 +470,6 @@ export default function ProjectDetailPage({ projectId }: ProjectDetailPageProps)
       <NewMappingDialog
         open={isNewMappingOpen}
         onClose={() => setIsNewMappingOpen(false)}
-        onBuildManually={handleBuildManually}
         projectId={projectId}
       />
     </AiaBox>

@@ -1,3 +1,4 @@
+import json
 import yaml
 from types import SimpleNamespace
 
@@ -13,6 +14,51 @@ class _SemanticModels:
 
     def get_table_records(self, session, tables):  # type: ignore[no-untyped-def]
         return self.records
+
+
+class _CapturedQuery:
+    def __init__(self) -> None:
+        self.collected = False
+
+    def collect(self):  # type: ignore[no-untyped-def]
+        self.collected = True
+        return []
+
+
+class _CapturedSession:
+    def __init__(self) -> None:
+        self.query = ""
+        self.params = None
+        self.result = _CapturedQuery()
+
+    def sql(self, query, params=None):  # type: ignore[no-untyped-def]
+        self.query = query
+        self.params = params
+        return self.result
+
+
+def test_bundle_artifact_persistence_binds_unicode_json_and_bundle_id() -> None:
+    session = _CapturedSession()
+    service = SemanticContextService.__new__(SemanticContextService)
+    service._session = session
+    service._bundle_table = "DB.META.TBL_SEMANTIC_BUNDLES"
+    artifact = {
+        "description": "Client range –3209 with curly quote “Focus”",
+        "path": r"folder\mapping.sql",
+    }
+
+    service._persist_bundle_artifact(
+        bundle_id="sem_'quoted",
+        bundle_artifact=artifact,
+    )
+
+    assert "BUNDLE_ARTIFACT = PARSE_JSON(?)" in session.query
+    assert "SEMANTIC_BUNDLE_ID = ?" in session.query
+    assert "3209" not in session.query
+    assert session.params is not None
+    assert json.loads(session.params[0]) == artifact
+    assert session.params[1] == "sem_'quoted"
+    assert session.result.collected is True
 
 
 def _record(table: TableRef, *, primary_key: str, relationship=None):  # type: ignore[no-untyped-def]

@@ -658,6 +658,7 @@ export type MappingSqlReviewRequest = {
   generated_sql: string;
   mappings: MappingSqlMappingItem[];
   preview_limit?: number;
+  attempt_ai_repair?: boolean;
 };
 
 export type MappingSqlReviewResponse = {
@@ -677,10 +678,10 @@ export type MappingSqlReviewResponse = {
   semantic_view_name?: string | null;
   warnings: string[];
   repair_options?: Array<{
-    code: "apply_suggested_sql" | "resolve_value_binding" | "verify_source_contract" | "edit_sql";
+    code: "apply_suggested_sql" | "fix_with_ai" | "resolve_value_binding" | "verify_source_contract" | "edit_sql";
     title: string;
     description: string;
-    action: "review_suggested_sql" | "open_mapping" | "edit_sql";
+    action: "review_suggested_sql" | "request_ai_repair" | "open_mapping" | "edit_sql";
     identifier?: string | null;
   }>;
 };

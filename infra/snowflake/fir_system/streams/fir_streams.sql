@@ -26,6 +26,11 @@ ON TABLE __STTM_METADATA_NAMESPACE__.TBL_FIR_RECOMMENDATION_OUTCOMES
 APPEND_ONLY = TRUE
 COMMENT = 'Captures shown, opened, explained, applied, used, accepted, corrected, rejected, validated, and published recommendation outcomes.';
 
+CREATE STREAM IF NOT EXISTS __STTM_METADATA_NAMESPACE__.STM_FIR_LEARNING_WORK_ITEMS
+ON TABLE __STTM_METADATA_NAMESPACE__.TBL_FIR_LEARNING_WORK_ITEMS
+APPEND_ONLY = FALSE
+COMMENT = 'Ready-work signal for bounded twice-daily durable FIR learning catch-up.';
+
 -- Stream on STTM attributes (mapping changes)
 CREATE STREAM IF NOT EXISTS __STTM_METADATA_NAMESPACE__.STM_FIR_STTM_ATTRIBUTES
 ON TABLE __STTM_METADATA_NAMESPACE__.TBL_STTM_ATTRIBUTES
@@ -40,9 +45,11 @@ APPEND_ONLY = FALSE
 SHOW_INITIAL_ROWS = FALSE
 COMMENT = 'Captures derived source creation/modification for FIR processing.';
 
--- Stream on semantic table views (semantic evolution)
+-- Stream on the canonical raw semantic registry tables. The separately
+-- configured semantic-read namespace can expose LATEST_* views and therefore
+-- is not a valid source for Snowflake table streams.
 CREATE OR REPLACE STREAM __STTM_METADATA_NAMESPACE__.STM_FIR_SEM_TABLE_VIEWS
-ON TABLE __SEMANTIC_REGISTRY_NAMESPACE__.SEM_TABLE_VIEWS
+ON TABLE __STTM_METADATA_NAMESPACE__.SEM_TABLE_VIEWS
 APPEND_ONLY = FALSE
 SHOW_INITIAL_ROWS = FALSE
 COMMENT = 'Captures semantic view changes for FIR semantic evolution tracking.';
@@ -84,7 +91,7 @@ COMMENT = 'Captures FIR 360 record changes for downstream processing.';
 
 -- Stream on column-level semantic views (column semantic evolution)
 CREATE OR REPLACE STREAM __STTM_METADATA_NAMESPACE__.STM_FIR_SEM_COLUMN_VIEWS
-ON TABLE __SEMANTIC_REGISTRY_NAMESPACE__.SEM_COLUMN_VIEWS
+ON TABLE __STTM_METADATA_NAMESPACE__.SEM_COLUMN_VIEWS
 APPEND_ONLY = FALSE
 SHOW_INITIAL_ROWS = FALSE
 COMMENT = 'Captures column-level semantic view changes for FIR pre-computation triggering.';
@@ -99,13 +106,13 @@ COMMENT = 'Captures new curated semantic versions to trigger FIR recommendation 
 -- Dedicated semantic streams prevent the capture task and permutation task
 -- from racing to consume the same stream offset.
 CREATE OR REPLACE STREAM __STTM_METADATA_NAMESPACE__.STM_FIR_PRECOMPUTE_SEM_TABLE_VIEWS
-ON TABLE __SEMANTIC_REGISTRY_NAMESPACE__.SEM_TABLE_VIEWS
+ON TABLE __STTM_METADATA_NAMESPACE__.SEM_TABLE_VIEWS
 APPEND_ONLY = FALSE
 SHOW_INITIAL_ROWS = FALSE
 COMMENT = 'Independent semantic table stream for FIR permutation precomputation.';
 
 CREATE OR REPLACE STREAM __STTM_METADATA_NAMESPACE__.STM_FIR_PRECOMPUTE_SEM_COLUMN_VIEWS
-ON TABLE __SEMANTIC_REGISTRY_NAMESPACE__.SEM_COLUMN_VIEWS
+ON TABLE __STTM_METADATA_NAMESPACE__.SEM_COLUMN_VIEWS
 APPEND_ONLY = FALSE
 SHOW_INITIAL_ROWS = FALSE
 COMMENT = 'Independent semantic column stream for FIR permutation precomputation.';

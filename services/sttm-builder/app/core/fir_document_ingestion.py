@@ -52,9 +52,12 @@ def store_sql_asset(
     sql_text: str,
     project_id: str,
     parsed: ParsedSqlDocument,
+    workspace_context: dict[str, Any] | None = None,
 ) -> None:
     """Store uploaded SQL as authoritative historical FIR evidence."""
     attributes_payload = parsed.to_dict()
+    if workspace_context:
+        attributes_payload["workspace_context"] = workspace_context
     attributes_payload["fir_evidence"] = {
         "evidence_class": "authored_historical_mapping",
         "authoritative_mapping": True,
@@ -157,6 +160,7 @@ def enqueue_fir_document_event(
     *,
     event_type: str = "document.uploaded",
     priority: bool = False,
+    workspace_context: dict[str, Any] | None = None,
 ) -> None:
     """Queue an uploaded document for the offline FIR pipeline."""
     unresolved = [
@@ -167,6 +171,7 @@ def enqueue_fir_document_event(
         "project_id": project_id,
         "priority": priority,
         "table_references": references,
+        "workspace_context": workspace_context or {},
         "inference_status": (
             "deferred_for_resolution" if unresolved else "ready_for_enrichment"
         ),

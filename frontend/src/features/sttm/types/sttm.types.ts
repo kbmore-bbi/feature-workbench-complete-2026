@@ -411,6 +411,8 @@ export type SttmBuilderContextValue = {
   refreshAssistantSignals: (activityType?: string) => void;
   requestSemanticRefresh: () => Promise<void>;
   refreshPreparedWorkspaceContext: () => Promise<void>;
+  flushWorkspace: () => Promise<void>;
+  getWorkspaceSnapshot: () => Record<string, unknown>;
   respondToAssistantSignal: (payload: {
     signalId: string;
     status?: "acknowledged" | "responded" | "dismissed";
@@ -497,6 +499,9 @@ export type ParsedSqlWorkspaceApplyPayload = {
     name: string;
     sqlText?: string | null;
     inputTables?: string[];
+    outputColumns?: Array<Record<string, unknown>>;
+    purpose?: string | null;
+    candidateReasons?: string[];
   }>;
   filterSql: string;
   sql: string;

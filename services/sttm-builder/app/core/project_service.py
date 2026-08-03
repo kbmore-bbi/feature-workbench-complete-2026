@@ -23,6 +23,10 @@ from app.schema.project import (
     MappingPrecedentLinkRecord,
     MappingPrecedentLinksUpdate,
     ProjectCreateRequest,
+    ProjectAttributeCreateRequest,
+    ProjectAttributeImportRequest,
+    ProjectAttributeRecord,
+    ProjectAttributeUpdateRequest,
     ProjectPrecedentLinkInput,
     ProjectPrecedentLinkRecord,
     ProjectPrecedentLinksUpdate,
@@ -56,6 +60,21 @@ class ProjectService:
         "Precedent linking is not deployed in this environment. Run the versioned "
         "FIR linking migration and ensure the application role can access the link tables."
     )
+    _MEANINGFUL_AUTOSAVE_FIR_EVENTS = {
+        "import.completed",
+        "historical_import",
+        "mapping.accepted",
+        "mapping.corrected",
+        "mapping.edited",
+        "join.accepted",
+        "derived_source.accepted",
+        "derived_source.saved",
+        "sql.applied",
+        "sql.validation_passed",
+        "sql.validation_failed",
+        "mapping.published",
+        "sttm.published",
+    }
 
     def __init__(
         self,
@@ -132,6 +151,25 @@ class ProjectService:
     def _snapshot_hash(payload: dict[str, Any]) -> str:
         raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _normalized_workspace_hash(payload: dict[str, Any]) -> str:
+        normalized = dict(payload)
+        for key in (
+            "context_hash",
+            "snapshot_id",
+            "captured_at",
+            "created_at",
+            "updated_at",
+            "last_saved_at",
+            "action",
+            "milestone",
+            "checkpoint",
+            "page",
+            "surface",
+        ):
+            normalized.pop(key, None)
+        return ProjectService._snapshot_hash(normalized)
 
     @staticmethod
     def _table_ref_to_fqn(table: TableRef | dict[str, Any] | None) -> str:
@@ -308,6 +346,10 @@ class ProjectService:
         return self._qualified_name(self._settings.snowflake_projects_table)
 
     @property
+    def _project_attributes_table(self) -> str:
+        return self._qualified_name(self._settings.snowflake_project_attributes_table)
+
+    @property
     def _sttm_table(self) -> str:
         return self._qualified_name(self._settings.snowflake_sttm_table)
 
@@ -343,6 +385,7 @@ class ProjectService:
         storage_key = "|".join(
             [
                 self._projects_table,
+                self._project_attributes_table,
                 self._sttm_table,
                 self._versions_table,
                 self._sources_table,
@@ -370,6 +413,23 @@ class ProjectService:
                 PROJECT_METADATA VARIANT,
                 CREATED_DATETIME TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
                 LAST_MODIFIED_DATETIME TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
+            )
+            """,
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._project_attributes_table} (
+                ATTRIBUTE_ID STRING NOT NULL,
+                PROJECT_ID STRING NOT NULL,
+                ATTRIBUTE_NAME VARCHAR(255) NOT NULL,
+                ATTRIBUTE_TYPE VARCHAR(50) NOT NULL,
+                ATTRIBUTE_VALUE TEXT,
+                SOURCE_PROJECT_ID STRING,
+                SOURCE_ATTRIBUTE_ID STRING,
+                STATUS VARCHAR(20) DEFAULT 'ACTIVE',
+                CREATED_BY VARCHAR(128),
+                UPDATED_BY VARCHAR(128),
+                CREATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+                UPDATED_AT TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP(),
+                CONSTRAINT PK_PROJECT_ATTRIBUTES PRIMARY KEY (ATTRIBUTE_ID)
             )
             """,
             f"""
@@ -564,6 +624,206 @@ class ProjectService:
             return None
         return self._project_from_row(rows[0].as_dict(), counts=self._project_counts().get(project_id, {}))
 
+    def list_project_attributes(self, project_id: str) -> list[ProjectAttributeRecord]:
+        self.ensure_storage_exists()
+        rows = self._session.sql(
+            f"""
+            SELECT
+                a.*,
+                p.PROJECT_NAME,
+                source_project.PROJECT_NAME AS SOURCE_PROJECT_NAME
+            FROM {self._project_attributes_table} a
+            LEFT JOIN {self._projects_table} p
+              ON TO_VARCHAR(p.PROJECT_ID) = TO_VARCHAR(a.PROJECT_ID)
+            LEFT JOIN {self._projects_table} source_project
+              ON TO_VARCHAR(source_project.PROJECT_ID) = TO_VARCHAR(a.SOURCE_PROJECT_ID)
+            WHERE TO_VARCHAR(a.PROJECT_ID) = {self._quote_literal(project_id)}
+              AND COALESCE(a.STATUS, 'ACTIVE') = 'ACTIVE'
+            ORDER BY UPPER(a.ATTRIBUTE_NAME), a.CREATED_AT
+            """
+        ).collect()
+        return [self._project_attribute_from_row(row.as_dict()) for row in rows]
+
+    def create_project_attribute(
+        self,
+        project_id: str,
+        payload: ProjectAttributeCreateRequest,
+        *,
+        user_id: str | None,
+        source_project_id: str | None = None,
+        source_attribute_id: str | None = None,
+    ) -> ProjectAttributeRecord:
+        self.ensure_storage_exists()
+        if self.get_project(project_id) is None:
+            raise AppValidationError(
+                message=f"Project {project_id} was not found.",
+                details=[{"field": "project_id", "message": "Project does not exist."}],
+            )
+        name = payload.attribute_name.strip()
+        duplicate = self._session.sql(
+            f"""
+            SELECT ATTRIBUTE_ID
+            FROM {self._project_attributes_table}
+            WHERE TO_VARCHAR(PROJECT_ID) = {self._quote_literal(project_id)}
+              AND UPPER(ATTRIBUTE_NAME) = UPPER({self._quote_literal(name)})
+              AND COALESCE(STATUS, 'ACTIVE') = 'ACTIVE'
+            LIMIT 1
+            """
+        ).collect()
+        if duplicate:
+            raise AppValidationError(
+                message=f"Project value {name} already exists.",
+                details=[{"field": "attribute_name", "message": "Name must be unique within the project."}],
+            )
+        attribute_id = str(uuid.uuid4())
+        self._session.sql(
+            f"""
+            INSERT INTO {self._project_attributes_table} (
+                ATTRIBUTE_ID,
+                PROJECT_ID,
+                ATTRIBUTE_NAME,
+                ATTRIBUTE_TYPE,
+                ATTRIBUTE_VALUE,
+                SOURCE_PROJECT_ID,
+                SOURCE_ATTRIBUTE_ID,
+                STATUS,
+                CREATED_BY,
+                UPDATED_BY
+            )
+            SELECT
+                {self._quote_literal(attribute_id)},
+                {self._quote_literal(project_id)},
+                {self._quote_literal(name)},
+                {self._quote_literal(payload.attribute_type.strip().upper())},
+                {self._quote_literal(payload.attribute_value)},
+                {self._quote_literal(source_project_id or '')},
+                {self._quote_literal(source_attribute_id or '')},
+                'ACTIVE',
+                {self._quote_literal(user_id or '')},
+                {self._quote_literal(user_id or '')}
+            """
+        ).collect()
+        return next(
+            item for item in self.list_project_attributes(project_id)
+            if item.attribute_id == attribute_id
+        )
+
+    def update_project_attribute(
+        self,
+        project_id: str,
+        attribute_id: str,
+        payload: ProjectAttributeUpdateRequest,
+        *,
+        user_id: str | None,
+    ) -> ProjectAttributeRecord:
+        self.ensure_storage_exists()
+        current = next(
+            (item for item in self.list_project_attributes(project_id) if item.attribute_id == attribute_id),
+            None,
+        )
+        if current is None:
+            raise AppValidationError(
+                message=f"Project value {attribute_id} was not found.",
+                details=[{"field": "attribute_id", "message": "Project value does not exist."}],
+            )
+        name = payload.attribute_name.strip() if payload.attribute_name is not None else current.attribute_name
+        duplicate = self._session.sql(
+            f"""
+            SELECT ATTRIBUTE_ID
+            FROM {self._project_attributes_table}
+            WHERE TO_VARCHAR(PROJECT_ID) = {self._quote_literal(project_id)}
+              AND UPPER(ATTRIBUTE_NAME) = UPPER({self._quote_literal(name)})
+              AND ATTRIBUTE_ID <> {self._quote_literal(attribute_id)}
+              AND COALESCE(STATUS, 'ACTIVE') = 'ACTIVE'
+            LIMIT 1
+            """
+        ).collect()
+        if duplicate:
+            raise AppValidationError(
+                message=f"Project value {name} already exists.",
+                details=[{"field": "attribute_name", "message": "Name must be unique within the project."}],
+            )
+        self._session.sql(
+            f"""
+            UPDATE {self._project_attributes_table}
+            SET ATTRIBUTE_NAME = {self._quote_literal(name)},
+                ATTRIBUTE_TYPE = {self._quote_literal((payload.attribute_type or current.attribute_type).strip().upper())},
+                ATTRIBUTE_VALUE = {self._quote_literal(
+                    current.attribute_value if payload.attribute_value is None else payload.attribute_value
+                )},
+                STATUS = {self._quote_literal(payload.status or current.status)},
+                UPDATED_BY = {self._quote_literal(user_id or '')},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE TO_VARCHAR(PROJECT_ID) = {self._quote_literal(project_id)}
+              AND ATTRIBUTE_ID = {self._quote_literal(attribute_id)}
+            """
+        ).collect()
+        updated = [
+            item for item in self.list_project_attributes(project_id)
+            if item.attribute_id == attribute_id
+        ]
+        if not updated:
+            return current.model_copy(update={"status": payload.status or current.status})
+        return updated[0]
+
+    def delete_project_attribute(self, project_id: str, attribute_id: str, *, user_id: str | None) -> None:
+        self.ensure_storage_exists()
+        self._session.sql(
+            f"""
+            UPDATE {self._project_attributes_table}
+            SET STATUS = 'INACTIVE',
+                UPDATED_BY = {self._quote_literal(user_id or '')},
+                UPDATED_AT = CURRENT_TIMESTAMP()
+            WHERE TO_VARCHAR(PROJECT_ID) = {self._quote_literal(project_id)}
+              AND ATTRIBUTE_ID = {self._quote_literal(attribute_id)}
+            """
+        ).collect()
+
+    def import_project_attributes(
+        self,
+        project_id: str,
+        payload: ProjectAttributeImportRequest,
+        *,
+        user_id: str | None,
+    ) -> list[ProjectAttributeRecord]:
+        requested_ids = set(payload.attribute_ids)
+        source_rows = [
+            item for item in self.list_project_attributes(payload.source_project_id)
+            if not requested_ids or item.attribute_id in requested_ids
+        ]
+        existing_by_name = {
+            item.attribute_name.upper(): item
+            for item in self.list_project_attributes(project_id)
+        }
+        for source in source_rows:
+            existing = existing_by_name.get(source.attribute_name.upper())
+            value = ProjectAttributeCreateRequest(
+                attribute_name=source.attribute_name,
+                attribute_type=source.attribute_type,
+                attribute_value=source.attribute_value,
+            )
+            if existing:
+                if payload.overwrite_existing:
+                    self.update_project_attribute(
+                        project_id,
+                        existing.attribute_id,
+                        ProjectAttributeUpdateRequest(
+                            attribute_type=value.attribute_type,
+                            attribute_value=value.attribute_value,
+                        ),
+                        user_id=user_id,
+                    )
+                continue
+            created = self.create_project_attribute(
+                project_id,
+                value,
+                user_id=user_id,
+                source_project_id=payload.source_project_id,
+                source_attribute_id=source.attribute_id,
+            )
+            existing_by_name[created.attribute_name.upper()] = created
+        return self.list_project_attributes(project_id)
+
     def create_sttm(
         self,
         project_id: str,
@@ -582,6 +842,7 @@ class ProjectService:
             )
         self.ensure_storage_exists()
         snapshot = self._snapshot_to_dict(payload.workspace_snapshot)
+        self._validate_project_value_bindings(project_id, snapshot)
         semantic_bundle_id = payload.semantic_bundle_id or self._semantic_bundle_id(snapshot)
         semantic_bundle_hash = payload.semantic_bundle_hash or self._semantic_bundle_hash(snapshot)
         target_fqn = self._table_ref_to_fqn(payload.target_table) or self._table_ref_to_fqn(snapshot.get("target_table"))
@@ -960,9 +1221,42 @@ class ProjectService:
         if sttm is None:
             raise SnowflakeQueryError(f"STTM {sttm_id} was not found.")
         snapshot = self._snapshot_to_dict(payload.workspace_snapshot)
-        context_hash = str(snapshot.get("context_hash") or self._snapshot_hash(snapshot))
+        self._validate_project_value_bindings(sttm.project_id, snapshot)
+        validation_keys = [
+            self._snapshot_hash(item)
+            for item in snapshot.get("validation_history") or []
+            if isinstance(item, dict)
+        ]
+        snapshot["validation_cursor"] = self._snapshot_hash(
+            {
+                "sttm_id": sttm_id,
+                "validation_keys": validation_keys,
+            }
+        )
+        context_hash = self._normalized_workspace_hash(snapshot)
+        snapshot["context_hash"] = context_hash
+        previous_snapshot = self._latest_snapshot(sttm_id)
         semantic_bundle_id = payload.semantic_bundle_id or self._semantic_bundle_id(snapshot)
         semantic_bundle_hash = payload.semantic_bundle_hash or self._semantic_bundle_hash(snapshot)
+        normalized_action = str(payload.action or "workspace.autosaved").strip().lower()
+        previous_context_hash = str(
+            (previous_snapshot or {}).get("context_hash") or ""
+        )
+        if (
+            normalized_action == "workspace.autosaved"
+            and not payload.agent_artifacts
+            and not payload.fir_events
+            and previous_snapshot is not None
+            and previous_context_hash
+            and previous_context_hash == context_hash
+        ):
+            return STTMAutosaveResponse(
+                project_id=sttm.project_id,
+                sttm_id=sttm_id,
+                snapshot_id=str(previous_snapshot.get("snapshot_id") or ""),
+                semantic_bundle_id=semantic_bundle_id,
+                semantic_bundle_hash=semantic_bundle_hash,
+            )
         snapshot_id = self._memory.save_workspace_snapshot(
             session_id=payload.session_id or str(snapshot.get("session_id") or ""),
             thread_id=payload.thread_id or str(snapshot.get("thread_id") or ""),
@@ -1024,9 +1318,9 @@ class ProjectService:
             sttm_id=sttm_id,
             payload=payload,
             snapshot=snapshot,
+            previous_snapshot=previous_snapshot,
             user_id=user_id,
         )
-        normalized_action = str(payload.action or "").lower()
         if any(
             marker in normalized_action
             for marker in (
@@ -1091,6 +1385,38 @@ class ProjectService:
             semantic_bundle_id=semantic_bundle_id,
             semantic_bundle_hash=semantic_bundle_hash,
         )
+
+    def _validate_project_value_bindings(
+        self,
+        project_id: str,
+        snapshot: dict[str, Any],
+    ) -> None:
+        rows = snapshot.get("mapping_rows") or []
+        requested = {
+            str(row.get("attribute_name") or "").strip().upper()
+            for row in rows
+            if isinstance(row, dict)
+            and str(row.get("mapping_mode") or "").strip().lower() == "attribute"
+        }
+        requested.discard("")
+        if not requested:
+            return
+        available = {
+            item.attribute_name.strip().upper()
+            for item in self.list_project_attributes(project_id)
+        }
+        missing = sorted(requested - available)
+        if missing:
+            raise AppValidationError(
+                message="One or more Project Value mappings reference missing project metadata.",
+                details=[
+                    {
+                        "field": "mapping_rows.attribute_name",
+                        "message": f"Create or import the project value before saving: {name}",
+                    }
+                    for name in missing
+                ],
+            )
 
     def publish_sttm(
         self,
@@ -1460,6 +1786,25 @@ class ProjectService:
             metadata=metadata,
         )
 
+    @staticmethod
+    def _project_attribute_from_row(row: dict[str, Any]) -> ProjectAttributeRecord:
+        return ProjectAttributeRecord(
+            attribute_id=str(row.get("ATTRIBUTE_ID") or ""),
+            project_id=str(row.get("PROJECT_ID") or ""),
+            project_name=str(row.get("PROJECT_NAME") or "") or None,
+            attribute_name=str(row.get("ATTRIBUTE_NAME") or ""),
+            attribute_type=str(row.get("ATTRIBUTE_TYPE") or "VARCHAR"),
+            attribute_value=str(row.get("ATTRIBUTE_VALUE") or ""),
+            source_project_id=str(row.get("SOURCE_PROJECT_ID") or "") or None,
+            source_project_name=str(row.get("SOURCE_PROJECT_NAME") or "") or None,
+            source_attribute_id=str(row.get("SOURCE_ATTRIBUTE_ID") or "") or None,
+            status=str(row.get("STATUS") or "ACTIVE"),
+            created_by=str(row.get("CREATED_BY") or "") or None,
+            updated_by=str(row.get("UPDATED_BY") or "") or None,
+            created_at=row.get("CREATED_AT"),
+            updated_at=row.get("UPDATED_AT"),
+        )
+
     def _project_link_from_row(self, row: dict[str, Any]) -> ProjectPrecedentLinkRecord:
         return ProjectPrecedentLinkRecord(
             project_link_id=str(row.get("PROJECT_LINK_ID") or ""),
@@ -1608,12 +1953,14 @@ class ProjectService:
                 source_column_text = ", ".join(str(value) for value in source_columns if value)
             else:
                 source_column_text = str(source_columns or "")
+            mapping_mode_raw = str(item.get("mapping_mode") or "source").lower()
             mapping_mode = (
-                "constant"
-                if str(item.get("mapping_mode") or "source").lower() == "constant"
+                mapping_mode_raw
+                if mapping_mode_raw in {"constant", "attribute"}
                 else "source"
             )
             constant_value = item.get("constant_value")
+            attribute_name = item.get("attribute_name")
             transformation_logic = (
                 item.get("expression")
                 or item.get("transformation_expr")
@@ -1622,7 +1969,7 @@ class ProjectService:
                 or item.get("preprocessing_rule")
                 or (
                     f"CONSTANT({json.dumps(constant_value)})"
-                    if mapping_mode == "constant"
+                    if mapping_mode in {"constant", "attribute"}
                     else ""
                 )
                 or ""
@@ -1653,6 +2000,7 @@ class ProjectService:
                         "source_expressions": item.get("source_expressions") or [],
                         "mapping_mode": mapping_mode,
                         "constant_value": constant_value,
+                        "attribute_name": attribute_name,
                         "preprocessing_rule": item.get("rule") or item.get("preprocessing_rule") or "",
                         "natural_language_rule": item.get("natural_language_rule") or "",
                         "load_order": item.get("load_order"),
@@ -1731,50 +2079,127 @@ class ProjectService:
         sttm_id: str,
         payload: STTMAutosaveRequest,
         snapshot: dict[str, Any],
+        previous_snapshot: dict[str, Any] | None,
         user_id: str | None,
     ) -> int:
-        events = list(payload.fir_events or [])
-        events.append(
-            {
-                "event_type": payload.action or "workspace.autosaved",
-                "entity_type": "sttm",
-                "entity_ids": [project_id, sttm_id],
-                "event_payload": {
-                    "project_id": project_id,
+        events = [
+            event
+            for event in (payload.fir_events or [])
+            if isinstance(event, dict)
+            and str(event.get("event_type") or "").strip().lower()
+            in self._MEANINGFUL_AUTOSAVE_FIR_EVENTS
+        ]
+        def validation_key(value: dict[str, Any]) -> str:
+            return self._snapshot_hash(value)
+
+        prior_validation_keys = {
+            validation_key(validation)
+            for validation in (previous_snapshot or {}).get("validation_history") or []
+            if isinstance(validation, dict)
+        }
+        new_validations = [
+            validation
+            for validation in snapshot.get("validation_history") or []
+            if isinstance(validation, dict)
+            and validation_key(validation) not in prior_validation_keys
+        ]
+        current_validation_cursor = str(
+            snapshot.get("validation_cursor")
+            or self._snapshot_hash(
+                {
                     "sttm_id": sttm_id,
-                    "context_hash": snapshot.get("context_hash"),
-                    "mapping_count": len(snapshot.get("mapping_rows") or []),
-                    "source_count": len(snapshot.get("source_tables") or []),
-                    "derived_source_count": len(snapshot.get("derived_sources") or []),
-                    "validation_history_count": len(snapshot.get("validation_history") or []),
-                },
-            }
+                    "validation_keys": sorted(
+                        prior_validation_keys
+                        | {
+                            validation_key(validation)
+                            for validation in new_validations
+                        }
+                    ),
+                }
+            )
         )
-        for validation in snapshot.get("validation_history") or []:
-            if isinstance(validation, dict):
-                status = "sql.validation_passed" if validation.get("valid") is True else "sql.validation_failed"
-                events.append(
-                    {
-                        "event_type": status,
-                        "entity_type": "validation",
-                        "entity_ids": [project_id, sttm_id],
-                        "event_payload": validation,
-                    }
-                )
+        previous_validation_cursor = str(
+            (previous_snapshot or {}).get("validation_cursor")
+            or self._snapshot_hash(
+                {
+                    "sttm_id": sttm_id,
+                    "validation_keys": sorted(prior_validation_keys),
+                }
+            )
+        )
+        action = str(payload.action or "").strip().lower()
+        explicit_event_types = {
+            str(event.get("event_type") or "").strip().lower()
+            for event in events
+        }
+        if (
+            action in self._MEANINGFUL_AUTOSAVE_FIR_EVENTS
+            and action not in explicit_event_types
+            and (not action.startswith("sql.validation_") or not new_validations)
+        ):
+            events.append(
+                {
+                    "event_type": action,
+                    "entity_type": "sttm",
+                    "entity_ids": [project_id, sttm_id],
+                    "event_payload": {
+                        "project_id": project_id,
+                        "sttm_id": sttm_id,
+                        "context_hash": snapshot.get("context_hash"),
+                        "mapping_count": len(snapshot.get("mapping_rows") or []),
+                        "source_count": len(snapshot.get("source_tables") or []),
+                        "derived_source_count": len(snapshot.get("derived_sources") or []),
+                    },
+                }
+            )
+        for validation in new_validations:
+            status = (
+                "sql.validation_passed"
+                if validation.get("valid") is True
+                else "sql.validation_failed"
+            )
+            events.append(
+                {
+                    "event_type": status,
+                    "entity_type": "validation",
+                    "entity_ids": [project_id, sttm_id],
+                    "event_payload": {
+                        **validation,
+                        "validation_cursor": current_validation_cursor,
+                        "previous_validation_cursor": previous_validation_cursor,
+                    },
+                }
+            )
         count = 0
         for event in events:
             if not isinstance(event, dict):
                 continue
+            event_type = str(event.get("event_type") or "").strip().lower()
+            event_payload = (
+                event.get("event_payload")
+                if isinstance(event.get("event_payload"), dict)
+                else event
+            )
+            request_id = str(event.get("request_id") or "")
+            if not request_id:
+                request_id = "fir-autosave-" + self._snapshot_hash(
+                    {
+                        "event_type": event_type,
+                        "project_id": project_id,
+                        "sttm_id": sttm_id,
+                        "event_payload": event_payload,
+                    }
+                )[:32]
             self._record_fir(
-                event_type=str(event.get("event_type") or "workspace.event"),
+                event_type=event_type,
                 user_id=user_id,
                 session_id=payload.session_id or str(snapshot.get("session_id") or ""),
-                request_id=str(event.get("request_id") or ""),
+                request_id=request_id,
                 page=str(snapshot.get("page") or event.get("page") or ""),
                 surface=str(snapshot.get("surface") or event.get("surface") or ""),
                 entity_type=str(event.get("entity_type") or "sttm"),
                 entity_ids=[str(v) for v in event.get("entity_ids", [project_id, sttm_id]) if v],
-                payload=event.get("event_payload") if isinstance(event.get("event_payload"), dict) else event,
+                payload=event_payload,
                 context_key=str(snapshot.get("context_key") or ""),
                 snapshot_id=str(snapshot.get("snapshot_id") or ""),
                 milestone=str(snapshot.get("milestone") or payload.action or ""),
@@ -2234,10 +2659,11 @@ class ProjectService:
                         "source_columns": source_columns,
                         "mapping_mode": str(condition.get("mapping_mode") or "source"),
                         "constant_value": condition.get("constant_value"),
+                        "attribute_name": condition.get("attribute_name"),
                         "rule": str(condition.get("preprocessing_rule") or "") or None,
                         "expression": (
                             None
-                            if str(condition.get("mapping_mode") or "source") == "constant"
+                            if str(condition.get("mapping_mode") or "source") in {"constant", "attribute"}
                             else str(data.get("TRANSFORMATION_LOGIC") or "") or None
                         ),
                         "natural_language_rule": str(condition.get("natural_language_rule") or "") or None,

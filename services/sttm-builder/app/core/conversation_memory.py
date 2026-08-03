@@ -925,33 +925,87 @@ class ConversationMemoryService:
         user_id: str | None = None,
         payload: dict[str, Any] | None = None,
     ) -> str:
-        outcome_id = f"outcome_{uuid.uuid4().hex[:20]}"
+        idempotency_key = str(request_id or "").strip()
+        outcome_id = (
+            "outcome_"
+            + hashlib.sha256(
+                f"{recommendation_id}:{outcome_type}:{idempotency_key}".encode(
+                    "utf-8"
+                )
+            ).hexdigest()[:20]
+            if idempotency_key
+            else f"outcome_{uuid.uuid4().hex[:20]}"
+        )
         table = self._qualified_name("TBL_FIR_RECOMMENDATION_OUTCOMES")
-        self._session.sql(f"""
-            INSERT INTO {table} (
-                OUTCOME_ID, AGENT_RECOMMENDATION_ID, CONTEXT_KEY, SNAPSHOT_ID,
-                REQUEST_ID, ARTIFACT_ID, USER_ID, OUTCOME_TYPE, OUTCOME_PAYLOAD
-            ) SELECT
-                {self._quote_literal(outcome_id)},
-                {self._quote_literal(recommendation_id)},
-                {self._quote_literal(context_key or "")},
-                {self._quote_literal(snapshot_id or "")},
-                {self._quote_literal(request_id or "")},
-                {self._quote_literal(artifact_id or "")},
-                {self._quote_literal(user_id or "")},
-                {self._quote_literal(outcome_type)},
-                PARSE_JSON({self._json_literal(payload or {})})
-        """).collect()
+        source = f"""
+            SELECT
+                {self._quote_literal(outcome_id)} AS OUTCOME_ID,
+                {self._quote_literal(recommendation_id)} AS AGENT_RECOMMENDATION_ID,
+                {self._quote_literal(context_key or "")} AS CONTEXT_KEY,
+                {self._quote_literal(snapshot_id or "")} AS SNAPSHOT_ID,
+                {self._quote_literal(idempotency_key)} AS REQUEST_ID,
+                {self._quote_literal(artifact_id or "")} AS ARTIFACT_ID,
+                {self._quote_literal(user_id or "")} AS USER_ID,
+                {self._quote_literal(outcome_type)} AS OUTCOME_TYPE,
+                PARSE_JSON({self._json_literal(payload or {})}) AS OUTCOME_PAYLOAD
+        """
+        if idempotency_key:
+            statement = f"""
+                MERGE INTO {table} target
+                USING ({source}) source
+                ON target.AGENT_RECOMMENDATION_ID = source.AGENT_RECOMMENDATION_ID
+                   AND target.OUTCOME_TYPE = source.OUTCOME_TYPE
+                   AND target.REQUEST_ID = source.REQUEST_ID
+                WHEN NOT MATCHED THEN INSERT (
+                    OUTCOME_ID, AGENT_RECOMMENDATION_ID, CONTEXT_KEY, SNAPSHOT_ID,
+                    REQUEST_ID, ARTIFACT_ID, USER_ID, OUTCOME_TYPE, OUTCOME_PAYLOAD
+                ) VALUES (
+                    source.OUTCOME_ID, source.AGENT_RECOMMENDATION_ID,
+                    source.CONTEXT_KEY, source.SNAPSHOT_ID, source.REQUEST_ID,
+                    source.ARTIFACT_ID, source.USER_ID, source.OUTCOME_TYPE,
+                    source.OUTCOME_PAYLOAD
+                )
+            """
+        else:
+            statement = f"""
+                INSERT INTO {table} (
+                    OUTCOME_ID, AGENT_RECOMMENDATION_ID, CONTEXT_KEY, SNAPSHOT_ID,
+                    REQUEST_ID, ARTIFACT_ID, USER_ID, OUTCOME_TYPE, OUTCOME_PAYLOAD
+                )
+                {source}
+            """
+        self._session.sql(statement).collect()
         if outcome_type in {"used", "accepted", "corrected", "rejected", "validated", "published"}:
             recommendation_table = self._qualified_name("TBL_FIR_AGENT_RECOMMENDATIONS")
-            success_increment = 1 if outcome_type in {"accepted", "validated", "published"} else 0
             self._session.sql(f"""
                 UPDATE {recommendation_table}
-                SET USAGE_COUNT = COALESCE(USAGE_COUNT, 0) + 1,
-                    SUCCESS_COUNT = COALESCE(SUCCESS_COUNT, 0) + {success_increment},
+                SET USAGE_COUNT = (
+                        SELECT COUNT(*)
+                        FROM {table} o
+                        WHERE o.AGENT_RECOMMENDATION_ID =
+                              {self._quote_literal(recommendation_id)}
+                          AND o.OUTCOME_TYPE IN (
+                              'used', 'accepted', 'corrected', 'rejected',
+                              'validated', 'published'
+                          )
+                    ),
+                    SUCCESS_COUNT = (
+                        SELECT COUNT(*)
+                        FROM {table} o
+                        WHERE o.AGENT_RECOMMENDATION_ID =
+                              {self._quote_literal(recommendation_id)}
+                          AND o.OUTCOME_TYPE IN (
+                              'accepted', 'validated', 'published'
+                          )
+                    ),
                     LAST_USED_AT = CURRENT_TIMESTAMP(),
                     UPDATED_AT = CURRENT_TIMESTAMP(),
-                    STATUS = IFF({self._quote_literal(outcome_type)} IN ('rejected', 'corrected'), 'suppressed', STATUS)
+                    STATUS = IFF(
+                        {self._quote_literal(outcome_type)}
+                            IN ('rejected', 'corrected'),
+                        'inactive',
+                        STATUS
+                    )
                 WHERE AGENT_RECOMMENDATION_ID = {self._quote_literal(recommendation_id)}
             """).collect()
         return outcome_id
@@ -1159,29 +1213,59 @@ class ConversationMemoryService:
         milestone: str | None = None,
     ) -> str:
         self.ensure_storage_exists()
-        event_id = f"event_{uuid.uuid4().hex[:20]}"
-        self._session.sql(
-            f"""
-            INSERT INTO {self._fir_events_table} (
-                EVENT_ID, EVENT_TYPE, USER_ID, SESSION_ID, REQUEST_ID, PAGE, SURFACE,
-                ENTITY_TYPE, ENTITY_IDS, EVENT_PAYLOAD, CONTEXT_KEY, SNAPSHOT_ID, MILESTONE
-            )
+        idempotency_key = str(request_id or "").strip()
+        event_id = (
+            "event_"
+            + hashlib.sha256(
+                f"{event_type}:{idempotency_key}".encode("utf-8")
+            ).hexdigest()[:20]
+            if idempotency_key
+            else f"event_{uuid.uuid4().hex[:20]}"
+        )
+        source_select = f"""
             SELECT
-                {self._quote_literal(event_id)},
-                {self._quote_literal(event_type)},
-                {self._quote_literal(user_id or "")},
-                {self._quote_literal(session_id or "")},
-                {self._quote_literal(request_id or "")},
-                {self._quote_literal(page or "")},
-                {self._quote_literal(surface or "")},
-                {self._quote_literal(entity_type or "")},
-                PARSE_JSON({self._json_literal(entity_ids or [])}),
-                PARSE_JSON({self._json_literal(event_payload or {})}),
-                {self._quote_literal(context_key or "")},
-                {self._quote_literal(snapshot_id or "")},
-                {self._quote_literal(milestone or "")}
+                {self._quote_literal(event_id)} AS EVENT_ID,
+                {self._quote_literal(event_type)} AS EVENT_TYPE,
+                {self._quote_literal(user_id or "")} AS USER_ID,
+                {self._quote_literal(session_id or "")} AS SESSION_ID,
+                {self._quote_literal(idempotency_key)} AS REQUEST_ID,
+                {self._quote_literal(page or "")} AS PAGE,
+                {self._quote_literal(surface or "")} AS SURFACE,
+                {self._quote_literal(entity_type or "")} AS ENTITY_TYPE,
+                PARSE_JSON({self._json_literal(entity_ids or [])}) AS ENTITY_IDS,
+                PARSE_JSON({self._json_literal(event_payload or {})}) AS EVENT_PAYLOAD,
+                {self._quote_literal(context_key or "")} AS CONTEXT_KEY,
+                {self._quote_literal(snapshot_id or "")} AS SNAPSHOT_ID,
+                {self._quote_literal(milestone or "")} AS MILESTONE
+        """
+        if idempotency_key:
+            statement = f"""
+                MERGE INTO {self._fir_events_table} target
+                USING ({source_select}) source
+                ON target.EVENT_TYPE = source.EVENT_TYPE
+                   AND target.REQUEST_ID = source.REQUEST_ID
+                WHEN NOT MATCHED THEN INSERT (
+                    EVENT_ID, EVENT_TYPE, USER_ID, SESSION_ID, REQUEST_ID, PAGE,
+                    SURFACE, ENTITY_TYPE, ENTITY_IDS, EVENT_PAYLOAD, CONTEXT_KEY,
+                    SNAPSHOT_ID, MILESTONE
+                ) VALUES (
+                    source.EVENT_ID, source.EVENT_TYPE, source.USER_ID,
+                    source.SESSION_ID, source.REQUEST_ID, source.PAGE,
+                    source.SURFACE, source.ENTITY_TYPE, source.ENTITY_IDS,
+                    source.EVENT_PAYLOAD, source.CONTEXT_KEY,
+                    source.SNAPSHOT_ID, source.MILESTONE
+                )
             """
-        ).collect()
+        else:
+            statement = f"""
+                INSERT INTO {self._fir_events_table} (
+                    EVENT_ID, EVENT_TYPE, USER_ID, SESSION_ID, REQUEST_ID, PAGE,
+                    SURFACE, ENTITY_TYPE, ENTITY_IDS, EVENT_PAYLOAD, CONTEXT_KEY,
+                    SNAPSHOT_ID, MILESTONE
+                )
+                {source_select}
+            """
+        self._session.sql(statement).collect()
         return event_id
 
     def process_fir_event_with_templates(

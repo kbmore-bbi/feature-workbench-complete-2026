@@ -26,7 +26,7 @@ class FIRAssetTableResolver:
         references: list[tuple[str, str]],
     ) -> list[dict[str, Any]]:
         defaults = self._project_defaults(project_id)
-        catalog = self._catalog()
+        catalog = self._catalog([identifier for identifier, _role in references])
         self._session.sql(
             f"DELETE FROM {self._references_table} WHERE SQL_ASSET_ID = ? AND PROJECT_ID = ?",
             [asset_id, project_id],
@@ -36,8 +36,11 @@ class FIRAssetTableResolver:
             for identifier, role in references
             if str(identifier).strip()
         ]
-        for item in resolved:
-            self._persist(asset_id=asset_id, project_id=project_id, item=item)
+        self._persist_many(
+            asset_id=asset_id,
+            project_id=project_id,
+            items=resolved,
+        )
         return resolved
 
     def _project_defaults(self, project_id: str) -> tuple[str, str]:
@@ -56,7 +59,7 @@ class FIRAssetTableResolver:
         except Exception:
             return "", ""
 
-    def _catalog(self) -> list[dict[str, Any]]:
+    def _catalog(self, identifiers: list[str]) -> list[dict[str, Any]]:
         semantic: list[dict[str, Any]] = []
         try:
             semantic_rows = self._session.sql(
@@ -79,14 +82,25 @@ class FIRAssetTableResolver:
             str(row["FQN"]).upper(): row
             for row in semantic
         }
+        table_names = sorted(
+            {
+                str(identifier).strip().strip('"').split(".")[-1].strip('"').upper()
+                for identifier in identifiers
+                if str(identifier).strip()
+            }
+        )
+        if not table_names:
+            return semantic
+        placeholders = ", ".join("?" for _value in table_names)
         try:
-            physical_rows = self._session.sql("""
+            physical_rows = self._session.sql(f"""
                 SELECT TABLE_CATALOG AS DATABASE_NAME, TABLE_SCHEMA AS SCHEMA_NAME,
                        TABLE_NAME, CONCAT_WS('.', TABLE_CATALOG, TABLE_SCHEMA, TABLE_NAME) AS FQN
                 FROM SNOWFLAKE.ACCOUNT_USAGE.TABLES
                 WHERE DELETED IS NULL
                   AND TABLE_SCHEMA <> 'INFORMATION_SCHEMA'
-            """).collect()
+                  AND UPPER(TABLE_NAME) IN ({placeholders})
+            """, table_names).collect()
         except Exception:
             # Environments without ACCOUNT_USAGE imported privileges can still
             # resolve every table represented in the semantic registry.
@@ -216,21 +230,53 @@ class FIRAssetTableResolver:
             "resolution_confidence": 1.0 if selected and method == "exact_fqn" else 0.9 if selected else 0.0,
         }
 
-    def _persist(self, *, asset_id: str, project_id: str, item: dict[str, Any]) -> None:
+    def _persist_many(
+        self,
+        *,
+        asset_id: str,
+        project_id: str,
+        items: list[dict[str, Any]],
+    ) -> None:
+        if not items:
+            return
+        payload = [
+            {
+                **item,
+                "asset_id": asset_id,
+                "project_id": project_id,
+            }
+            for item in items
+        ]
         self._session.sql(f"""
             MERGE INTO {self._references_table} target
-            USING (SELECT ? AS REFERENCE_ID) source
+            USING (
+                SELECT
+                    value:reference_id::STRING AS REFERENCE_ID,
+                    value:asset_id::STRING AS SQL_ASSET_ID,
+                    value:project_id::STRING AS PROJECT_ID,
+                    value:raw_identifier::STRING AS RAW_IDENTIFIER,
+                    value:reference_role::STRING AS REFERENCE_ROLE,
+                    value:resolution_status::STRING AS RESOLUTION_STATUS,
+                    value:resolved_fqn::STRING AS RESOLVED_FQN,
+                    value:candidate_fqns AS CANDIDATE_FQNS,
+                    value:semantic_table_view_id::STRING AS SEMANTIC_TABLE_VIEW_ID,
+                    value:semantic_status::STRING AS SEMANTIC_STATUS,
+                    value:resolution_method::STRING AS RESOLUTION_METHOD,
+                    value:resolution_confidence::FLOAT AS RESOLUTION_CONFIDENCE
+                FROM TABLE(FLATTEN(INPUT => PARSE_JSON(?)))
+            ) source
             ON target.REFERENCE_ID = source.REFERENCE_ID
             WHEN NOT MATCHED THEN INSERT (
                 REFERENCE_ID, SQL_ASSET_ID, PROJECT_ID, RAW_IDENTIFIER,
                 REFERENCE_ROLE, RESOLUTION_STATUS, RESOLVED_FQN, CANDIDATE_FQNS,
                 SEMANTIC_TABLE_VIEW_ID, SEMANTIC_STATUS, RESOLUTION_METHOD,
                 RESOLUTION_CONFIDENCE, ATTRIBUTES
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, PARSE_JSON(?), ?, ?, ?, ?, PARSE_JSON('{{}}'))
-        """, [
-            item["reference_id"], item["reference_id"], asset_id, project_id,
-            item["raw_identifier"], item["reference_role"], item["resolution_status"],
-            item["resolved_fqn"], json.dumps(item["candidate_fqns"]),
-            item["semantic_table_view_id"], item["semantic_status"],
-            item["resolution_method"], item["resolution_confidence"],
-        ]).collect()
+            ) VALUES (
+                source.REFERENCE_ID, source.SQL_ASSET_ID, source.PROJECT_ID,
+                source.RAW_IDENTIFIER, source.REFERENCE_ROLE,
+                source.RESOLUTION_STATUS, source.RESOLVED_FQN,
+                source.CANDIDATE_FQNS, source.SEMANTIC_TABLE_VIEW_ID,
+                source.SEMANTIC_STATUS, source.RESOLUTION_METHOD,
+                source.RESOLUTION_CONFIDENCE, PARSE_JSON('{{}}')
+            )
+        """, [json.dumps(payload, default=str)]).collect()

@@ -29,11 +29,25 @@ export const API_ROUTES = {
   semanticContext: {
     refresh: '/v1/semantic-context/refresh',
   },
+  bundleCuration: {
+    get: (bundleVersionId: string) =>
+      `/v1/workbench/bundle-curations/${encodeURIComponent(bundleVersionId)}`,
+    preview: (bundleVersionId: string) =>
+      `/v1/workbench/bundle-curations/${encodeURIComponent(bundleVersionId)}/preview`,
+    promote: (bundleVersionId: string) =>
+      `/v1/workbench/bundle-curations/${encodeURIComponent(bundleVersionId)}/promote`,
+  },
   projects: {
     list: '/v1/projects',
     summary: '/v1/projects/summary',
     create: '/v1/projects',
     sttms: (projectId: string) => `/v1/projects/${encodeURIComponent(projectId)}/sttms`,
+    attributes: (projectId: string) =>
+      `/v1/projects/${encodeURIComponent(projectId)}/attributes`,
+    attribute: (projectId: string, attributeId: string) =>
+      `/v1/projects/${encodeURIComponent(projectId)}/attributes/${encodeURIComponent(attributeId)}`,
+    importAttributes: (projectId: string) =>
+      `/v1/projects/${encodeURIComponent(projectId)}/attributes/import`,
     precedentLinks: (projectId: string) => `/v1/projects/${encodeURIComponent(projectId)}/precedent-links`,
   },
   sttms: {
@@ -44,9 +58,17 @@ export const API_ROUTES = {
   },
   testCases: {
     generate: '/v1/workbench/test-cases',
+    jobs: '/v1/workbench/test-cases/jobs',
+    job: (jobId: string) => `/v1/workbench/test-cases/jobs/${encodeURIComponent(jobId)}`,
+  },
+  dbtConversion: {
+    jobs: '/v1/workbench/dbt-conversion/jobs',
+    job: (jobId: string) => `/v1/workbench/dbt-conversion/jobs/${encodeURIComponent(jobId)}`,
   },
   upload: {
     sql: '/v1/upload/sql',
+    sqlExplanations: (assetId: string) =>
+      `/v1/upload/sql/${encodeURIComponent(assetId)}/explanations`,
     excel: '/v1/upload/excel',
     triggerLearning: '/v1/upload/trigger-learning',
   },
@@ -64,6 +86,15 @@ export const API_ROUTES = {
     firJobResume: (jobId: string) =>
       `/v1/workbench/fir/jobs/${encodeURIComponent(jobId)}/resume`,
     firPatterns: '/v1/workbench/fir/patterns',
+    recommendations: '/v1/workbench/recommendations',
+    recommendationPreview: (recommendationId: string) =>
+      `/v1/workbench/recommendations/${encodeURIComponent(recommendationId)}/preview`,
+    recommendationApply: (recommendationId: string) =>
+      `/v1/workbench/recommendations/${encodeURIComponent(recommendationId)}/apply`,
+    recommendationUndo: (recommendationId: string) =>
+      `/v1/workbench/recommendations/${encodeURIComponent(recommendationId)}/undo`,
+    recommendationFeedback: (recommendationId: string) =>
+      `/v1/workbench/recommendations/${encodeURIComponent(recommendationId)}/feedback`,
     agentGatewayWs: '/v1/workbench/agent/ws',
     autoMapJobs: '/v1/workbench/auto-map-jobs',
     autoMapDirect: '/v1/workbench/auto-map/direct',

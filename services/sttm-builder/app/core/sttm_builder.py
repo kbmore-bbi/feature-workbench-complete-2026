@@ -4506,7 +4506,9 @@ def _normalize_source_mappings(raw_result: dict[str, Any]) -> dict[str, Attribut
                 processing_order = None
 
         raw_mapping_mode = str(item.get("mapping_mode") or "").strip().lower()
-        if raw_mapping_mode in {"value", "constant", "literal", "placeholder"}:
+        if raw_mapping_mode in {"attribute", "project_attribute", "project_value"}:
+            mapping_mode = "attribute"
+        elif raw_mapping_mode in {"value", "constant", "literal", "placeholder"}:
             mapping_mode = "constant"
         else:
             mapping_mode = "source"
@@ -4526,6 +4528,7 @@ def _normalize_source_mappings(raw_result: dict[str, Any]) -> dict[str, Attribut
             source_attributes=source_attributes,
             mapping_mode=mapping_mode,
             constant_value=item.get("constant_value") or item.get("value"),
+            attribute_name=item.get("attribute_name") or item.get("project_attribute_name"),
             source_dependencies=item.get("source_dependencies") or source_attributes,
             value_binding_ids=item.get("value_binding_ids") or [],
             transformation_classification=classification,

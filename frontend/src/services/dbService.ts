@@ -38,9 +38,57 @@ import {
   saveMockDerivedSource,
 } from "@/data/mock";
 import { mockDelay, throwMockError, useMockDb } from "./mock/mockConfig";
-import { extractSseChunk } from "./streaming/sse";
 
 type TableRef = { database: string; schema: string; table: string };
+
+type AgentArtifactJob = {
+  job_id: string;
+  job_type: string;
+  status: "queued" | "running" | "completed" | "failed";
+  stage: string;
+  result?: {
+    data?: Record<string, unknown>;
+    error?: { detail?: string | null; title?: string | null } | null;
+  } | null;
+  error?: string | null;
+};
+
+function waitForAgentPoll(delayMs: number, signal?: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException("Agent job polling was cancelled.", "AbortError"));
+      return;
+    }
+    const handleAbort = () => {
+      window.clearTimeout(timer);
+      reject(new DOMException("Agent job polling was cancelled.", "AbortError"));
+    };
+    const timer = window.setTimeout(() => {
+      signal?.removeEventListener("abort", handleAbort);
+      resolve();
+    }, delayMs);
+    signal?.addEventListener("abort", handleAbort, { once: true });
+  });
+}
+
+async function pollAgentArtifactJob(
+  url: (jobId: string) => string,
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<AgentArtifactJob> {
+  const deadline = Date.now() + 30 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (signal?.aborted) throw new DOMException("Agent job polling was cancelled.", "AbortError");
+    const job = await getApiData<AgentArtifactJob>(url(jobId), {
+      timeout: 30000,
+      signal,
+      skipGlobalError: true,
+    });
+    if (job.status === "completed" || job.status === "failed") return job;
+    await waitForAgentPoll(2000, signal);
+  }
+  throw new Error("The agent job did not finish within 30 minutes. Its durable job record remains available.");
+}
 
 type DatabaseItem = {
   database_name: string;
@@ -644,8 +692,8 @@ export const dbService = {
       return mockDelay(buildMockTestCaseGeneration(payload));
     }
 
-    return postEnvelopeData<TestCaseGenerationResponse>(
-      API_ROUTES.testCases.generate,
+    const started = await postEnvelopeData<AgentArtifactJob>(
+      API_ROUTES.testCases.jobs,
       buildApiEnvelope("test_cases.generate", payload, {
         project_id: payload.project_id ?? null,
         sttm_id: payload.sttm_id ?? null,
@@ -653,8 +701,15 @@ export const dbService = {
         source_tables: payload.source_tables,
         relationships: payload.relationships ?? [],
       }),
-      { timeout: 420000 },
+      { timeout: 30000 },
     );
+    const job = await pollAgentArtifactJob(API_ROUTES.testCases.job, started.job_id);
+    if (job.status === "failed") throw new Error(job.error || "Test-case generation failed.");
+    if (job.result?.error) {
+      throw new Error(job.result.error.detail || job.result.error.title || "Test-case generation failed.");
+    }
+    if (!job.result?.data) throw new Error("Test-case generation completed without a result.");
+    return job.result.data as unknown as TestCaseGenerationResponse;
   },
 
   streamDbtConversion: async function* (
@@ -676,17 +731,15 @@ export const dbService = {
       return;
     }
 
-    const url = `${resolveApiBaseUrl()}/v1/workbench/dbt-conversion/stream`;
+    const url = `${resolveApiBaseUrl()}${API_ROUTES.dbtConversion.jobs}`;
     telemetry?.onEvent?.({
       type: "fetch_begin",
       url,
     });
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(
-        buildApiEnvelope("dbt_conversion.generate", payload, {
+    const started = await postEnvelopeData<AgentArtifactJob>(
+      API_ROUTES.dbtConversion.jobs,
+      buildApiEnvelope("dbt_conversion.generate", payload, {
           project_id: payload.project_id ?? null,
           sttm_id: payload.sttm_id ?? null,
           target_table: payload.target_table,
@@ -695,95 +748,48 @@ export const dbService = {
           relationships: payload.relationships ?? [],
           semantic_bundle_id: payload.semantic_bundle_id ?? null,
           semantic_view_name: payload.semantic_view_name ?? null,
-        }),
-      ),
-      signal,
-    });
+      }),
+      { timeout: 30000, signal },
+    );
 
     telemetry?.onEvent?.({
       type: "fetch_resolved",
       url,
-      status: response.status,
-      ok: response.ok,
-      headers: Object.fromEntries(response.headers.entries()),
+      status: 202,
+      ok: true,
+      headers: {},
     });
 
-    if (!response.ok || !response.body) {
-      const errorText = await response.text().catch(() => "");
-      throw new Error(
-        errorText
-          ? `DBT conversion stream failed with HTTP ${response.status}: ${errorText}`
-          : `DBT conversion stream failed with HTTP ${response.status}`,
-      );
-    }
-
-    const decoder = new TextDecoder();
-    const reader = response.body.getReader();
-    let buffer = "";
-    let receivedFirstChunk = false;
-
-    const parseChunk = (chunk: string) => {
-      let eventName = "message";
-      const dataParts: string[] = [];
-      for (const line of chunk.split(/\r?\n/)) {
-        if (!line.trim()) continue;
-        if (line.startsWith("event:")) {
-          eventName = line.slice(6).trim();
-          continue;
+    yield { event: "status", data: { phase: "queued", message: "DBT conversion job queued safely in the background." } };
+    let lastStage = "";
+    const deadline = Date.now() + 30 * 60 * 1000;
+    while (Date.now() < deadline) {
+      const job = await getApiData<AgentArtifactJob>(API_ROUTES.dbtConversion.job(started.job_id), {
+        timeout: 30000,
+        signal,
+        skipGlobalError: true,
+      });
+      if (job.stage !== lastStage) {
+        lastStage = job.stage;
+        yield { event: "status", data: { phase: job.stage, message: `DBT conversion: ${job.stage.replaceAll("_", " ")}.` } };
+      }
+      if (job.status === "failed") {
+        yield { event: "error", data: { message: job.error || "DBT conversion failed.", code: "DBT_CONVERSION_JOB_FAILED" } };
+        return;
+      }
+      if (job.status === "completed") {
+        if (!job.result?.data) {
+          yield { event: "error", data: { message: "DBT conversion completed without a result.", code: "DBT_CONVERSION_EMPTY_RESULT" } };
+          return;
         }
-        if (line.startsWith("data:")) {
-          dataParts.push(line.slice(5).trimStart());
-        }
+        yield { event: "final", data: job.result };
+        return;
       }
-      if (!dataParts.length) return null;
-      const raw = dataParts.join("\n");
-      try {
-        return { event: eventName, data: JSON.parse(raw) };
-      } catch {
-        return { event: eventName, data: { message: raw } };
-      }
-    };
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (!receivedFirstChunk) {
-        receivedFirstChunk = true;
-        telemetry?.onEvent?.({
-          type: "first_chunk",
-          byteLength: value.byteLength,
-        });
-      }
-      buffer += decoder.decode(value, { stream: true });
-      let extracted = extractSseChunk(buffer);
-      while (extracted) {
-        const parsed = parseChunk(extracted.chunk);
-        buffer = extracted.remaining;
-        if (parsed) {
-          telemetry?.onEvent?.({
-            type: "sse_event",
-            eventName: parsed.event,
-          });
-          yield parsed as
-            | { event: "status"; data: Record<string, unknown> }
-            | { event: "artifact"; data: Record<string, unknown> }
-            | { event: "final"; data: Record<string, unknown> }
-            | { event: "error"; data: { message?: string; code?: string } };
-        }
-        extracted = extractSseChunk(buffer);
-      }
+      await waitForAgentPoll(2000, signal);
     }
+    yield { event: "error", data: { message: "DBT conversion did not finish within 30 minutes.", code: "DBT_CONVERSION_JOB_TIMEOUT" } };
+    return;
 
-    if (buffer.trim()) {
-      const parsed = parseChunk(buffer);
-      if (parsed) {
-        yield parsed as
-          | { event: "status"; data: Record<string, unknown> }
-          | { event: "artifact"; data: Record<string, unknown> }
-          | { event: "final"; data: Record<string, unknown> }
-          | { event: "error"; data: { message?: string; code?: string } };
-      }
-    }
   },
 
   exportSttmWorkbook: async (

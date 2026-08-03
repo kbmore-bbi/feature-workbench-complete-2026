@@ -419,6 +419,11 @@ class Settings(BaseSettings):
         default=True,
         alias="FIR_TARGET_MAPPING_PATTERNS_V2",
     )
+    fir_document_lineage_v3: bool = Field(
+        default=True,
+        alias="FIR_DOCUMENT_LINEAGE_V3",
+        description="Enable SQL lineage V3 bundle curation and review workflows",
+    )
     fir_durable_jobs_v2: bool = Field(
         default=True,
         alias="FIR_DURABLE_JOBS_V2",
@@ -455,6 +460,18 @@ class Settings(BaseSettings):
         default="TBL_FIR_LEARNING_WORK_ITEMS",
         alias="SNOWFLAKE_FIR_LEARNING_WORK_ITEMS_TABLE",
     )
+    fir_pipeline_enabled: bool = Field(
+        default=True,
+        alias="FIR_PIPELINE_ENABLED",
+    )
+    fir_agent_processing_enabled: bool = Field(
+        default=True,
+        alias="FIR_AGENT_PROCESSING_ENABLED",
+    )
+    fir_catchup_schedule_cron: str = Field(
+        default="USING CRON 0 2,14 * * * UTC",
+        alias="FIR_CATCHUP_SCHEDULE_CRON",
+    )
     fir_agent_request_timeout_seconds: int = Field(
         default=840,
         alias="FIR_AGENT_REQUEST_TIMEOUT_SECONDS",
@@ -474,6 +491,26 @@ class Settings(BaseSettings):
     fir_agent_retry_limit: int = Field(
         default=2,
         alias="FIR_AGENT_RETRY_LIMIT",
+    )
+    fir_process_uploads_immediately: bool = Field(
+        default=True,
+        alias="FIR_PROCESS_UPLOADS_IMMEDIATELY",
+    )
+    fir_upload_explanations_enabled: bool = Field(
+        default=True,
+        alias="FIR_UPLOAD_EXPLANATIONS_ENABLED",
+    )
+    fir_upload_explanation_model: str = Field(
+        default="claude-haiku-4-5",
+        alias="FIR_UPLOAD_EXPLANATION_MODEL",
+    )
+    fir_agent_daily_request_limit: int = Field(
+        default=50,
+        alias="FIR_AGENT_DAILY_REQUEST_LIMIT",
+    )
+    fir_agent_daily_token_limit: int = Field(
+        default=20_000_000,
+        alias="FIR_AGENT_DAILY_TOKEN_LIMIT",
     )
     fir_job_max_runtime_seconds: int = Field(
         default=3600,
@@ -527,6 +564,10 @@ class Settings(BaseSettings):
     snowflake_projects_table: str = Field(
         default="TBL_PROJECTS",
         alias="SNOWFLAKE_PROJECTS_TABLE",
+    )
+    snowflake_project_attributes_table: str = Field(
+        default="TBL_PROJECT_ATTRIBUTES",
+        alias="SNOWFLAKE_PROJECT_ATTRIBUTES_TABLE",
     )
     snowflake_sttm_table: str = Field(
         default="TBL_STTM",

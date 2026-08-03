@@ -409,6 +409,10 @@ instructions:
       - On the MAPPING surface, if the user asks to map, remap, choose a source, fix a wrong
         source, suggest a source column, or explain why a source column fits a target attribute,
         route to AGT_SOURCE_MAPPING and return its canonical structured mapping result.
+      - Project-scoped hardcoded values are exposed as governed Value bindings in
+        context.relation_graph. Route their selection through AGT_SOURCE_MAPPING and preserve
+        mapping_mode=PROJECT_VALUE, attribute_name, placeholder constant_value, and
+        value_binding_ids so the UI can apply the Project Value mode without exposing literals.
       - On the MAPPING surface, if the user asks for a preprocessing rule, transformation rule,
         cast, parse, clean, convert, conditional expression, SQL fragment, CASE expression,
         or any attribute-level transformation logic, route to AGT_TRANSFORMATION_RULE and

@@ -13,8 +13,9 @@ class MappingSqlMappingItem(BaseModel):
     target_type: str | None = None
     source_column: str | None = None
     source_columns: list[str] = Field(default_factory=list)
-    mapping_mode: Literal["source", "constant"] = "source"
+    mapping_mode: Literal["source", "constant", "attribute"] = "source"
     constant_value: str | None = None
+    attribute_name: str | None = None
     expression: str | None = None
     rule: str | None = None
     status: str | None = None
@@ -69,6 +70,7 @@ class MappingSqlReviewRequest(BaseModel):
     generated_sql: str = Field(min_length=1)
     mappings: list[MappingSqlMappingItem] = Field(default_factory=list)
     preview_limit: int = Field(default=5, ge=1, le=20)
+    attempt_ai_repair: bool = False
 
 
 class MappingSqlPreviewRequest(MappingSqlReviewRequest):
@@ -89,13 +91,14 @@ class MappingSqlPreviewRow(BaseModel):
 class MappingSqlRepairOption(BaseModel):
     code: Literal[
         "apply_suggested_sql",
+        "fix_with_ai",
         "resolve_value_binding",
         "verify_source_contract",
         "edit_sql",
     ]
     title: str
     description: str
-    action: Literal["review_suggested_sql", "open_mapping", "edit_sql"]
+    action: Literal["review_suggested_sql", "request_ai_repair", "open_mapping", "edit_sql"]
     identifier: str | None = None
 
 

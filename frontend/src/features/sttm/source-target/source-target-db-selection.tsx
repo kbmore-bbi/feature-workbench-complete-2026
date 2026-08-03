@@ -40,6 +40,11 @@ import {
 
 function getDerivedSourceCounts(source: DerivedSource) {
   const sourceTableCount = source.tableIds?.length ?? source.baseSourceTables?.length ?? 0;
+  const outputColumnCount =
+    source.outputColumns?.length
+    || source.previewColumns?.length
+    || source.columns?.length
+    || 0;
   const selectedColumnCount = source.selectedColumnsByTable
     ? Object.values(source.selectedColumnsByTable).reduce(
         (total, columns) => total + columns.length,
@@ -47,7 +52,7 @@ function getDerivedSourceCounts(source: DerivedSource) {
       )
     : (source.columns?.length ?? 0);
 
-  return { sourceTableCount, selectedColumnCount };
+  return { sourceTableCount, selectedColumnCount, outputColumnCount };
 }
 
 function SidebarStateShell({ children }: { children: React.ReactNode }) {
@@ -537,7 +542,8 @@ export default function DataSelectionPanel() {
       {derivedSources.length ? (
         derivedSources.map((source) => {
           const isSelected = !!source.isSelected;
-          const { sourceTableCount, selectedColumnCount } = getDerivedSourceCounts(source);
+          const { sourceTableCount, selectedColumnCount, outputColumnCount } =
+            getDerivedSourceCounts(source);
 
           return (
             <AiaBox
@@ -579,9 +585,9 @@ export default function DataSelectionPanel() {
                   sx={{
                     ...BODY_SX,
                     color: TYPOGRAPHY_TOKENS.body.color,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
+                    whiteSpace: "normal",
+                    overflowWrap: "anywhere",
+                    wordBreak: "break-word",
                   }}
                 >
                   {source.sourceName}
@@ -594,7 +600,10 @@ export default function DataSelectionPanel() {
                     color: TYPOGRAPHY_TOKENS.secondaryText.color,
                   }}
                 >
-                  {sourceTableCount} source tables · {selectedColumnCount} selected columns
+                  {sourceTableCount} source table{sourceTableCount === 1 ? "" : "s"} ·{" "}
+                  {outputColumnCount > 0
+                    ? `${outputColumnCount} output column${outputColumnCount === 1 ? "" : "s"}`
+                    : `${selectedColumnCount} selected columns`}
                 </AiaText>
               </AiaBox>
             </AiaBox>

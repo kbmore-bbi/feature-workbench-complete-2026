@@ -60,6 +60,19 @@ def _rows(session, query, params=None):
         return []
 
 
+def _consume_trigger_stream(session):
+    marker = f"TMP_FIR_STREAM_{uuid.uuid4().hex[:12].upper()}"
+    try:
+        session.sql(f"CREATE TEMP TABLE {marker} (ROW_COUNT NUMBER)").collect()
+        session.sql(
+            f"INSERT INTO {marker} "
+            f"SELECT COUNT(*) FROM {NS}.STM_FIR_360_CHANGES"
+        ).collect()
+    except Exception:
+        # Direct/manual calls remain valid when the stream is not deployed yet.
+        pass
+
+
 def _store_evidence_item(
     session,
     *,
@@ -302,6 +315,7 @@ def _semantic_evidence(session, table_fqns):
 
 
 def enrich_context(session, batch_size=100):
+    _consume_trigger_stream(session)
     pending = _rows(session, f"""
         SELECT f.FIR_RECORD_ID, f.FIR_RECORD_KEY, f.PROJECT_ID, f.STTM_ID, f.CONTEXT_KEY,
                f.SNAPSHOT_ID, f.MILESTONE, f.FEEDBACK_PAYLOAD, f.SOURCE_TYPE,

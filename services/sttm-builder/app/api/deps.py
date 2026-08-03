@@ -9,6 +9,7 @@ from app.auth.dependencies import get_current_principal
 from app.auth.models import AppPersona
 from app.core.config import Settings, get_settings
 from app.core.auto_mapping_proxy import AutoMappingProxyClient
+from app.core.bundle_curation import BundleCurationService
 from app.core.datahub import DataHubAdapter
 from app.core.snowflake import (
     SnowflakeClient,
@@ -19,6 +20,7 @@ from app.core.snowflake import (
 from app.core.snowflake_agent import SnowflakeAgentClient
 from app.core.snowflake_analyst import SnowflakeAnalystClient
 from app.core.dbt_conversion import DbtConversionService
+from app.core.agent_artifact_jobs import AgentArtifactJobService
 from app.core.derived_source import DerivedSourceService
 from app.core.conversation import ConversationService
 from app.core.conversation_memory import ConversationMemoryService
@@ -26,6 +28,7 @@ from app.core.learning_retrieval import LearningRetrievalService
 from app.core.mapping_sql import MappingSqlService
 from app.core.export_workbook import WorkbookExportService
 from app.core.project_service import ProjectService
+from app.core.recommendation_actions import RecommendationActionService
 from app.core.prepared_context import PreparedWorkspaceContextService
 from app.core.semantic_context import SemanticContextService
 from app.core.semantic_model import SemanticModelService
@@ -411,6 +414,33 @@ def get_project_service(
     )
 
 
+def get_recommendation_action_service(
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    project_service: Annotated[ProjectService, Depends(get_project_service)],
+    conversation_memory: Annotated[
+        ConversationMemoryService, Depends(get_conversation_memory_service)
+    ],
+    derived_source_service: Annotated[
+        DerivedSourceService, Depends(get_derived_source_execution_service)
+    ],
+) -> RecommendationActionService:
+    return RecommendationActionService(
+        session=client.session,
+        settings=settings,
+        project_service=project_service,
+        memory_service=conversation_memory,
+        derived_source_service=derived_source_service,
+    )
+
+
+def get_bundle_curation_service(
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> BundleCurationService:
+    return BundleCurationService(client.session, settings)
+
+
 def get_conversation_service(
     request: Request,
     client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
@@ -486,6 +516,13 @@ def get_dbt_conversion_service(
         ),
         memory_service=conversation_memory,
     )
+
+
+def get_agent_artifact_job_service(
+    client: Annotated[SnowflakeClient, Depends(get_snowflake_client)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> AgentArtifactJobService:
+    return AgentArtifactJobService(client.session, settings)
 
 
 def get_test_case_generation_service(

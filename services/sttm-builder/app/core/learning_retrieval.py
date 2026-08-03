@@ -677,6 +677,7 @@ class LearningRetrievalService:
                     IFF(a.CONDITION:constant_value IS NOT NULL OR UPPER(a.CONDITION:preprocessing_rule_type::STRING) = 'VALUE', 'constant', 'source')
                 ) as mapping_mode,
                 a.CONDITION:constant_value::STRING as constant_value,
+                a.CONDITION:attribute_name::STRING as project_attribute_name,
                 a.TRANSFORMATION_LOGIC as preprocessing_rule,
                 COALESCE(a.CONDITION:preprocessing_rule_type::STRING, 'Direct') as preprocessing_rule_type,
                 COALESCE(a.CONDITION:confidence::NUMBER, 0.7) as confidence_score,
@@ -714,9 +715,16 @@ class LearningRetrievalService:
                     target_column=str(row["TARGET_COLUMN"] or ""),
                     source_columns=self._parse_source_columns(row["SOURCE_COLUMNS"]),
                     mapping_mode=(
-                        "constant" if str(row["MAPPING_MODE"] or "source").lower() == "constant" else "source"
+                        str(row["MAPPING_MODE"] or "source").lower()
+                        if str(row["MAPPING_MODE"] or "source").lower() in {"constant", "attribute"}
+                        else "source"
                     ),
                     constant_value=(str(row["CONSTANT_VALUE"]) if row["CONSTANT_VALUE"] is not None else None),
+                    attribute_name=(
+                        str(row["PROJECT_ATTRIBUTE_NAME"])
+                        if row["PROJECT_ATTRIBUTE_NAME"] is not None
+                        else None
+                    ),
                     preprocessing_rule=row["PREPROCESSING_RULE"],
                     preprocessing_rule_type=str(row["PREPROCESSING_RULE_TYPE"] or "Direct"),
                     confidence_score=float(row["CONFIDENCE_SCORE"]) if row["CONFIDENCE_SCORE"] else 0.7,
@@ -788,6 +796,7 @@ class LearningRetrievalService:
             if not source_columns:
                 source_columns = self._parse_source_columns(data.get("SOURCE_COLUMN"))
             constant_value = condition.get("constant_value")
+            attribute_name = condition.get("attribute_name")
             mapping_mode = str(condition.get("mapping_mode") or "").lower()
             if not mapping_mode:
                 mapping_mode = "constant" if constant_value is not None else "source"
@@ -795,7 +804,7 @@ class LearningRetrievalService:
             imported_rule_type = str(
                 condition.get("preprocessing_rule_type")
                 or imported_rule_label
-                or ("Value" if mapping_mode == "constant" else "Direct")
+                or ("Value" if mapping_mode in {"constant", "attribute"} else "Direct")
             ).strip()
             transformation_logic = data.get("TRANSFORMATION_LOGIC")
             preprocessing_rule = transformation_logic or imported_rule_label or None
@@ -804,9 +813,12 @@ class LearningRetrievalService:
                     "mapping_id": str(data.get("ATTRIBUTE_ID") or ""),
                     "target_column": str(data.get("ATTRIBUTE_NAME") or ""),
                     "target_type": data.get("DATA_TYPE"),
-                    "mapping_mode": "constant" if mapping_mode == "constant" else "source",
+                    "mapping_mode": (
+                        mapping_mode if mapping_mode in {"constant", "attribute"} else "source"
+                    ),
                     "source_columns": source_columns,
                     "constant_value": constant_value,
+                    "attribute_name": attribute_name,
                     "preprocessing_rule": preprocessing_rule,
                     "preprocessing_rule_type": imported_rule_type,
                     "description": data.get("DESCRIPTION"),

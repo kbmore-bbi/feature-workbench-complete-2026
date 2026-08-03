@@ -19,9 +19,6 @@ import { APP_NAV_ROUTES, resolveAppNavItem } from "./app-sidebar-types";
 import { useAppSidebar } from "./app-sidebar-context";
 import { SIDEBAR_NAV_TOKENS } from "@/config/sidebar-nav-tokens";
 import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
-import { useAppDispatch } from "@/store/hooks";
-import { resetBuilderForNewMapping } from "@/features/sttm/store/sttm-builder-slice";
-import { markExplicitNewDraftIntent } from "@/features/sttm/context/sttm-session-intent";
 
 export const EXPANDED_APP_SIDEBAR_WIDTH = 260;
 export const COLLAPSED_APP_SIDEBAR_WIDTH = 70;
@@ -164,7 +161,6 @@ export default function AppSidebar({
   activeNav,
   initialNewMappingOpen = false,
 }: AppSidebarProps) {
-  const dispatch = useAppDispatch();
   const router = useRouter();
   const pathname = usePathname();
   const { collapsed, setCollapsed, hydrated } = useAppSidebar();
@@ -261,15 +257,6 @@ export default function AppSidebar({
           if (initialNewMappingOpen) {
             router.replace(APP_NAV_ROUTES.Dashboard);
           }
-        }}
-        onBuildManually={(details) => {
-          setIsNewMappingOpen(false);
-          markExplicitNewDraftIntent();
-          dispatch(resetBuilderForNewMapping());
-          const query = details.projectId
-            ? `?project_id=${encodeURIComponent(details.projectId)}`
-            : "";
-          router.push(`/sttm/builder/new${query}`);
         }}
       />
     </>

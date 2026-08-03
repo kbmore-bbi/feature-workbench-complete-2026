@@ -10,6 +10,7 @@ from app.schema.workspace_context import WorkbenchContextSnapshotV1
 
 
 ProjectStatus = Literal["ACTIVE", "ARCHIVED"]
+ProjectAttributeStatus = Literal["ACTIVE", "INACTIVE"]
 STTMStatus = Literal[
     "DRAFT",
     "IMPORTING",
@@ -94,6 +95,51 @@ class ProjectRecord(BaseModel):
     coverage_percent: float = 0
     metadata: dict[str, Any] = Field(default_factory=dict)
     linked_project_ids: list[str] = Field(default_factory=list)
+
+
+class ProjectAttributeCreateRequest(BaseModel):
+    attribute_name: str = Field(
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
+    attribute_type: str = Field(min_length=1, max_length=50)
+    attribute_value: str = Field(max_length=16777216)
+
+
+class ProjectAttributeUpdateRequest(BaseModel):
+    attribute_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        pattern=r"^[A-Za-z_][A-Za-z0-9_]*$",
+    )
+    attribute_type: str | None = Field(default=None, min_length=1, max_length=50)
+    attribute_value: str | None = Field(default=None, max_length=16777216)
+    status: ProjectAttributeStatus | None = None
+
+
+class ProjectAttributeImportRequest(BaseModel):
+    source_project_id: str = Field(min_length=1)
+    attribute_ids: list[str] = Field(default_factory=list)
+    overwrite_existing: bool = False
+
+
+class ProjectAttributeRecord(BaseModel):
+    attribute_id: str
+    project_id: str
+    project_name: str | None = None
+    attribute_name: str
+    attribute_type: str
+    attribute_value: str
+    source_project_id: str | None = None
+    source_project_name: str | None = None
+    source_attribute_id: str | None = None
+    status: str = "ACTIVE"
+    created_by: str | None = None
+    updated_by: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 class STTMCreateRequest(BaseModel):

@@ -192,15 +192,18 @@ deploy_procedures() {
   run_sql_file "SP_FIR_CONSOLIDATE_SEMANTIC_VERSIONS" "${FIR_DIR}/procedures/sp-fir-consolidate-semantic-versions.sql"
   run_sql_file "SP_FIR_READ_DOCUMENTS"                "${FIR_DIR}/procedures/sp-fir-read-documents.sql"
   run_sql_file "SP_FIR_READ_PENDING_RECORDS"          "${FIR_DIR}/procedures/sp-fir-read-pending-records.sql"
+  run_sql_file "SP_FIR_READ_SEMANTIC_EVIDENCE"        "${FIR_DIR}/procedures/sp-fir-read-semantic-evidence.sql"
   run_sql_file "SP_FIR_STORE_INFERENCE"               "${FIR_DIR}/procedures/sp-fir-store-inference.sql"
   run_sql_file "SP_FIR_STORE_RECOMMENDATION"          "${FIR_DIR}/procedures/sp-fir-store-recommendation.sql"
   run_sql_file "SP_FIR_RECONCILE_RECOMMENDATION_IDENTITIES" "${FIR_DIR}/procedures/sp-fir-reconcile-recommendation-identities.sql"
   run_sql_file "SP_FIR_STORE_QA_PAIR"                 "${FIR_DIR}/procedures/sp-fir-store-qa-pair.sql"
+  run_sql_file "FIR agent learning helpers"           "${FIR_DIR}/procedures/sp-agent-learning-helpers.sql"
   run_sql_file "SP_FIR_MATERIALIZE_DERIVED_SOURCE"    "${FIR_DIR}/procedures/sp-fir-materialize-derived-source.sql"
   run_sql_file "SP_FIR_PRECOMPUTE_FROM_SEMANTIC_VIEW" "${FIR_DIR}/procedures/sp-fir-precompute-from-semantic-view.sql"
   run_sql_file "SP_FIR_PRECOMPUTE_PERMUTATIONS"       "${FIR_DIR}/procedures/sp-fir-precompute-permutations.sql"
   run_sql_file "SP_FIR_SCORE_RECOMMENDATIONS"         "${FIR_DIR}/procedures/sp-fir-score-recommendations.sql"
   run_sql_file "SP_FIR_INVOKE_AGENT"                  "${FIR_DIR}/procedures/sp-fir-invoke-agent.sql"
+  run_sql_file "SP_FIR_PROCESS_LEARNING_QUEUE"        "${FIR_DIR}/procedures/sp-fir-process-learning-queue.sql"
 }
 
 if [[ "${SCHEMA_ONLY}" == "true" ]]; then
@@ -291,6 +294,7 @@ run_sql_file "TBL_AGENT_FIR_360"              "${FIR_DIR}/tables/tbl_agent_fir_3
 run_sql_file "TBL_SEMANTIC_VIEW_VERSIONS"      "${FIR_DIR}/tables/tbl_semantic_view_versions.sql"
 run_sql_file "TBL_FIR_AGENT_RECOMMENDATIONS"   "${FIR_DIR}/tables/tbl_fir_agent_recommendations.sql"
 run_sql_file "FIR 2.0 additive schema"          "${FIR_DIR}/tables/fir_v2_schema.sql"
+run_sql_file "FIR 2.0 linking schema"           "${FIR_DIR}/tables/fir_v2_linking_schema.sql"
 
 # 2. Streams
 echo "[ 2/7 ] Streams"

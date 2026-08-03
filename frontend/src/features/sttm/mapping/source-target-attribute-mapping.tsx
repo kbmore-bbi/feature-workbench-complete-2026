@@ -8,7 +8,10 @@ import { useTour } from '@/features/tour/engine/tour-context';
 
 import { useSttmBuilderContext } from '@/features/sttm/context/sttm-builder-context';
 import type { MappingMode, MappingRuleType } from '@/features/sttm/types/sttm.types';
-import { getAttributesForProject } from '@/features/attributes/attributes-data';
+import {
+  listProjectAttributes,
+  type ProjectAttributeRecord,
+} from '@/services/projectService';
 import {
   buildSourceColumnOptions,
   formatSqlType,
@@ -27,6 +30,11 @@ import {
   MappingTargetColumnCell,
   MappingTypePreviewCell,
 } from './cells';
+import type { FIRMappingCandidate } from './cells/mapping-source-columns-cell';
+import {
+  recommendationService,
+  type ApplicableRecommendation,
+} from '@/services/recommendationService';
 import { MappingDataPreviewCell } from './data-preview';
 import {
   MAPPING_TABLE_CHECKBOX_SX,
@@ -377,25 +385,51 @@ const SourceTargetAttributeMapping = () => {
     derivedSources,
     activeProjectId,
     activeProjectName,
+    activeSttmId,
+    flushWorkspace,
+    getWorkspaceSnapshot,
   } = useSttmBuilderContext();
   const { notifyTourContextChanged } = useTour();
 
   const [columnFilters, setColumnFilters] = useState<MappingColumnFilters>(EMPTY_COLUMN_FILTERS);
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(DEFAULT_ROWS_PER_PAGE);
+  const [applicableRecommendations, setApplicableRecommendations] = useState<ApplicableRecommendation[]>([]);
+  const [recommendationUndoByRow, setRecommendationUndoByRow] = useState<Record<string, {
+    sourceColumn: string | null;
+    sourceColumns: string[];
+    status: "MAPPED" | "UNMAPPED" | "PROCESSING";
+    confidenceScore: number | null;
+    confidenceReason: string | null;
+    usedRecommendationIds: string[];
+  }>>({});
+  const [recommendationActionErrors, setRecommendationActionErrors] = useState<Record<string, string>>({});
+  const [projectAttributes, setProjectAttributes] = useState<ProjectAttributeRecord[]>([]);
 
   const sortedMappings = mappings;
   const sourceColumnOptions = buildSourceColumnOptions(sourceAttributeGroups, derivedSources);
-  const projectAttributes = useMemo(
-    () => getAttributesForProject(activeProjectId, activeProjectName),
-    [activeProjectId, activeProjectName],
-  );
+  useEffect(() => {
+    if (!activeProjectId) {
+      setProjectAttributes([]);
+      return;
+    }
+    let cancelled = false;
+    listProjectAttributes(activeProjectId)
+      .then((records) => {
+        if (!cancelled) setProjectAttributes(records);
+      })
+      .catch(() => {
+        if (!cancelled) setProjectAttributes([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeProjectId, activeProjectName]);
   const attributeOptions = useMemo(
-    () =>
-      projectAttributes.map((attribute) => ({
-        label: attribute.attributeName,
-        value: attribute.attributeName,
-      })),
+    () => projectAttributes.map((attribute) => ({
+      label: attribute.attribute_name,
+      value: attribute.attribute_name,
+    })),
     [projectAttributes],
   );
 
@@ -491,28 +525,91 @@ const SourceTargetAttributeMapping = () => {
   }, [columnFilters, sortedMappings]);
 
   useEffect(() => {
-    setPage(0);
-  }, [columnFilters, rowsPerPage]);
-
-  useEffect(() => {
     if (selectedMappingIds.length > 0) {
       notifyTourContextChanged();
     }
   }, [notifyTourContextChanged, selectedMappingIds.length]);
 
-  useEffect(() => {
-    const maxPage = Math.max(0, Math.ceil(filteredMappings.length / rowsPerPage) - 1);
-    if (page > maxPage) {
-      setPage(maxPage);
-    }
-  }, [filteredMappings.length, page, rowsPerPage]);
+  const maxPage = Math.max(0, Math.ceil(filteredMappings.length / rowsPerPage) - 1);
+  const safePage = Math.min(page, maxPage);
 
   const paginatedMappings = useMemo(() => {
-    const start = page * rowsPerPage;
+    const start = safePage * rowsPerPage;
     return filteredMappings.slice(start, start + rowsPerPage);
-  }, [filteredMappings, page, rowsPerPage]);
+  }, [filteredMappings, safePage, rowsPerPage]);
+
+  useEffect(() => {
+    if (!activeProjectId || !activeSttmId || !paginatedMappings.length) {
+      return;
+    }
+    const controller = new AbortController();
+    void recommendationService.listApplicable({
+      projectId: activeProjectId,
+      sttmId: activeSttmId,
+      workflowStage: 'mapping',
+      targetColumns: paginatedMappings.map((row) => row.targetColumn),
+      limit: Math.min(200, paginatedMappings.length * 3),
+      signal: controller.signal,
+    }).then(setApplicableRecommendations).catch((error: unknown) => {
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        setApplicableRecommendations([]);
+      }
+    });
+    return () => controller.abort();
+  }, [activeProjectId, activeSttmId, paginatedMappings]);
+
+  const firCandidatesByTarget = useMemo(() => {
+    const result = new Map<string, FIRMappingCandidate[]>();
+    if (!activeProjectId || !activeSttmId) return result;
+    for (const recommendation of applicableRecommendations) {
+      const target = String(
+        recommendation.target_entity.target_column
+        ?? recommendation.target_entity.column
+        ?? '',
+      ).toUpperCase();
+      if (!target) continue;
+      const payload = recommendation.action_payload;
+      const rawSources = payload.source_columns
+        ?? payload.candidate_source_columns
+        ?? (payload.source_column
+          ? [payload.source_column]
+          : recommendation.candidate_sources);
+      const sources = Array.isArray(rawSources) ? rawSources : [rawSources];
+      const sourceColumn = sources
+        .map((item) => (
+          typeof item === 'string'
+            ? item
+            : item && typeof item === 'object'
+              ? String(
+                  (item as Record<string, unknown>).source_column
+                  ?? (item as Record<string, unknown>).column
+                  ?? (item as Record<string, unknown>).fqn
+                  ?? '',
+                )
+              : ''
+        ))
+        .find(Boolean);
+      const candidate: FIRMappingCandidate = {
+        recommendationId: recommendation.recommendation_id,
+        sourceColumn: sourceColumn ?? null,
+        title: recommendation.title,
+        businessRationale: recommendation.business_rationale,
+        evidenceSummary: recommendation.evidence_summary,
+        confidence: recommendation.confidence,
+        compatibilityTier: recommendation.compatibility_tier,
+        missingDependencies: recommendation.missing_dependencies,
+        canApply: recommendation.can_apply,
+        blockedReasons: recommendation.blocked_reasons,
+        actionKind: recommendation.action_kind,
+        expectedWorkspaceHash: recommendation.expected_workspace_hash,
+      };
+      result.set(target, [...(result.get(target) ?? []), candidate].slice(0, 3));
+    }
+    return result;
+  }, [activeProjectId, activeSttmId, applicableRecommendations]);
 
   const updateColumnFilter = (key: keyof MappingColumnFilters, value: string) => {
+    setPage(0);
     setColumnFilters((current) => ({
       ...current,
       [key]: value,
@@ -1011,7 +1108,7 @@ const SourceTargetAttributeMapping = () => {
                         confidenceReason: isConstant
                           ? "A hard-coded value was assigned manually."
                           : isAttribute
-                            ? "A project attribute was assigned manually."
+                            ? "A project value was assigned manually."
                             : null,
                         usedInferenceIds: [],
                         usedRecommendationIds: [],
@@ -1021,7 +1118,7 @@ const SourceTargetAttributeMapping = () => {
                           : isConstant
                             ? `Assign a hard-coded value to ${row.targetColumn}.`
                             : isAttribute
-                              ? `Assign a project attribute to ${row.targetColumn}.`
+                              ? `Assign a project value to ${row.targetColumn}.`
                               : null,
                       });
                     }}
@@ -1047,21 +1144,21 @@ const SourceTargetAttributeMapping = () => {
                     }}
                     onAttributeChange={(nextAttributeName) => {
                       const selectedAttribute = projectAttributes.find(
-                        (attribute) => attribute.attributeName === nextAttributeName,
+                        (attribute) => attribute.attribute_name === nextAttributeName,
                       );
                       updateMapping(row.id, {
                         mappingMode: "attribute",
                         attributeName: nextAttributeName || null,
-                        constantValue: selectedAttribute?.attributeValue ?? null,
+                        constantValue: selectedAttribute?.attribute_value ?? null,
                         sourceColumn: null,
                         sourceColumns: [],
-                        sourceType: selectedAttribute?.attributeType ?? null,
+                        sourceType: selectedAttribute?.attribute_type ?? null,
                         expression: null,
                         rule: "Direct",
                         status: nextAttributeName.trim() ? "MAPPED" : "UNMAPPED",
                         confidenceScore: null,
                         confidenceReason: nextAttributeName.trim()
-                          ? "A project attribute was assigned manually."
+                          ? "A project value was assigned manually."
                           : null,
                         usedInferenceIds: [],
                         usedRecommendationIds: [],
@@ -1069,7 +1166,7 @@ const SourceTargetAttributeMapping = () => {
                         description: row.descriptionEdited
                           ? row.description
                           : nextAttributeName.trim()
-                            ? `Assign the project attribute ${nextAttributeName.trim()} to ${row.targetColumn}.`
+                            ? `Assign the project value ${nextAttributeName.trim()} to ${row.targetColumn}.`
                             : null,
                       });
                     }}
@@ -1107,6 +1204,109 @@ const SourceTargetAttributeMapping = () => {
                       }
 
                       updateMapping(row.id, updates);
+                    }}
+                    firCandidates={firCandidatesByTarget.get(row.targetColumn.toUpperCase()) ?? []}
+                    onApplyFirCandidate={(candidate) => {
+                      if (!candidate.sourceColumn) return;
+                      void (async () => {
+                        try {
+                          await flushWorkspace();
+                          const refreshed = await recommendationService.listApplicable({
+                            projectId: activeProjectId || '',
+                            sttmId: activeSttmId || '',
+                            workflowStage: 'mapping',
+                            targetColumns: [row.targetColumn],
+                            limit: 3,
+                          });
+                          const currentRecommendation = refreshed.find(
+                            (item) => item.recommendation_id === candidate.recommendationId,
+                          );
+                          const expectedWorkspaceHash =
+                            currentRecommendation?.expected_workspace_hash
+                            || candidate.expectedWorkspaceHash
+                            || '';
+                          if (!expectedWorkspaceHash) {
+                            throw new Error('The current workspace hash is unavailable. Refresh the mapping and try again.');
+                          }
+                          const workspaceSnapshot = {
+                            ...getWorkspaceSnapshot(),
+                            context_hash: expectedWorkspaceHash,
+                          };
+                          const preview = await recommendationService.preview(
+                            candidate.recommendationId,
+                            {
+                              sttm_id: activeSttmId || '',
+                              workspace_snapshot: workspaceSnapshot,
+                              expected_workspace_hash: expectedWorkspaceHash,
+                            },
+                          );
+                          if (!preview.can_apply) {
+                            throw new Error(preview.blocked_reasons.join(' '));
+                          }
+                          setRecommendationUndoByRow((current) => ({
+                            ...current,
+                            [row.id]: {
+                              sourceColumn: row.sourceColumn,
+                              sourceColumns: row.sourceColumns ?? [],
+                              status: row.status,
+                              confidenceScore: row.confidenceScore ?? null,
+                              confidenceReason: row.confidenceReason ?? null,
+                              usedRecommendationIds: row.usedRecommendationIds ?? [],
+                            },
+                          }));
+                          const nextColumns = parseSourceColumns(candidate.sourceColumn!);
+                          updateMapping(row.id, {
+                            sourceColumn: candidate.sourceColumn,
+                            sourceColumns: nextColumns,
+                            mappingMode: "source",
+                            constantValue: null,
+                            status: nextColumns.length ? "MAPPED" : "UNMAPPED",
+                            confidenceScore: candidate.confidence ?? null,
+                            confidenceReason:
+                              candidate.businessRationale
+                              || candidate.evidenceSummary
+                              || candidate.title,
+                            usedRecommendationIds: Array.from(new Set([
+                              ...(row.usedRecommendationIds ?? []),
+                              candidate.recommendationId,
+                            ])),
+                          });
+                          setRecommendationActionErrors((current) => {
+                            const next = { ...current };
+                            delete next[row.id];
+                            return next;
+                          });
+                        } catch (error) {
+                          setRecommendationActionErrors((current) => ({
+                            ...current,
+                            [row.id]: error instanceof Error
+                              ? error.message
+                              : 'The recommendation could not be previewed against the current workspace.',
+                          }));
+                        }
+                      })();
+                    }}
+                    onPrepareSource={(candidate) => {
+                      window.dispatchEvent(new CustomEvent('sttm:prepare-source', {
+                        detail: {
+                          targetColumn: row.targetColumn,
+                          recommendationId: candidate.recommendationId,
+                          missingDependencies: candidate.missingDependencies,
+                        },
+                      }));
+                    }}
+                    onKeepUnresolved={() => undefined}
+                    recommendationUndoAvailable={Boolean(recommendationUndoByRow[row.id])}
+                    recommendationActionError={recommendationActionErrors[row.id] ?? null}
+                    onUndoRecommendation={() => {
+                      const previous = recommendationUndoByRow[row.id];
+                      if (!previous) return;
+                      updateMapping(row.id, previous);
+                      setRecommendationUndoByRow((current) => {
+                        const next = { ...current };
+                        delete next[row.id];
+                        return next;
+                      });
                     }}
                     width={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
@@ -1201,7 +1401,7 @@ const SourceTargetAttributeMapping = () => {
       <AiaTablePagination
         component="div"
         count={filteredMappings.length}
-        page={page}
+        page={safePage}
         onPageChange={(_, nextPage) => setPage(nextPage)}
         rowsPerPage={rowsPerPage}
         onRowsPerPageChange={(event) => {

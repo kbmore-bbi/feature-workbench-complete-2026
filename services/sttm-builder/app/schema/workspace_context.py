@@ -148,8 +148,9 @@ class WorkspaceMappingRow(BaseModel):
     target_type: str | None = None
     source_columns: list[str] = Field(default_factory=list)
     source_type: str | None = None
-    mapping_mode: Literal["source", "constant"] = "source"
+    mapping_mode: Literal["source", "constant", "attribute"] = "source"
     constant_value: str | None = None
+    attribute_name: str | None = None
     rule: str | None = None
     expression: str | None = None
     natural_language_rule: str | None = None

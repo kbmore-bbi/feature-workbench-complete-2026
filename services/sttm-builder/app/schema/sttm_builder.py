@@ -134,6 +134,7 @@ class ValueBinding(BaseModel):
     value: str
     resolved_value: str | None = None
     data_type: str | None = None
+    attribute_name: str | None = None
     is_placeholder: bool = False
     allow_project_specific_value: bool = False
     resolution_status: str = "resolved"
@@ -276,8 +277,9 @@ class SimilarMappingItem(BaseModel):
     sttm_name: str
     target_column: str
     source_columns: list[str]
-    mapping_mode: Literal["source", "constant"] = "source"
+    mapping_mode: Literal["source", "constant", "attribute"] = "source"
     constant_value: str | None = None
+    attribute_name: str | None = None
     preprocessing_rule: str | None = None
     preprocessing_rule_type: str | None = None
     confidence_score: float
@@ -887,8 +889,9 @@ class AttributeMapping(BaseModel):
     used_inference_ids: list[str] = Field(default_factory=list)
     used_recommendation_ids: list[str] = Field(default_factory=list)
     used_learning_ids: list[str] = Field(default_factory=list)
-    mapping_mode: Literal["source", "constant"] = "source"
+    mapping_mode: Literal["source", "constant", "attribute"] = "source"
     constant_value: str | None = None
+    attribute_name: str | None = None
     source_dependencies: list[str] = Field(default_factory=list)
     value_binding_ids: list[str] = Field(default_factory=list)
     transformation_classification: Literal[
@@ -913,6 +916,8 @@ class AttributeMapping(BaseModel):
     @classmethod
     def _normalize_agent_mapping_mode(cls, value: Any) -> str:
         token = str(value or "source").strip().lower()
+        if token in {"attribute", "project_attribute", "project_value"}:
+            return "attribute"
         return "constant" if token in {"value", "constant", "literal", "placeholder"} else "source"
 
     @field_validator("transformation_classification", mode="before")

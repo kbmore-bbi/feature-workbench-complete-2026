@@ -19,6 +19,7 @@ from app.routers import (
     agents,
     agent_gateway,
     artifacts,
+    bundle_curation,
     conversation,
     coco,
     dbt_conversion,
@@ -29,6 +30,7 @@ from app.routers import (
     mapping_sql,
     prepared_context,
     projects,
+    recommendation_actions,
     semantic_context,
     semantic_model,
     sttm_builder,
@@ -57,6 +59,8 @@ router.include_router(semantic_model.router)
 router.include_router(semantic_context.router)
 router.include_router(fir_admin.router)
 router.include_router(fir_learning.router)
+router.include_router(recommendation_actions.router)
+router.include_router(bundle_curation.router)
 
 
 @router.post("/workbench/auto-map-jobs", status_code=202)

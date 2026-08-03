@@ -204,10 +204,53 @@ def read_documents(session, limit_count: int = 10, status_filter: str = 'active'
             doc['table_semantics'] = table_semantics
             doc['column_semantics'] = column_semantics
             doc['prior_fir_evidence'] = prior_inferences
-            doc['inference_ready'] = bool(references) and all(
-                item['resolution_status'] == 'resolved' and item['semantic_status'] == 'active'
-                for item in references
-            )
+            resolved_references = [
+                item for item in references
+                if item['resolution_status'] == 'resolved' and item['resolved_fqn']
+            ]
+            semantic_ready_references = [
+                item for item in resolved_references
+                if item['semantic_status'] == 'active'
+            ]
+            blocked_references = [
+                item for item in references
+                if item not in semantic_ready_references
+            ]
+            attributes_payload = attributes if isinstance(attributes, dict) else {}
+            doc['document_analysis_package'] = {
+                'document_version': attributes_payload.get('document_version', '2.0'),
+                'target_binding': attributes_payload.get('target_binding') or {},
+                'workspace_context': attributes_payload.get('workspace_context') or {},
+                'knowledge_graph': attributes_payload.get('knowledge_graph') or {
+                    'nodes': [], 'edges': []
+                },
+                'column_mappings': attributes_payload.get('column_mappings') or [],
+                'ctes': attributes_payload.get('ctes') or [],
+                'variable_bindings': attributes_payload.get('variable_bindings') or [],
+                'variable_approval': attributes_payload.get('variable_approval') or {
+                    'status': 'unreviewed',
+                    'approved_names': [],
+                    'rejected_names': [],
+                },
+                'lineage_diagnostics': attributes_payload.get('lineage_diagnostics') or [],
+            }
+            doc['analysis_readiness'] = {
+                'structural_ready': bool(row['SQL_TEXT']),
+                'reference_count': len(references),
+                'resolved_reference_count': len(resolved_references),
+                'semantic_ready_reference_count': len(semantic_ready_references),
+                'fully_semantic_ready': (
+                    bool(references)
+                    and len(semantic_ready_references) == len(references)
+                ),
+                'semantic_ready_fqns': [
+                    item['resolved_fqn'] for item in semantic_ready_references
+                ],
+                'blocked_references': blocked_references,
+            }
+            # Backward-compatible readiness now means useful scoped analysis can
+            # begin. Individual semantic claims remain gated per table.
+            doc['inference_ready'] = bool(row['SQL_TEXT']) and bool(resolved_references)
             results['documents'].append(doc)
 
     except Exception as e:

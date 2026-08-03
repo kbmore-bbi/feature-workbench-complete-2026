@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect -- Selection state is reset when the modal input changes. */
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -10,12 +11,14 @@ import {
 } from "@/components/ui";
 import { AiaText } from "@/components/ui/aia-text";
 import { CloseOutlinedIcon, FileUploadOutlinedIcon } from "@/utils/icons";
-import { getAllProjectsSummary } from "@/services/projectService";
+import {
+  getAllProjectsSummary,
+  listProjectAttributes,
+} from "@/services/projectService";
 
 import AttributesTable from "./attributes-table";
 import {
   filterImportableProjects,
-  getAttributesForSelectedProjects,
   type AttributeProjectOption,
   type HardcodedAttribute,
 } from "./attributes-data";
@@ -48,6 +51,8 @@ export default function ImportAttributesModal({
   const [projects, setProjects] = useState<AttributeProjectOption[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [tableRows, setTableRows] = useState<HardcodedAttribute[]>([]);
+  const [isLoadingAttributes, setIsLoadingAttributes] = useState(false);
 
   const importableProjects = useMemo(
     () => filterImportableProjects(projects, currentProjectId, currentProjectName),
@@ -61,11 +66,6 @@ export default function ImportAttributesModal({
         label: project.name,
       })),
     [importableProjects],
-  );
-
-  const tableRows = useMemo(
-    () => getAttributesForSelectedProjects(selectedProjectIds, importableProjects),
-    [selectedProjectIds, importableProjects],
   );
 
   useEffect(() => {
@@ -111,6 +111,40 @@ export default function ImportAttributesModal({
       cancelled = true;
     };
   }, [open]);
+
+  useEffect(() => {
+    if (!open || selectedProjectIds.length === 0) {
+      setTableRows([]);
+      return;
+    }
+    let cancelled = false;
+    setIsLoadingAttributes(true);
+    Promise.all(selectedProjectIds.map((projectId) => listProjectAttributes(projectId)))
+      .then((groups) => {
+        if (cancelled) return;
+        setTableRows(groups.flatMap((records) => records.map((record) => ({
+          id: record.attribute_id,
+          attributeName: record.attribute_name,
+          attributeType: record.attribute_type as HardcodedAttribute["attributeType"],
+          projectId: record.project_id,
+          projectName: record.project_name ?? "",
+          importProjectName: record.source_project_name ?? null,
+          attributeValue: record.attribute_value,
+        }))));
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setTableRows([]);
+          setProjectsError(error instanceof Error ? error.message : "Unable to load project values.");
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setIsLoadingAttributes(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, selectedProjectIds]);
 
   useEffect(() => {
     const visibleIds = new Set(tableRows.map((row) => row.id));
@@ -306,7 +340,9 @@ export default function ImportAttributesModal({
             onToggleAll={handleToggleAll}
             maxHeight={360}
             emptyMessage={
-              selectedProjectIds.length === 0
+              isLoadingAttributes
+                ? "Loading project values..."
+                : selectedProjectIds.length === 0
                 ? "Select a project to view its attributes."
                 : "No attributes found for the selected project(s)."
             }

@@ -1,8 +1,9 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect -- Modal/page state is reset when project context changes. */
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AiaBox } from "@/components/ui";
+import { AiaBox, AiaButton } from "@/components/ui";
 
 import AttributesHeader from "./attributes-header";
 import AttributesTable from "./attributes-table";
@@ -10,10 +11,29 @@ import DeleteAttributeModal from "./delete-attribute-modal";
 import ImportAttributesModal from "./import-attributes-modal";
 import NewAttributeModal from "./new-attribute-modal";
 import {
-  MOCK_HARDCODED_ATTRIBUTES,
   type HardcodedAttribute,
   type NewAttributeFormValues,
 } from "./attributes-data";
+import {
+  createProjectAttribute,
+  deleteProjectAttribute,
+  importProjectAttributes,
+  listProjectAttributes,
+  updateProjectAttribute,
+  type ProjectAttributeRecord,
+} from "@/services/projectService";
+
+function toHardcodedAttribute(record: ProjectAttributeRecord): HardcodedAttribute {
+  return {
+    id: record.attribute_id,
+    attributeName: record.attribute_name,
+    attributeType: record.attribute_type as HardcodedAttribute["attributeType"],
+    projectId: record.project_id,
+    projectName: record.project_name ?? "",
+    importProjectName: record.source_project_name ?? null,
+    attributeValue: record.attribute_value,
+  };
+}
 
 function AttributesPageContent() {
   const router = useRouter();
@@ -27,25 +47,35 @@ function AttributesPageContent() {
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [editingAttribute, setEditingAttribute] = useState<HardcodedAttribute | null>(null);
   const [deletingAttribute, setDeletingAttribute] = useState<HardcodedAttribute | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const loadAttributes = useCallback(async () => {
+    if (!projectId) {
+      setAttributes([]);
+      return;
+    }
+    setLoadError(null);
+    try {
+      const records = await listProjectAttributes(projectId);
+      setAttributes(records.map(toHardcodedAttribute));
+    } catch (error) {
+      setAttributes([]);
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : "Unable to load Project Values from the metadata service.",
+      );
+    }
+  }, [projectId]);
 
   useEffect(() => {
     if (!projectId) {
       setAttributes([]);
       return;
     }
-    setAttributes(
-      MOCK_HARDCODED_ATTRIBUTES.filter(
-        (item) =>
-          item.projectId === projectId ||
-          item.projectName.trim().toLowerCase() === projectName.trim().toLowerCase(),
-      ).map((item) => ({
-        ...item,
-        projectId,
-        projectName,
-        importProjectName: null,
-      })),
-    );
-  }, [projectId, projectName]);
+    void loadAttributes();
+  }, [loadAttributes, projectName, reloadToken]);
 
   const filteredAttributes = useMemo(
     () =>
@@ -75,70 +105,60 @@ function AttributesPageContent() {
 
   const handleSubmitAttribute = (values: NewAttributeFormValues) => {
     if (modalMode === "edit" && editingAttribute) {
-      setAttributes((current) =>
-        current.map((item) =>
-          item.id === editingAttribute.id
-            ? {
-                ...item,
-                attributeName: values.attributeName,
-                attributeType: values.attributeType,
-                projectName: values.projectName,
-                attributeValue: values.attributeValue,
-              }
-            : item,
-        ),
-      );
+      void updateProjectAttribute(projectId, editingAttribute.id, {
+        attribute_name: values.attributeName,
+        attribute_type: values.attributeType,
+        attribute_value: values.attributeValue,
+      }).then((record) => {
+        setAttributes((current) => current.map((item) =>
+          item.id === editingAttribute.id ? toHardcodedAttribute(record) : item,
+        ));
+      }).catch((error) => {
+        setLoadError(error instanceof Error ? error.message : "Unable to update project value.");
+      });
       return;
     }
-
-    const next: HardcodedAttribute = {
-      id: `attr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      attributeName: values.attributeName,
-      attributeType: values.attributeType,
-      projectId: projectId || "unknown",
-      projectName: values.projectName,
-      importProjectName: null,
-      attributeValue: values.attributeValue,
-    };
-    setAttributes((current) => [next, ...current]);
+    void createProjectAttribute(projectId, {
+      attribute_name: values.attributeName,
+      attribute_type: values.attributeType,
+      attribute_value: values.attributeValue,
+    }).then((record) => {
+      setAttributes((current) => [toHardcodedAttribute(record), ...current]);
+    }).catch((error) => {
+      setLoadError(error instanceof Error ? error.message : "Unable to create project value.");
+    });
   };
 
   const handleImportAttributes = (rows: HardcodedAttribute[]) => {
-    setAttributes((current) => {
-      const existingIds = new Set(current.map((item) => item.id));
-      const existingNames = new Set(
-        current
-          .filter((item) => item.projectId === projectId)
-          .map((item) => item.attributeName),
-      );
-
-      const imported = rows
-        .filter((row) => !existingNames.has(row.attributeName))
-        .map((row) => {
-          const nextId = existingIds.has(row.id)
-            ? `attr-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-            : row.id;
-          existingIds.add(nextId);
-          existingNames.add(row.attributeName);
-          return {
-            ...row,
-            id: nextId,
-            projectId,
-            projectName,
-            importProjectName: row.projectName,
-          };
-        });
-
-      return [...imported, ...current];
+    const byProject = new Map<string, string[]>();
+    rows.forEach((row) => {
+      byProject.set(row.projectId, [...(byProject.get(row.projectId) ?? []), row.id]);
     });
+    void Promise.all(
+      Array.from(byProject.entries()).map(([sourceProjectId, attributeIds]) =>
+        importProjectAttributes(projectId, {
+          source_project_id: sourceProjectId,
+          attribute_ids: attributeIds,
+        }),
+      ),
+    ).then(() => listProjectAttributes(projectId))
+      .then((records) => setAttributes(records.map(toHardcodedAttribute)))
+      .catch((error) => {
+        setLoadError(error instanceof Error ? error.message : "Unable to import project values.");
+      });
   };
 
   const handleConfirmDelete = () => {
     if (!deletingAttribute) {
       return;
     }
-    setAttributes((current) => current.filter((item) => item.id !== deletingAttribute.id));
+    const attributeId = deletingAttribute.id;
     setDeletingAttribute(null);
+    void deleteProjectAttribute(projectId, attributeId)
+      .then(() => setAttributes((current) => current.filter((item) => item.id !== attributeId)))
+      .catch((error) => {
+        setLoadError(error instanceof Error ? error.message : "Unable to delete project value.");
+      });
   };
 
   if (!projectId || !projectName) {
@@ -211,6 +231,20 @@ function AttributesPageContent() {
             onImportAttributes={() => setIsImportModalOpen(true)}
             onCreateAttribute={handleOpenCreate}
           />
+          {loadError ? (
+            <AiaBox sx={{ mt: 1.5, display: "flex", alignItems: "center", gap: 1.5, color: "#DC2626", fontSize: 12 }}>
+              <span>{loadError}</span>
+              <AiaButton
+                size="small"
+                variant="outlined"
+                color="error"
+                onClick={() => setReloadToken((value) => value + 1)}
+                sx={{ textTransform: "none", minWidth: 0 }}
+              >
+                Retry
+              </AiaButton>
+            </AiaBox>
+          ) : null}
 
           <AiaBox sx={{ mt: 2.5 }}>
             <AttributesTable

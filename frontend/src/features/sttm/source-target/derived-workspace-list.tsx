@@ -10,6 +10,11 @@ import type { DerivedSource } from '@/features/sttm/types/sttm.types';
 
 function getDerivedSourceCounts(source: DerivedSource) {
   const sourceTableCount = source.tableIds?.length ?? source.baseSourceTables?.length ?? 0;
+  const outputColumnCount =
+    source.outputColumns?.length
+    || source.previewColumns?.length
+    || source.columns?.length
+    || 0;
   const selectedColumnCount = source.selectedColumnsByTable
     ? Object.values(source.selectedColumnsByTable).reduce(
         (total, columns) => total + columns.length,
@@ -17,7 +22,7 @@ function getDerivedSourceCounts(source: DerivedSource) {
       )
     : (source.columns?.length ?? 0);
 
-  return { sourceTableCount, selectedColumnCount };
+  return { sourceTableCount, selectedColumnCount, outputColumnCount };
 }
 
 type DerivedWorkspaceListProps = {
@@ -46,7 +51,8 @@ export default function DerivedWorkspaceList({
   return (
     <AiaBox sx={{ width: '100%' }}>
       {workspaceItems.map((source) => {
-        const { sourceTableCount, selectedColumnCount } = getDerivedSourceCounts(source);
+        const { sourceTableCount, selectedColumnCount, outputColumnCount } =
+          getDerivedSourceCounts(source);
         const selected = isSelected(source.id);
 
         return (
@@ -70,9 +76,9 @@ export default function DerivedWorkspaceList({
                 sx={{
                   ...BODY_SX,
                   color: TYPOGRAPHY_TOKENS.body.color,
-                  whiteSpace: 'nowrap',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
+                  whiteSpace: 'normal',
+                  overflowWrap: 'anywhere',
+                  wordBreak: 'break-word',
                 }}
               >
                 {source.sourceName}
@@ -83,7 +89,10 @@ export default function DerivedWorkspaceList({
                   color: TYPOGRAPHY_TOKENS.secondaryText.color,
                 }}
               >
-                {sourceTableCount} source tables · {selectedColumnCount} selected columns
+                {sourceTableCount} source table{sourceTableCount === 1 ? '' : 's'} ·{' '}
+                {outputColumnCount > 0
+                  ? `${outputColumnCount} output column${outputColumnCount === 1 ? '' : 's'}`
+                  : `${selectedColumnCount} selected columns`}
               </AiaText>
             </AiaBox>
           </AiaCard>

@@ -118,6 +118,23 @@ export async function postEnvelopeData<TResponse>(
   return unwrapApiResponse(response.data);
 }
 
+export async function putEnvelopeData<TResponse>(
+  url: string,
+  body: ApiEnvelope<unknown, unknown>,
+  config?: AxiosRequestConfig,
+): Promise<TResponse> {
+  const response = await api.put<TResponse | ApiEnvelope<unknown, TResponse>>(url, body, config);
+  return unwrapApiResponse(response.data);
+}
+
+export async function deleteApiData<TResponse>(
+  url: string,
+  config?: AxiosRequestConfig,
+): Promise<TResponse> {
+  const response = await api.delete<TResponse | ApiEnvelope<unknown, TResponse>>(url, config);
+  return unwrapApiResponse(response.data);
+}
+
 export function getApiErrorMessage(error: unknown, fallback: string): string {
   return extractApiErrorMessage(error, fallback);
 }

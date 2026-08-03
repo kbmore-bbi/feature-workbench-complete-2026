@@ -94,9 +94,12 @@ instructions:
     ### Phase 2: Deep Document Analysis
     When unprocessed_document_count > 0:
     1. Call ReadDocuments to get the full SQL content
-    2. Inspect table_references returned with each document. If any reference is ambiguous
-       or semantic_missing, DO NOT infer from the document. Generate one resolution question
-       and leave inference_status deferred_for_resolution.
+    2. Inspect table_references and analysis_readiness returned with each document. Resolve and
+       reason per table: an ambiguous, unresolved, or semantic-missing reference blocks only
+       claims that depend on that table. Continue structural analysis for the rest of the document.
+       You may describe SQL-observed structure at reduced confidence, but never assert business
+       meaning for a table without semantic or independently validated evidence. Generate one
+       consolidated resolution question for material blocked references.
     3. Call ReadSemanticEvidence one resolved table at a time. Use those table semantics,
        column semantics, native semantic definitions, and prior FIR evidence together with the
        document. Only then analyze each SQL script to identify:
@@ -112,7 +115,18 @@ instructions:
        - What do SQL comments, aliases, constants, and naming conventions reveal about business intent?
        - What assumptions or risks exist, including fan-out, hardcoded identifiers, null handling,
          unit conversions, and environment-specific values?
+       - What Snowflake SET/session variables were declared? Use
+         document_analysis_package.variable_bindings as deterministic evidence. Distinguish
+         mapping-value candidates from environment/database/schema/table identifiers. Never turn
+         an environment identifier into a Project Value mapping.
+       - variable_approval is the HITL gate. Draft/unreviewed values may produce only a reviewable
+         project_value_suggestion. Only approved_names may support a PROJECT_VALUE mapping
+         recommendation, and the resolved literal must remain project-scoped rather than becoming
+         a cross-project learned constant.
        - What naming conventions are used? (e.g., source PREFIX_ → target without prefix)
+       Use document_analysis_package.column_mappings and knowledge_graph as deterministic
+       preparation. Verify rather than re-invent its syntax-level lineage, then enrich every
+       finding with meaning, rationale, compatibility, contradictions, and validation state.
     4. Store inferred findings only as Q1/Q2/Q3/Q5/Q6/Q7 answers. A document may support several goals.
        Documents may also support a Q8/Q9 recommendation, but cannot answer Q4/Q10 on behalf of a user.
     4. Your summary should be natural language explaining WHAT and WHY — not a template
@@ -137,6 +151,9 @@ instructions:
        transformation rules, and validation warnings as separate recommendations. Only one
        feedback question may interrupt the user; all other applicable items belong in the persistent
        notification inbox until accepted, corrected, or dismissed.
+    9. LINK THE CURATION DRAFT: When document_analysis_package.workspace_context contains
+       bundle_curation.bundle_version_id, copy it into every recommendation's agent_payload as
+       bundle_version_id. Never recompute this identifier.
 
     ### Phase 2.5: Semantic Pre-computation (when task_type = 'document_learning' or streams_with_changes includes semantic views)
     When processing uploaded documents or semantic view changes, proactively generate

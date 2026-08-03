@@ -5,11 +5,14 @@ import { recommendationService } from "@/services/recommendationService";
 import { dbService } from "@/services/dbService";
 import { workbenchService, type TableRef } from "@/services/workbenchService";
 import {
-  preparedContextService,
   type PreparedWorkspaceContext,
 } from "@/services/preparedContextService";
 import { authService } from "@/services/authService";
-import { getSttm } from "@/services/projectService";
+import {
+  getSttm,
+  listProjectAttributes,
+  type ProjectAttributeRecord,
+} from "@/services/projectService";
 import type {
   AssistantInferenceRecord,
   AssistantPreferenceState,
@@ -256,6 +259,7 @@ function buildRelationGraph(
   derivedSources: DerivedSource[],
   joins: JoinConfig[],
   mappings: MappingState[],
+  projectAttributes: ProjectAttributeRecord[] = [],
 ): RelationGraphContext {
   const selectedDerived = derivedSources.filter((source) => source.isSelected);
   const nodes: RelationGraphContext["nodes"] = [
@@ -315,23 +319,55 @@ function buildRelationGraph(
         })),
     }))
     .filter((edge) => edge.conditions.length > 0);
-  const value_bindings = mappings
+  const mappingValueBindings = mappings
     .filter(
       (mapping) =>
         (mapping.mappingMode === "constant" || mapping.mappingMode === "attribute")
         && mapping.constantValue != null,
     )
-    .map((mapping) => ({
-      binding_id: mapping.valueBindingIds?.[0] ?? mapping.id,
-      value: String(mapping.constantValue),
-      data_type: mapping.targetType || null,
-      is_placeholder: String(mapping.constantValue).trim().startsWith("$"),
-      allow_project_specific_value: mapping.mappingMode === "attribute",
-      resolution_status: String(mapping.constantValue).trim().startsWith("$")
-        ? "placeholder_contract"
-        : "resolved",
-      attribute_name: mapping.mappingMode === "attribute" ? mapping.attributeName ?? null : null,
+    .map((mapping) => {
+      const projectAttribute = mapping.mappingMode === "attribute"
+        ? projectAttributes.find(
+            (attribute) => attribute.attribute_name.toUpperCase() === String(mapping.attributeName ?? "").toUpperCase(),
+          )
+        : undefined;
+      const placeholder = projectAttribute
+        ? `$${projectAttribute.attribute_name}`
+        : String(mapping.constantValue);
+      return {
+        binding_id: mapping.valueBindingIds?.[0]
+          ?? (projectAttribute ? `project-attribute:${projectAttribute.attribute_id}` : mapping.id),
+        value: placeholder,
+        resolved_value: projectAttribute?.attribute_value,
+        data_type: projectAttribute?.attribute_type || mapping.targetType || null,
+        is_placeholder: placeholder.trim().startsWith("$"),
+        allow_project_specific_value: mapping.mappingMode === "attribute",
+        resolution_status: projectAttribute
+          ? "project_attribute"
+          : placeholder.trim().startsWith("$")
+            ? "placeholder_contract"
+            : "resolved",
+        attribute_name: mapping.mappingMode === "attribute" ? mapping.attributeName ?? null : null,
+      };
+    });
+  const existingBindingNames = new Set(
+    mappingValueBindings
+      .map((binding) => String(binding.attribute_name ?? "").toUpperCase())
+      .filter(Boolean),
+  );
+  const projectValueBindings = projectAttributes
+    .filter((attribute) => !existingBindingNames.has(attribute.attribute_name.toUpperCase()))
+    .map((attribute) => ({
+      binding_id: `project-attribute:${attribute.attribute_id}`,
+      value: `$${attribute.attribute_name}`,
+      resolved_value: attribute.attribute_value,
+      data_type: attribute.attribute_type || null,
+      is_placeholder: true,
+      allow_project_specific_value: true,
+      resolution_status: "project_attribute",
+      attribute_name: attribute.attribute_name,
     }));
+  const value_bindings = [...mappingValueBindings, ...projectValueBindings];
   return { nodes, edges, value_bindings };
 }
 
@@ -1236,7 +1272,9 @@ function applyMappingSuggestion(mapping: MappingState, suggestion: PendingAiMapp
         ? "attribute"
         : "source";
   const sourceAttributes =
-    mappingMode === "constant" || mappingMode === "attribute" ? [] : suggestion.sourceAttributes ?? [];
+    mappingMode === "constant" || mappingMode === "attribute"
+      ? []
+      : suggestion.sourceAttributes ?? [];
   const sourceColumn = sourceAttributes.length ? sourceAttributes.join(", ") : null;
   const inferredRuleType = suggestion.preprocessingRuleType?.trim() || null;
   const inferredRule = suggestion.preprocessingRule?.trim() || null;
@@ -2663,6 +2701,9 @@ export const runAutoMap = createAsyncThunk(
         current: null,
       };
       const selectedDerivedSourceIds = getSelectedDerivedSourceIds(state.derivedSources);
+      const projectAttributes = state.activeProjectId
+        ? await listProjectAttributes(state.activeProjectId).catch(() => [])
+        : [];
       if (!semanticBundleId || !semanticContextItems?.length) {
         dispatch(
           autoMapStreamStatus({
@@ -2744,6 +2785,7 @@ export const runAutoMap = createAsyncThunk(
           state.derivedSources,
           state.relationships,
           state.mappings,
+          projectAttributes,
         ),
         semantic_context: semanticContextItems,
         selected_columns_by_table: buildSelectedColumnsByTable(state.sourceAttributeGroups),
@@ -2975,19 +3017,19 @@ export const sendChatMessage = createAsyncThunk(
       ...selectedDerivedSourceIds,
     ];
     const semanticRefresh: SemanticRefreshResult | null = null;
-    let semanticBundleId = state.semanticBundleId;
+    const semanticBundleId = state.semanticBundleId;
     const semanticViewName = state.semanticViewName;
     const semanticContextItems = state.semanticContextItems;
     const semanticLineage = state.semanticLineage;
     const semanticDatahubContext = state.semanticDatahubContext;
     const semanticLevelForRequest: SemanticLevel = requestedSemanticLevel;
-    let semanticBundleHash = state.semanticBundleHash;
-    let learningContextId = state.learningContextId;
-    let learningContextHash = state.learningContextHash;
-    let workspaceContextId = state.workspaceContextId;
-    let workspaceContextHash = state.workspaceContextHash;
-    let threadId = state.agentThreadId;
-    let parentMessageId = state.agentParentMessageId;
+    const semanticBundleHash = state.semanticBundleHash;
+    const learningContextId = state.learningContextId;
+    const learningContextHash = state.learningContextHash;
+    const workspaceContextId = state.workspaceContextId;
+    const workspaceContextHash = state.workspaceContextHash;
+    const threadId = state.agentThreadId;
+    const parentMessageId = state.agentParentMessageId;
     try {
       const pushStatus = (
         text: string,
@@ -4262,14 +4304,51 @@ export const sttmBuilderSlice = createSlice({
     ) => {
       const sourceFqns = new Set(action.payload.sourceTableFqns.map((value) => value.toUpperCase()));
       const targetFqn = action.payload.targetTableFqn?.toUpperCase() ?? null;
-      state.sources = state.sources.map((table) => ({
+      const sourcePlaceholders: TableNode[] = action.payload.sourceTableFqns
+        .filter(
+          (qualifiedName) =>
+            !state.sources.some(
+              (table) => table.qualifiedName.toUpperCase() === qualifiedName.toUpperCase(),
+            ),
+        )
+        .map((qualifiedName) => ({
+          tableId: qualifiedName,
+          tableName: qualifiedName.split(".").pop() ?? qualifiedName,
+          qualifiedName,
+          isSelected: true,
+          tag: "Source",
+          rows: "--",
+          columns: 0,
+          columnItems: [],
+        }));
+      state.sources = [...state.sources.map((table) => ({
         ...table,
         isSelected: sourceFqns.has(table.qualifiedName.toUpperCase()),
-      }));
-      state.targets = state.targets.map((table) => ({
+      })), ...sourcePlaceholders];
+      const targetPlaceholder: TableNode[] =
+        action.payload.targetTableFqn &&
+        !state.targets.some(
+          (table) =>
+            table.qualifiedName.toUpperCase() ===
+            action.payload.targetTableFqn!.toUpperCase(),
+        )
+          ? [{
+              tableId: action.payload.targetTableFqn,
+              tableName:
+                action.payload.targetTableFqn.split(".").pop() ??
+                action.payload.targetTableFqn,
+              qualifiedName: action.payload.targetTableFqn,
+              isSelected: true,
+              tag: "Target",
+              rows: "--",
+              columns: action.payload.mappings.length,
+              columnItems: [],
+            }]
+          : [];
+      state.targets = [...state.targets.map((table) => ({
         ...table,
         isSelected: targetFqn === table.qualifiedName.toUpperCase(),
-      }));
+      })), ...targetPlaceholder];
       for (const database of state.sourceDatabases) {
         for (const schema of database.schemas) {
           for (const table of schema.tables) {
@@ -4302,12 +4381,24 @@ export const sttmBuilderSlice = createSlice({
           sourceName: item.name,
           isSelected: true,
           sqlText: item.sqlText ?? undefined,
+          purpose: item.purpose ?? undefined,
+          businessDescription: item.candidateReasons?.length
+            ? item.candidateReasons.join("; ")
+            : undefined,
+          outputColumns: item.outputColumns ?? [],
           baseSourceTables: (item.inputTables ?? []).map(makeTableRef),
           tableIds: item.inputTables ?? [],
           selectedColumnsByTable: {},
           joins: [],
           filters: [],
-          columns: [],
+          columns: (item.outputColumns ?? [])
+            .map((column) => ({
+              name: String(column.name ?? column.column_name ?? "").trim(),
+              type: String(
+                column.data_type ?? column.dataType ?? column.type ?? "—",
+              ),
+            }))
+            .filter((column) => Boolean(column.name)),
         })),
       ];
       state.mappingSql = action.payload.sql;
@@ -4504,6 +4595,9 @@ export const sttmBuilderSlice = createSlice({
       .addCase(fetchAttributes.pending, (state, action) => {
         state.loadState.attributes = "loading";
         state.attributeRequestIds[action.meta.arg.side] = action.meta.requestId;
+        if (action.meta.arg.side === "target") {
+          state.errorState.attributes = undefined;
+        }
       })
       .addCase(fetchAttributes.fulfilled, (state, action) => {
         if (!action.payload) return;

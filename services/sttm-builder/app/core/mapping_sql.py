@@ -157,6 +157,25 @@ class MappingSqlService:
                     "Cortex Analyst could not complete the SQL review request, so Snowflake validation generated a suggested repair for your approval."
                 )
 
+        if validation_error and not optimized_preview_sql and body.attempt_ai_repair:
+            repaired_preview_sql, repair_summary = self._attempt_cortex_sql_repair(
+                body,
+                preview_sql,
+                validation_error=validation_error,
+            )
+            if repaired_preview_sql and self._candidate_sql_is_valid(repaired_preview_sql):
+                optimized_preview_sql = repaired_preview_sql
+                optimized_generated_sql = self._rebuild_insert_sql(generated_sql, repaired_preview_sql)
+                optimized = True
+                review_kind = "repair"
+                syntax_valid = True
+                execution_ready = True
+                review_agent = "CORTEX_SQL_REPAIR"
+                review_summary = repair_summary
+                warnings.append(
+                    "The AI repair was validated by Snowflake and is available for explicit review and approval."
+                )
+
         if validation_error and not optimized_preview_sql:
             warnings.append(
                 "Snowflake validation could not prepare a safe repaired SQL automatically. Review the validation issue and adjust the mapping SQL before running preview."
@@ -253,10 +272,13 @@ class MappingSqlService:
                 binding = bindings.get(binding_id)
                 if binding is None:
                     raise ValueError(f"Undefined Value binding: {binding_id}")
-                if binding.is_placeholder and binding.resolution_status.lower() != "resolved":
+                if (
+                    binding.is_placeholder
+                    and binding.resolution_status.lower() not in {"resolved", "project_attribute"}
+                ):
                     unresolved_placeholders.add(binding.value)
 
-            if mapping.mapping_mode == "constant":
+            if mapping.mapping_mode in {"constant", "attribute"}:
                 placeholder = str(mapping.constant_value or "").strip()
                 if self._is_placeholder(placeholder) and placeholder in resolved_placeholders:
                     expression = resolved_placeholders[placeholder]
@@ -509,7 +531,7 @@ class MappingSqlService:
             placeholder = str(binding.value or "").strip()
             if not binding.is_placeholder or not cls._is_placeholder(placeholder):
                 continue
-            if str(binding.resolution_status or "").lower() != "resolved":
+            if str(binding.resolution_status or "").lower() not in {"resolved", "project_attribute"}:
                 continue
             if binding.resolved_value is None:
                 continue
@@ -827,12 +849,28 @@ class MappingSqlService:
                     )
                 ]
             item["source_columns"] = resolved_columns
-            item["mapping_mode"] = mapping.mapping_mode
-            item["constant_value"] = mapping.constant_value
+            mapping_mode = mapping.mapping_mode
+            constant_value = mapping.constant_value
+            attribute_name = None
+            if isinstance(constant_value, str):
+                variable_match = re.fullmatch(
+                    r"\$([A-Za-z_][A-Za-z0-9_]*)",
+                    constant_value.strip(),
+                )
+                if variable_match:
+                    candidate_name = variable_match.group(1)
+                    resolved_value = parsed.variables.get(candidate_name.upper())
+                    if resolved_value is not None:
+                        mapping_mode = "attribute"
+                        attribute_name = candidate_name
+                        constant_value = resolved_value
+            item["mapping_mode"] = mapping_mode
+            item["constant_value"] = constant_value
+            item["attribute_name"] = attribute_name
             item["expression"] = mapping.transformation
             item["rule"] = (
                 "Value"
-                if mapping.mapping_mode == "constant"
+                if mapping_mode in {"constant", "attribute"}
                 else ("Custom" if mapping.transformation else "Direct")
             )
             item["status"] = "MAPPED"
@@ -914,7 +952,11 @@ class MappingSqlService:
                     f"Reason: {self._summarize_sql_error(exc)}"
                 )
                 source_rows = _QueryExecutionResult(columns=[], rows=[])
-        else:
+        elif re.search(
+            r"(?:SQL\s+COMPILATION\s+ERROR.*(?:SYNTAX|UNEXPECTED)|SYNTAX\s+ERROR|UNEXPECTED\s+['\"])",
+            validation_error,
+            flags=re.IGNORECASE,
+        ):
             source_rows = _QueryExecutionResult(columns=[], rows=[])
 
         return MappingSqlPreviewResponse(
@@ -1093,6 +1135,21 @@ class MappingSqlService:
                     "action": "review_suggested_sql",
                 }
             )
+        elif (
+            "syntax error" in validation_error.lower()
+            or "unexpected" in validation_error.lower()
+        ):
+            options.append(
+                {
+                    "code": "fix_with_ai",
+                    "title": "Fix syntax with AI",
+                    "description": (
+                        "Ask the SQL analyst to repair only the failing syntax, then validate the "
+                        "candidate in Snowflake before showing it for approval."
+                    ),
+                    "action": "request_ai_repair",
+                }
+            )
 
         variable_match = re.search(
             r"SESSION\s+VARIABLE\s+['\"]?(\$?[A-Z0-9_]+)",
@@ -1150,6 +1207,84 @@ class MappingSqlService:
             }
         )
         return options
+
+    def _attempt_cortex_sql_repair(
+        self,
+        body: MappingSqlReviewRequest,
+        preview_sql: str,
+        *,
+        validation_error: str,
+    ) -> tuple[str | None, str]:
+        """Request a syntax-only repair and fail closed unless Snowflake validates it."""
+        model = (
+            self._settings.fir_upload_explanation_model
+            if self._settings is not None
+            else "claude-haiku-4-5"
+        )
+        target_aliases = [
+            mapping.target_column
+            for mapping in body.mappings
+            if (mapping.status or "").upper() == "MAPPED"
+        ]
+        prompt = (
+            "Repair the Snowflake SQL syntax below. Preserve every SELECT alias, table, join, "
+            "filter, and business expression. Do not invent columns or change business logic. "
+            "Return JSON only as {\"sql\":\"...\",\"summary\":\"...\"}.\n"
+            f"Required target aliases: {json.dumps(target_aliases)}\n"
+            f"Snowflake error: {validation_error}\nSQL:\n{preview_sql}"
+        )
+        try:
+            rows = self._session.sql(
+                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
+                params=[model, prompt],
+            ).collect()
+            raw = (
+                rows[0].as_dict(recursive=True).get("RESPONSE")
+                if rows and hasattr(rows[0], "as_dict")
+                else rows[0].get("RESPONSE")
+                if rows and isinstance(rows[0], dict)
+                else rows[0][0]
+                if rows
+                else None
+            )
+            parsed = self._parse_json_object(raw)
+            candidate = self._normalize_sql(str(parsed.get("sql") or ""))
+            if not candidate or not self._covers_target_aliases(candidate, body.mappings):
+                return None, "AI did not return a contract-preserving SQL repair."
+            summary = str(parsed.get("summary") or "AI prepared a syntax repair for review.")
+            return candidate, summary
+        except Exception as exc:
+            logger.warning("Cortex SQL repair failed: %s", exc)
+            return None, "AI could not prepare a safe SQL repair."
+
+    @staticmethod
+    def _parse_json_object(value: object) -> dict[str, object]:
+        if isinstance(value, dict):
+            for key in ("response", "content", "message"):
+                nested = value.get(key)
+                if nested is not None:
+                    parsed = MappingSqlService._parse_json_object(nested)
+                    if parsed:
+                        return parsed
+            return value
+        if isinstance(value, list):
+            for item in value:
+                parsed = MappingSqlService._parse_json_object(item)
+                if parsed:
+                    return parsed
+            return {}
+        text = str(value or "").strip()
+        fenced = re.search(r"```(?:json)?\s*(\{.*\})\s*```", text, re.DOTALL)
+        if fenced:
+            text = fenced.group(1)
+        start, end = text.find("{"), text.rfind("}")
+        if start >= 0 and end > start:
+            text = text[start : end + 1]
+        try:
+            parsed = json.loads(text)
+        except (TypeError, json.JSONDecodeError):
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     @staticmethod
     def _is_unhelpful_review_summary(text: str) -> bool:

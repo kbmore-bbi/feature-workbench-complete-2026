@@ -132,8 +132,16 @@ class MappingKnowledgeProjector:
                 or ""
             )
             constant_value = row.get("constant_value")
-            mapping_kind = "constant" if constant_value is not None else "column"
-            reusability = "project_specific" if constant_value is not None else "structural"
+            attribute_name = row.get("attribute_name")
+            mapping_mode = str(row.get("mapping_mode") or "").strip().lower()
+            if mapping_mode not in {"constant", "attribute"}:
+                mapping_mode = "constant" if constant_value is not None else "source"
+            mapping_kind = mapping_mode if mapping_mode in {"constant", "attribute"} else "column"
+            reusability = (
+                "project_specific"
+                if mapping_mode in {"constant", "attribute"}
+                else "structural"
+            )
             attributes = {
                 "target_column": target_column,
                 "source_columns": source_columns,
@@ -144,6 +152,8 @@ class MappingKnowledgeProjector:
             }
             if constant_value is not None:
                 attributes["constant_value"] = constant_value
+            if attribute_name is not None:
+                attributes["attribute_name"] = attribute_name
             record(
                 agent_type="SOURCE_MAPPING",
                 learning_type="column_mapping",

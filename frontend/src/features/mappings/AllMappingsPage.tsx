@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect -- Navigation completion synchronizes local pending UI state. */
 import { AiaBox, AiaButton, AiaMenu, AiaMenuItem, AiaPaper } from '@/components/ui';
 import { AiaText } from '@/components/ui/aia-text';
 
@@ -12,16 +13,12 @@ import { AiaSearchbox } from "@/components/ui/aia-searchbox";
 import { useAppDispatch, useAppSelector } from "@/store/hooks";
 import {
   getAllProjectsSummary,
-  createProjectSttm,
   type ProjectRecord,
   type STTMRecord,
 } from "@/services/projectService";
 import {
   clearOpenSttmNavigation,
-  openSttmFromBackend,
-  resetBuilderForNewMapping,
 } from "@/features/sttm/store/sttm-builder-slice";
-import { markExplicitNewDraftIntent } from "@/features/sttm/context/sttm-session-intent";
 import AllMappingsTable from "./all-mappings-table";
 import {
   SORT_OPTIONS,
@@ -269,53 +266,6 @@ export default function AllMappingsPage() {
     openMappingInBuilder(dispatch, { sttmId: item.id, projectId: item.projectId });
   };
 
-  const handleBuildManually = async (details: {
-    name: string;
-    description: string;
-    linkedMappingIds: string[];
-    projectId?: string;
-  }) => {
-    const targetProjectId = details.projectId?.trim();
-    if (!details.name.trim()) {
-      return;
-    }
-
-    setIsNewMappingOpen(false);
-
-    if (!targetProjectId) {
-      markExplicitNewDraftIntent();
-      dispatch(resetBuilderForNewMapping());
-      router.push("/sttm/builder/new");
-      return;
-    }
-
-    setIsOpening(true);
-    try {
-      const sttm = await createProjectSttm(targetProjectId, {
-        sttm_name: details.name,
-        description: details.description || null,
-        precedent_links: details.linkedMappingIds.map((sttmId, index) => ({
-          precedent_sttm_id: sttmId,
-          priority: Math.max(1, 100 - index),
-          knowledge_categories: [
-            "column_mapping",
-            "relationship",
-            "transformation",
-            "query_shaping",
-            "derived_lineage",
-          ],
-          allow_project_specific_values: false,
-        })),
-      });
-      dispatch(openSttmFromBackend({ sttmId: sttm.sttm_id, projectId: targetProjectId }));
-    } catch (err) {
-      if (process.env.NODE_ENV === "development") {
-        console.warn("Failed to create STTM.", err);
-      }
-      setIsOpening(false);
-    }
-  };
-
   return (
     <AiaBox
       sx={{
@@ -543,7 +493,6 @@ export default function AllMappingsPage() {
       <NewMappingDialog
         open={isNewMappingOpen}
         onClose={() => setIsNewMappingOpen(false)}
-        onBuildManually={handleBuildManually}
         projectId={projectFilter !== PROJECT_FILTER_ALL ? projectFilter : undefined}
         projectOptions={projectOptions.filter((option) => option.value !== PROJECT_FILTER_ALL)}
         precedentMappings={mappingRows

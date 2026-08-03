@@ -12,6 +12,10 @@ from app.schema.contracts import ApiActor, ApiRequestEnvelope, ApiResponseEnvelo
 from app.schema.project import (
     MappingPrecedentLinkRecord,
     MappingPrecedentLinksUpdate,
+    ProjectAttributeCreateRequest,
+    ProjectAttributeImportRequest,
+    ProjectAttributeRecord,
+    ProjectAttributeUpdateRequest,
     ProjectCreateRequest,
     ProjectRecord,
     ProjectPrecedentLinkRecord,
@@ -135,6 +139,118 @@ def create_project(
         request_id=getattr(body, "request_id", None),
         actor=_actor_from_request(request),
         data=data,
+    )
+
+
+@router.get(
+    "/projects/{project_id}/attributes",
+    response_model=ApiResponseEnvelope[list[ProjectAttributeRecord]],
+)
+def list_project_attributes(
+    request: Request,
+    project_id: str,
+    service: Annotated[ProjectService, Depends(get_project_service)],
+) -> ApiResponseEnvelope[list[ProjectAttributeRecord]]:
+    get_current_principal(request)
+    return build_response_envelope(
+        operation="projects.attributes.list",
+        request=request,
+        actor=_actor_from_request(request),
+        context={"project_id": project_id},
+        data=service.list_project_attributes(project_id),
+    )
+
+
+@router.post(
+    "/projects/{project_id}/attributes",
+    response_model=ApiResponseEnvelope[ProjectAttributeRecord],
+)
+def create_project_attribute(
+    request: Request,
+    project_id: str,
+    body: ApiRequestEnvelope[ProjectAttributeCreateRequest] | ProjectAttributeCreateRequest,
+    service: Annotated[ProjectService, Depends(get_project_service)],
+) -> ApiResponseEnvelope[ProjectAttributeRecord]:
+    _require_edit(request)
+    payload = _unwrap(body, ProjectAttributeCreateRequest)
+    return build_response_envelope(
+        operation="projects.attributes.create",
+        request=request,
+        request_id=getattr(body, "request_id", None),
+        actor=_actor_from_request(request),
+        context={"project_id": project_id},
+        data=service.create_project_attribute(project_id, payload, user_id=_user_id(request)),
+    )
+
+
+@router.put(
+    "/projects/{project_id}/attributes/{attribute_id}",
+    response_model=ApiResponseEnvelope[ProjectAttributeRecord],
+)
+def update_project_attribute(
+    request: Request,
+    project_id: str,
+    attribute_id: str,
+    body: ApiRequestEnvelope[ProjectAttributeUpdateRequest] | ProjectAttributeUpdateRequest,
+    service: Annotated[ProjectService, Depends(get_project_service)],
+) -> ApiResponseEnvelope[ProjectAttributeRecord]:
+    _require_edit(request)
+    payload = _unwrap(body, ProjectAttributeUpdateRequest)
+    return build_response_envelope(
+        operation="projects.attributes.update",
+        request=request,
+        request_id=getattr(body, "request_id", None),
+        actor=_actor_from_request(request),
+        context={"project_id": project_id, "attribute_id": attribute_id},
+        data=service.update_project_attribute(
+            project_id,
+            attribute_id,
+            payload,
+            user_id=_user_id(request),
+        ),
+    )
+
+
+@router.delete(
+    "/projects/{project_id}/attributes/{attribute_id}",
+    response_model=ApiResponseEnvelope[dict],
+)
+def delete_project_attribute(
+    request: Request,
+    project_id: str,
+    attribute_id: str,
+    service: Annotated[ProjectService, Depends(get_project_service)],
+) -> ApiResponseEnvelope[dict]:
+    _require_edit(request)
+    service.delete_project_attribute(project_id, attribute_id, user_id=_user_id(request))
+    return build_response_envelope(
+        operation="projects.attributes.delete",
+        request=request,
+        actor=_actor_from_request(request),
+        context={"project_id": project_id, "attribute_id": attribute_id},
+        data={"deleted": True, "attribute_id": attribute_id},
+    )
+
+
+@router.post(
+    "/projects/{project_id}/attributes/import",
+    response_model=ApiResponseEnvelope[list[ProjectAttributeRecord]],
+)
+def import_project_attributes(
+    request: Request,
+    project_id: str,
+    body: ApiRequestEnvelope[ProjectAttributeImportRequest] | ProjectAttributeImportRequest,
+    service: Annotated[ProjectService, Depends(get_project_service)],
+) -> ApiResponseEnvelope[list[ProjectAttributeRecord]]:
+    _require_edit(request)
+    payload = _unwrap(body, ProjectAttributeImportRequest)
+    return build_response_envelope(
+        operation="projects.attributes.import",
+        request=request,
+        request_id=getattr(body, "request_id", None),
+        actor=_actor_from_request(request),
+        context={"project_id": project_id},
+        data=service.import_project_attributes(project_id, payload, user_id=_user_id(request)),
     )
 
 

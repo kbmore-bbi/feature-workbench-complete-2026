@@ -39,6 +39,18 @@ class _FailingSession:
         return _FailingQuery()
 
 
+class _AiRepairSession:
+    def sql(self, query, params=None):
+        if "CORTEX.COMPLETE" in query:
+            class Completion:
+                def collect(self):
+                    return [{"RESPONSE": '{"sql":"SELECT SRC.AMOUNT / 100 AS AMOUNT FROM DB.SCHEMA.SRC AS SRC","summary":"Replaced the invalid operator phrase."}'}]
+            return Completion()
+        if "AMOUNT / 100" in query:
+            return _Query()
+        return _FailingQuery()
+
+
 class _Analyst:
     def __init__(self):
         self.calls = []
@@ -97,6 +109,54 @@ def test_compile_uses_current_graph_even_when_all_rows_accept_precedent() -> Non
     assert "'HH-' || CAST(contacts_1.ID AS TEXT) AS LEGACY_ID__C" in response.preview_sql
     assert "FROM DB.CRM.CONTACTS AS contacts_1" in response.preview_sql
     assert "UserMaster" not in response.preview_sql
+
+
+def test_compile_resolves_project_value_binding_without_exposing_placeholder() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+
+    response = service.compile(
+        MappingSqlCompileRequest(
+            relation_graph=RelationGraphContext(
+                nodes=[
+                    RelationNode(
+                        relation_id="DB.CRM.CONTACTS",
+                        kind=RelationNodeKind.PHYSICAL_TABLE,
+                        alias="contacts_1",
+                        table=TableRef(database="DB", schema="CRM", table="CONTACTS"),
+                    )
+                ],
+                value_bindings=[
+                    ValueBinding(
+                        binding_id="project-attribute:firm",
+                        value="$TransactionFirmID",
+                        resolved_value="42",
+                        data_type="NUMBER",
+                        attribute_name="TransactionFirmID",
+                        is_placeholder=True,
+                        allow_project_specific_value=True,
+                        resolution_status="project_attribute",
+                    )
+                ],
+            ),
+            mappings=[
+                MappingSqlMappingItem(
+                    target_column="TRANSACTION_FIRM_ID",
+                    target_type="NUMBER",
+                    mapping_mode="attribute",
+                    constant_value="$TransactionFirmID",
+                    attribute_name="TransactionFirmID",
+                    value_binding_ids=["project-attribute:firm"],
+                    status="MAPPED",
+                )
+            ],
+            target_table=TableRef(database="DB", schema="TGT", table="EVERNEST_HH"),
+            validate_with_explain=False,
+        )
+    )
+
+    assert response.ready is True
+    assert "42 AS TRANSACTION_FIRM_ID" in response.preview_sql
+    assert "$TransactionFirmID" not in response.preview_sql
 
 
 def test_review_uses_inline_semantic_yaml_when_view_is_not_promoted() -> None:
@@ -171,6 +231,24 @@ def test_review_returns_actionable_value_binding_fix_when_validation_fails() -> 
     assert response.repair_options[0].action == "open_mapping"
 
 
+def test_review_ai_repair_is_snowflake_validated_before_approval() -> None:
+    service = MappingSqlService(session=_AiRepairSession(), analyst_client=_Analyst())
+    request = MappingSqlReviewRequest(
+        source_query_sql="SELECT * FROM DB.SCHEMA.SRC",
+        preview_sql="SELECT CAST / DIVIDE AS AMOUNT FROM DB.SCHEMA.SRC AS SRC",
+        generated_sql="SELECT CAST / DIVIDE AS AMOUNT FROM DB.SCHEMA.SRC AS SRC",
+        mappings=[MappingSqlMappingItem(target_column="AMOUNT", status="MAPPED")],
+        attempt_ai_repair=True,
+    )
+
+    response = service.review(request)
+
+    assert response.execution_ready is True
+    assert response.requires_approval is True
+    assert response.review_kind == "repair"
+    assert response.optimized_preview_sql == "SELECT SRC.AMOUNT / 100 AS AMOUNT FROM DB.SCHEMA.SRC AS SRC"
+
+
 def test_parse_blocks_ambiguous_unqualified_table_references() -> None:
     service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
 
@@ -209,6 +287,27 @@ def test_parse_select_preview_preserves_current_target() -> None:
     assert response.valid is True
     assert response.parsed_workspace["target_table"] == "DB_A.CRM.TARGET_TABLE"
     assert "target_table_changed" not in response.diff
+
+
+def test_parse_resolves_static_set_variable_as_project_attribute() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+
+    response = service.parse(
+        MappingSqlParseRequest(
+            sql=(
+                "SET ParentOfficeID = '001-office';\n"
+                "SELECT $ParentOfficeID AS PARENT_ID FROM DB_A.CRM.CONTACT"
+            ),
+            known_tables=[
+                TableRef(database="DB_A", schema="CRM", table="CONTACT"),
+            ],
+        )
+    )
+
+    row = response.parsed_workspace["mapping_rows"][0]
+    assert row["mapping_mode"] == "attribute"
+    assert row["attribute_name"] == "ParentOfficeID"
+    assert row["constant_value"] == "001-office"
 
 
 def test_compile_unifies_physical_and_derived_relations() -> None:
@@ -379,6 +478,53 @@ def test_compile_substitutes_only_explicitly_resolved_value_placeholder() -> Non
                     mapping_mode="constant",
                     constant_value="$ParentOfficeID",
                     value_binding_ids=["parent-office"],
+                    status="MAPPED",
+                )
+            ],
+        )
+    )
+
+    assert response.ready is True
+    assert response.unresolved_placeholders == []
+    assert "'001-office' AS PARENT_ID" in response.preview_sql
+
+
+def test_compile_uses_named_project_attribute_as_governed_value_binding() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+    graph = RelationGraphContext(
+        nodes=[
+            RelationNode(
+                relation_id="DB.CRM.CONTACTS",
+                kind=RelationNodeKind.PHYSICAL_TABLE,
+                alias="contacts_1",
+                table=TableRef(database="DB", schema="CRM", table="CONTACTS"),
+            )
+        ],
+        value_bindings=[
+            ValueBinding(
+                binding_id="project-parent-office",
+                attribute_name="PARENT_OFFICE_ID",
+                value="001-office",
+                resolved_value="001-office",
+                data_type="VARCHAR",
+                allow_project_specific_value=True,
+                resolution_status="resolved",
+            )
+        ],
+    )
+
+    response = service.compile(
+        MappingSqlCompileRequest(
+            relation_graph=graph,
+            driving_relation_id="DB.CRM.CONTACTS",
+            validate_with_explain=False,
+            mappings=[
+                MappingSqlMappingItem(
+                    target_column="PARENT_ID",
+                    mapping_mode="attribute",
+                    attribute_name="PARENT_OFFICE_ID",
+                    constant_value="001-office",
+                    value_binding_ids=["project-parent-office"],
                     status="MAPPED",
                 )
             ],

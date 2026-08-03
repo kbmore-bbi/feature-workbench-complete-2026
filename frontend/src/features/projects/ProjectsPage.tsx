@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect -- Project loading state follows the remote request lifecycle. */
 import { AiaBox, AiaLoadingOverlay } from '@/components/ui';
 
 import { useEffect, useMemo, useState } from "react";

@@ -80,11 +80,19 @@ class AutoMappingProxyClient:
                 mapping.precedent_decision == "unresolved"
                 or mapping.transformation_classification == "unresolved"
                 or (
-                    mapping.mapping_mode != "constant"
+                    mapping.mapping_mode not in {"constant", "attribute"}
                     and not mapping.source_attributes
                     and not mapping.source_dependencies
                 )
                 or (mapping.mapping_mode == "constant" and mapping.constant_value is None)
+                or (
+                    mapping.mapping_mode == "attribute"
+                    and (
+                        not mapping.attribute_name
+                        or mapping.constant_value is None
+                        or not mapping.value_binding_ids
+                    )
+                )
             )
             if is_unresolved:
                 unresolved_count += 1
@@ -1135,13 +1143,34 @@ class AutoMappingProxyClient:
             rule = source.get("preprocessing_rule")
             mappings[attribute.target_attribute] = AttributeMapping(
                 source_attributes=source_columns,
-                mapping_mode="constant" if mode == "constant" else "source",
+                mapping_mode=(
+                    "attribute"
+                    if mode in {"attribute", "project_attribute", "project_value"}
+                    else "constant"
+                    if mode in {"constant", "value"}
+                    else "source"
+                ),
                 constant_value=str(constant_value) if constant_value is not None else None,
+                attribute_name=(
+                    str(source.get("attribute_name"))
+                    if source.get("attribute_name") is not None
+                    else None
+                ),
                 source_dependencies=source_columns,
-                value_binding_ids=[],
+                value_binding_ids=[
+                    binding.binding_id
+                    for binding in (
+                        req.context.relation_graph.value_bindings
+                        if req.context.relation_graph is not None
+                        else []
+                    )
+                    if mode in {"attribute", "project_attribute", "project_value"}
+                    and str(binding.attribute_name or "").upper()
+                    == str(source.get("attribute_name") or "").upper()
+                ],
                 transformation_classification=(
                     "value"
-                    if mode == "constant"
+                    if mode in {"constant", "value", "attribute", "project_attribute", "project_value"}
                     else "reused"
                     if rule_type.upper() == "CUSTOM"
                     else "direct"

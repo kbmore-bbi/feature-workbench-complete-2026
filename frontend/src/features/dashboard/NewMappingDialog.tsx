@@ -16,21 +16,22 @@ import { useTour } from "@/features/tour/engine/tour-context";
 import { API_ROUTES } from "@/api/routes";
 import { useRouter } from "next/navigation";
 import { useAppDispatch } from "@/store/hooks";
-import { resetBuilderForNewMapping } from "@/features/sttm/store/sttm-builder-slice";
-import { markExplicitNewDraftIntent } from "@/features/sttm/context/sttm-session-intent";
-import { getAllProjectsSummary } from "@/services/projectService";
-
-type UploadResult = {
-  asset_id: string;
-  filename?: string;
-  learning_job_id?: string | null;
-  parsed_summary?: {
-    sources?: string[];
-    targets?: string[];
-    mappings_count?: number;
-    columns_count?: number;
-  };
-};
+import {
+  openSttmFromBackend,
+} from "@/features/sttm/store/sttm-builder-slice";
+import { buildSqlUploadWorkspace } from "@/features/sttm/mapping/sql-upload-workspace";
+import type { ParsedSqlWorkspaceApplyPayload } from "@/features/sttm/types/sttm.types";
+import {
+  SqlBundleReviewPanel,
+  type SqlUploadResult as UploadResult,
+} from "@/features/sttm/mapping/sql-bundle-review-panel";
+import { resolveApiBaseUrl } from "@/api/axiosInstance";
+import {
+  createProjectAttribute,
+  createProjectSttm,
+  getAllProjectsSummary,
+  listProjectAttributes,
+} from "@/services/projectService";
 
 type MappingCreationMode = "sql" | "excel" | "manual" | null;
 
@@ -49,13 +50,59 @@ export type NewMappingProjectOption = {
 type NewMappingDialogProps = {
   open: boolean;
   onClose: () => void;
-  onBuildManually: (details: NewMappingManualDetails) => void;
-  /** Preselected project when opened from a project page or project filter. */
   projectId?: string;
-  /** Optional project list; when omitted, options load from the projects API. */
   projectOptions?: NewMappingProjectOption[];
   precedentMappings?: Array<{ id: string; name: string; projectName: string }>;
 };
+
+function tableRefFromQualifiedName(qualifiedName: string | null | undefined) {
+  const [database, schema, table] = String(qualifiedName ?? "").split(".", 3);
+  return database && schema && table ? { database, schema, table } : null;
+}
+
+function uploadWorkspaceSnapshot(workspace: ParsedSqlWorkspaceApplyPayload) {
+  return {
+    page: workspace.targetTableFqn ? "mapping" : "builder",
+    source_tables: workspace.sourceTableFqns
+      .map(tableRefFromQualifiedName)
+      .filter(Boolean),
+    target_table: tableRefFromQualifiedName(workspace.targetTableFqn),
+    mapping_rows: workspace.mappings.map((mapping) => ({
+      id: mapping.id,
+      target_column: mapping.targetColumn,
+      target_type: mapping.targetType,
+      source_columns: mapping.sourceColumns ?? [],
+      mapping_mode: mapping.mappingMode ?? "source",
+      constant_value: mapping.constantValue ?? null,
+      attribute_name: mapping.attributeName ?? null,
+      expression: mapping.expression ?? null,
+      rule: mapping.rule,
+      status: mapping.status,
+    })),
+    relationships: workspace.relationships.map((relationship) => ({
+      id: relationship.id,
+      left_table: relationship.leftTableId,
+      right_table: relationship.rightTableId,
+      join_type: relationship.joinType,
+      source: relationship.source,
+      conditions: (relationship.conditions ?? []).map((condition) => ({
+        left_column: condition.leftColumn,
+        operator: condition.operator,
+        right_column: condition.rightColumn,
+      })),
+    })),
+    derived_sources: workspace.derivedSources.map((source, index) => ({
+      id: `upload-derived:${source.name}:${index}`,
+      name: source.name,
+      sql_text: source.sqlText,
+      table_ids: source.inputTables,
+      output_columns: source.outputColumns ?? [],
+      purpose: source.purpose ?? null,
+    })),
+    filters: { filter_sql: workspace.filterSql },
+    raw_mapping_sql: workspace.sql,
+  };
+}
 
 type MappingOption = {
   id: Exclude<MappingCreationMode, null>;
@@ -99,7 +146,6 @@ const OPTIONS: MappingOption[] = [
 export default function NewMappingDialog({
   open,
   onClose,
-  onBuildManually,
   projectId,
   projectOptions: projectOptionsProp,
   precedentMappings = [],
@@ -128,63 +174,47 @@ export default function NewMappingDialog({
   }, [open, registerModalTour]);
 
   useEffect(() => {
-    if (!open) {
-      return;
+    if (open) {
+      setSelectedProjectId(projectId?.trim() || "");
     }
-    setSelectedProjectId(projectId?.trim() || "");
   }, [open, projectId]);
 
   useEffect(() => {
-    if (!open || (projectOptionsProp && projectOptionsProp.length > 0)) {
-      return;
-    }
-
+    if (!open || (projectOptionsProp && projectOptionsProp.length > 0)) return;
     let cancelled = false;
     setIsLoadingProjects(true);
     getAllProjectsSummary()
       .then(({ projects }) => {
-        if (cancelled) {
-          return;
-        }
-        setLoadedProjectOptions(
-          projects.map((project) => ({
+        if (!cancelled) {
+          setLoadedProjectOptions(projects.map((project) => ({
             value: project.project_id,
             label: project.project_name,
-          })),
-        );
+          })));
+        }
       })
-      .catch((error) => {
-        if (process.env.NODE_ENV === "development") {
-          console.warn("Failed to load projects for New Mapping dialog.", error);
-        }
-        if (!cancelled) {
-          setLoadedProjectOptions([]);
-        }
+      .catch(() => {
+        if (!cancelled) setLoadedProjectOptions([]);
       })
       .finally(() => {
-        if (!cancelled) {
-          setIsLoadingProjects(false);
-        }
+        if (!cancelled) setIsLoadingProjects(false);
       });
-
     return () => {
       cancelled = true;
     };
   }, [open, projectOptionsProp]);
 
-  const projectOptions = useMemo(() => {
-    if (projectOptionsProp && projectOptionsProp.length > 0) {
-      return projectOptionsProp;
-    }
-    return loadedProjectOptions;
-  }, [projectOptionsProp, loadedProjectOptions]);
+  const projectOptions = useMemo(
+    () => projectOptionsProp?.length ? projectOptionsProp : loadedProjectOptions,
+    [loadedProjectOptions, projectOptionsProp],
+  );
 
   const selectedOption = useMemo(
     () => OPTIONS.find((option) => option.id === selectedMode) ?? null,
     [selectedMode],
   );
-
-  const canSubmitManual = Boolean(mappingName.trim() && mappingDescription.trim());
+  const canSubmitManual = Boolean(
+    selectedProjectId.trim() && mappingName.trim() && mappingDescription.trim(),
+  );
 
   const handleClose = () => {
     setSelectedMode(null);
@@ -195,6 +225,7 @@ export default function NewMappingDialog({
     setTargetTableHint("");
     setLinkedMappingIds([]);
     setUploadResult(null);
+    setSelectedProjectValueNames([]);
     setLearningComplete(false);
     onClose();
   };
@@ -207,26 +238,52 @@ export default function NewMappingDialog({
     input.click();
   };
 
-  const handleProceed = () => {
+  const handleProceed = async () => {
     if (!selectedMode) {
       return;
     }
 
     if (selectedMode === "manual") {
-      if (!canSubmitManual) {
-        return;
-      }
+      if (!canSubmitManual) return;
       const details: NewMappingManualDetails = {
         name: mappingName.trim(),
         description: mappingDescription.trim(),
         linkedMappingIds,
-        projectId: selectedProjectId.trim() || undefined,
+        projectId: selectedProjectId.trim(),
       };
-      setSelectedMode(null);
-      setMappingName("");
-      setMappingDescription("");
-      setLinkedMappingIds([]);
-      onBuildManually(details);
+      setUploading(true);
+      try {
+        const sttm = await createProjectSttm(details.projectId ?? "", {
+          sttm_name: details.name,
+          description: details.description || null,
+          precedent_links: details.linkedMappingIds.map((sttmId, index) => ({
+            precedent_sttm_id: sttmId,
+            priority: Math.max(1, 100 - index),
+            knowledge_categories: [
+              "column_mapping",
+              "relationship",
+              "transformation",
+              "query_shaping",
+              "derived_lineage",
+            ],
+            allow_project_specific_values: false,
+          })),
+        });
+        await dispatch(openSttmFromBackend({
+          sttmId: sttm.sttm_id,
+          projectId: details.projectId ?? "",
+        })).unwrap();
+        setSelectedMode(null);
+        setMappingName("");
+        setMappingDescription("");
+        setLinkedMappingIds([]);
+        onClose();
+        router.push("/sttm/builder/new");
+      } catch (error) {
+        alert(error instanceof Error ? error.message : "Unable to create mapping.");
+      } finally {
+        setUploading(false);
+      }
       return;
     }
 
@@ -238,6 +295,7 @@ export default function NewMappingDialog({
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [learningInProgress, setLearningInProgress] = useState(false);
   const [learningComplete, setLearningComplete] = useState(false);
+  const [selectedProjectValueNames, setSelectedProjectValueNames] = useState<string[]>([]);
 
   const handleFileUpload = async (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -261,19 +319,37 @@ export default function NewMappingDialog({
       formData.append("target_table_hint", targetTableHint.trim());
 
       const endpoint = type === "sql" ? API_ROUTES.upload.sql : API_ROUTES.upload.excel;
-      const response = await fetch(`/api${endpoint}`, {
+      const response = await fetch(`${resolveApiBaseUrl()}${endpoint}`, {
         method: "POST",
         body: formData,
       });
 
       if (!response.ok) {
-        const err = await response.json().catch(() => ({ detail: "Upload failed" }));
-        alert(err.detail || "Upload failed");
+        const raw = await response.text();
+        let detail = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          detail = typeof parsed?.detail === "string"
+            ? parsed.detail
+            : JSON.stringify(parsed?.detail ?? parsed);
+        } catch {
+          // Keep the backend text response.
+        }
+        alert(detail || `Upload failed (${response.status})`);
         return;
       }
 
-      const result = await response.json();
-      setUploadResult({ ...result, filename: file.name });
+      const result = await response.json() as UploadResult;
+      const uploaded = { ...result, filename: file.name };
+      setUploadResult(uploaded);
+      const bindings = uploaded.import_preview?.project_value_candidates
+        ?? uploaded.parsed_summary?.variable_bindings
+        ?? [];
+      setSelectedProjectValueNames(
+        bindings
+          .filter((item) => item.project_value_candidate)
+          .map((item) => item.name),
+      );
     } catch {
       alert("Upload failed. Please try again.");
     } finally {
@@ -281,15 +357,87 @@ export default function NewMappingDialog({
     }
   };
 
-  const handleContinueEditing = () => {
+  const handleContinueEditing = async () => {
     if (!uploadResult) return;
-    sessionStorage.setItem("upload_parsed_data", JSON.stringify(uploadResult));
-    setUploadResult(null);
-    setSelectedMode(null);
-    onClose();
-    markExplicitNewDraftIntent();
-    dispatch(resetBuilderForNewMapping());
-    router.push("/sttm/builder/new/mapping?source=upload");
+    const selectedProject = selectedProjectId || projectId || "";
+    if (!selectedProject) return;
+    setUploading(true);
+    try {
+      const workspace = buildSqlUploadWorkspace(uploadResult, {
+        approvedProjectValueNames: selectedProjectValueNames,
+      });
+      const existingAttributes = await listProjectAttributes(selectedProject);
+      const attributesByName = new Map(
+        existingAttributes.map((attribute) => [attribute.attribute_name.toUpperCase(), attribute]),
+      );
+      const parsedBindings = uploadResult.import_preview?.project_value_candidates
+        ?? uploadResult.parsed_summary?.variable_bindings
+        ?? [];
+      const selectedKeys = new Set(selectedProjectValueNames.map((name) => name.toUpperCase()));
+      for (const binding of parsedBindings) {
+        if (!binding.project_value_candidate || !selectedKeys.has(binding.name.toUpperCase())) continue;
+        if (binding.resolved_value === null || binding.resolved_value === undefined) continue;
+        const key = binding.name.toUpperCase();
+        const existing = attributesByName.get(key);
+        if (existing) {
+          if (existing.attribute_value !== String(binding.resolved_value)) {
+            throw new Error(
+              `Project Value ${binding.name} already exists with a different value. Review it in Hardcoded Values before applying this SQL preview.`,
+            );
+          }
+          continue;
+        }
+        const created = await createProjectAttribute(selectedProject, {
+          attribute_name: binding.name,
+          attribute_type: String(binding.inferred_type || "VARCHAR").toUpperCase(),
+          attribute_value: String(binding.resolved_value),
+        });
+        attributesByName.set(key, created);
+      }
+      for (const mapping of workspace.mappings) {
+        if (mapping.mappingMode !== "attribute" || !mapping.attributeName) continue;
+        const key = mapping.attributeName.toUpperCase();
+        const existing = attributesByName.get(key);
+        if (existing) {
+          mapping.constantValue = existing.attribute_value;
+          continue;
+        }
+        const created = await createProjectAttribute(selectedProject, {
+          attribute_name: mapping.attributeName,
+          attribute_type:
+            !mapping.targetType || mapping.targetType.toUpperCase() === "TEXT"
+              ? "VARCHAR"
+              : mapping.targetType,
+          attribute_value: String(mapping.constantValue ?? ""),
+        });
+        attributesByName.set(key, created);
+        mapping.constantValue = created.attribute_value;
+      }
+      const filename = uploadResult.filename || "SQL mapping";
+      const sttm = await createProjectSttm(selectedProject, {
+        sttm_name: filename.replace(/\.[^.]+$/, ""),
+        description: `Imported from ${filename}`,
+        target_table: tableRefFromQualifiedName(workspace.targetTableFqn),
+        workspace_snapshot: uploadWorkspaceSnapshot(workspace),
+      });
+      await dispatch(openSttmFromBackend({
+        sttmId: sttm.sttm_id,
+        projectId: selectedProject,
+      })).unwrap();
+      sessionStorage.removeItem("upload_parsed_data");
+      setUploadResult(null);
+      setSelectedMode(null);
+      onClose();
+      router.push(
+        workspace.targetTableFqn
+          ? "/sttm/builder/new/mapping?source=upload"
+          : "/sttm/builder/new?source=upload",
+      );
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Unable to create mapping from SQL.");
+    } finally {
+      setUploading(false);
+    }
   };
 
   const handleUseAsLearning = async () => {
@@ -299,10 +447,14 @@ export default function NewMappingDialog({
       const formData = new FormData();
       formData.append("asset_id", uploadResult.asset_id);
       formData.append("project_id", selectedProjectId || projectId || "default");
-      const response = await fetch(`/api${API_ROUTES.upload.triggerLearning}`, {
+      formData.append("approved_project_values", JSON.stringify(selectedProjectValueNames));
+      const response = await fetch(
+        `${resolveApiBaseUrl()}${API_ROUTES.upload.triggerLearning}`,
+        {
         method: "POST",
         body: formData,
-      });
+        },
+      );
       if (!response.ok) {
         const err = await response.json().catch(() => ({ detail: "Learning failed" }));
         alert(err.detail || "Failed to create learnings.");
@@ -320,7 +472,7 @@ export default function NewMappingDialog({
         while (!["completed", "failed"].includes(status) && attempts < 20) {
           attempts += 1;
           const resume = await fetch(
-            `/api${API_ROUTES.workbench.firJobResume(jobId)}`,
+            `${resolveApiBaseUrl()}${API_ROUTES.workbench.firJobResume(jobId)}`,
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -342,6 +494,7 @@ export default function NewMappingDialog({
 
   const handleLearningDone = () => {
     setUploadResult(null);
+    setSelectedProjectValueNames([]);
     setLearningComplete(false);
     setSelectedMode(null);
     onClose();
@@ -385,8 +538,8 @@ export default function NewMappingDialog({
           position: "fixed",
           inset: 0,
           zIndex: 1400,
-          px: 2,
-          py: 4,
+          px: { xs: 1, sm: 2 },
+          py: { xs: 1, sm: 2 },
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
@@ -400,6 +553,10 @@ export default function NewMappingDialog({
           sx={{
             width: "100%",
             maxWidth: 728,
+            maxHeight: "calc(100dvh - 16px)",
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
             borderRadius: "24px",
             border: "1px solid rgba(15, 23, 42, 0.08)",
             boxShadow: "0 30px 60px rgba(15, 23, 42, 0.18)",
@@ -415,6 +572,7 @@ export default function NewMappingDialog({
               gap: 2,
               px: 4,
               py: 3.25,
+              flexShrink: 0,
               borderBottom: "1px solid #edf2f7",
             }}
           >
@@ -483,8 +641,9 @@ export default function NewMappingDialog({
             </AiaStack>
           </AiaBox>
 
+          <AiaBox sx={{ minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
           {uploadResult ? (
-            <AiaBox sx={{ px: 4, py: 3.5 }}>
+            <AiaBox sx={{ px: { xs: 2, sm: 4 }, py: { xs: 2, sm: 3.5 }, minWidth: 0 }}>
               {learningComplete ? (
                 <AiaStack spacing={2} sx={{ alignItems: "center", py: 2 }}>
                   <AiaBox sx={{ width: 56, height: 56, borderRadius: "50%", bgcolor: "#dcfce7", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -518,30 +677,48 @@ export default function NewMappingDialog({
                     </AiaText>
                     {uploadResult.parsed_summary && (
                       <AiaText sx={{ fontSize: 12.5, color: "#64748b" }}>
-                        {uploadResult.parsed_summary.sources?.length ?? 0} source table(s)
-                        {uploadResult.parsed_summary.targets?.length ? ` • ${uploadResult.parsed_summary.targets.length} target(s)` : ""}
-                        {uploadResult.parsed_summary.columns_count ? ` • ${uploadResult.parsed_summary.columns_count} columns` : ""}
+                        {uploadResult.parsed_summary.source_tables?.length ?? 0} source table(s)
+                        {uploadResult.parsed_summary.target_table ? " • target bound" : " • target needs review"}
+                        {uploadResult.parsed_summary.column_mappings?.length
+                          ? ` • ${uploadResult.parsed_summary.column_mappings.length} columns`
+                          : ""}
                       </AiaText>
                     )}
                   </AiaBox>
+                  {uploadResult.import_preview ? (
+                    <SqlBundleReviewPanel
+                      result={uploadResult}
+                      onApplyDraft={handleContinueEditing}
+                      selectedProjectValueNames={selectedProjectValueNames}
+                      onProjectValueSelectionChange={setSelectedProjectValueNames}
+                    />
+                  ) : null}
                   <AiaText sx={{ fontSize: 14, fontWeight: 600, color: "#0f172a" }}>
                     What would you like to do with this file?
                   </AiaText>
                   <AiaButton
                     variant="text"
                     onClick={handleContinueEditing}
-                    sx={{ width: "100%", textTransform: "none", display: "block", px: 2.25, py: 2, borderRadius: "14px", border: "1px solid #dbe2ea", textAlign: "left", "&:hover": { borderColor: "var(--aia-button-color)", bgcolor: "#fafbff" } }}
+                    sx={{ width: "100%", minWidth: 0, overflow: "hidden", textTransform: "none", display: "block", px: 2.25, py: 2, borderRadius: "14px", border: "1px solid #dbe2ea", textAlign: "left", "&:hover": { borderColor: "var(--aia-button-color)", bgcolor: "#fafbff" } }}
                   >
-                    <AiaText sx={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Continue Editing</AiaText>
-                    <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.5 }}>Auto-populate the mapping builder with parsed tables and columns from this file.</AiaText>
+                    <AiaText sx={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>
+                      {buildSqlUploadWorkspace(uploadResult).targetTableFqn
+                        ? "Continue Editing"
+                        : "Continue to Target Selection"}
+                    </AiaText>
+                    <AiaText sx={{ display: "block", maxWidth: "100%", whiteSpace: "normal", overflowWrap: "anywhere", wordBreak: "break-word", fontSize: 12.5, lineHeight: 1.5, color: "#64748b", mt: 0.5 }}>
+                      {buildSqlUploadWorkspace(uploadResult).targetTableFqn
+                        ? "Auto-populate the mapping builder with parsed tables and columns from this file."
+                        : "Keep the parsed sources, joins, CTE candidates, and columns, then choose the target table before mapping."}
+                    </AiaText>
                   </AiaButton>
                   <AiaButton
                     variant="text"
                     onClick={handleUseAsLearning}
-                    sx={{ width: "100%", textTransform: "none", display: "block", px: 2.25, py: 2, borderRadius: "14px", border: "1px solid #dbe2ea", textAlign: "left", "&:hover": { borderColor: "var(--aia-button-color)", bgcolor: "#fafbff" } }}
+                    sx={{ width: "100%", minWidth: 0, overflow: "hidden", textTransform: "none", display: "block", px: 2.25, py: 2, borderRadius: "14px", border: "1px solid #dbe2ea", textAlign: "left", "&:hover": { borderColor: "var(--aia-button-color)", bgcolor: "#fafbff" } }}
                   >
                     <AiaText sx={{ fontSize: 14, fontWeight: 700, color: "#0f172a" }}>Submit for Offline Learning</AiaText>
-                    <AiaText sx={{ fontSize: 12.5, color: "#64748b", mt: 0.5 }}>FIR will combine this document with resolved table semantics and existing evidence before generating guidance.</AiaText>
+                    <AiaText sx={{ display: "block", maxWidth: "100%", whiteSpace: "normal", overflowWrap: "anywhere", wordBreak: "break-word", fontSize: 12.5, lineHeight: 1.5, color: "#64748b", mt: 0.5 }}>FIR will combine this document with resolved table semantics and existing evidence before generating guidance.</AiaText>
                   </AiaButton>
                 </AiaStack>
               )}
@@ -715,7 +892,9 @@ export default function NewMappingDialog({
                 options={projectOptions}
                 placeholder={isLoadingProjects ? "Loading projects..." : "Select a project"}
                 disabled={isLoadingProjects && projectOptions.length === 0}
-                onChange={(value) => setSelectedProjectId(typeof value === "string" ? value : "")}
+                onChange={(value) => setSelectedProjectId(
+                  typeof value === "string" ? value : "",
+                )}
               />
             </AiaBox>
           )}
@@ -843,7 +1022,12 @@ export default function NewMappingDialog({
                 rounded="lg"
                 size="medium"
                 endIcon={<ArrowForwardRoundedIcon sx={{ fontSize: 16 }} />}
-                disabled={!selectedMode || (selectedMode === "manual" && !canSubmitManual)}
+                disabled={
+                  uploading ||
+                  !selectedMode ||
+                  !selectedProjectId.trim() ||
+                  (selectedMode === "manual" && !canSubmitManual)
+                }
                 onClick={handleProceed}
                 sx={{
                   minWidth: 156,
@@ -853,11 +1037,16 @@ export default function NewMappingDialog({
                   fontWeight: 800,
                 }}
               >
-                {selectedMode === "manual" ? "Build Mapping" : "Choose File"}
+                {uploading
+                  ? "Uploading…"
+                  : selectedMode === "manual"
+                    ? "Build Mapping"
+                    : "Choose File"}
               </AiaButton>
             </AiaStack>
           </AiaBox>
           )}
+          </AiaBox>
         </AiaBox>
       </AiaBox>
 

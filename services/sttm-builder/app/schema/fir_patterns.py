@@ -43,6 +43,11 @@ class TargetMappingPatternQuery(BaseModel):
     target_table: str | None = None
     target_columns: list[str] = Field(default_factory=list)
     source_tables: list[str] = Field(default_factory=list)
+    source_columns: list[str] = Field(default_factory=list)
+    source_column_profiles: list[dict[str, Any]] = Field(default_factory=list)
+    crm_family: str | None = None
+    relationship_paths: list[str] = Field(default_factory=list)
+    derived_outputs: list[str] = Field(default_factory=list)
     workspace_context_id: str | None = None
     project_id: str | None = None
     limit: int = Field(default=100, ge=1, le=500)
@@ -57,6 +62,9 @@ class TargetMappingPatternCandidate(BaseModel):
     ]
     compatibility_reasons: list[str] = Field(default_factory=list)
     missing_dependencies: list[str] = Field(default_factory=list)
+    adapted_source_columns: list[str] = Field(default_factory=list)
+    compatibility_checks: dict[str, bool | None] = Field(default_factory=dict)
+    prepare_source_action: dict[str, Any] | None = None
 
 
 class FIRLearningJobResponse(BaseModel):
@@ -70,3 +78,6 @@ class FIRLearningJobResponse(BaseModel):
     stage: str | None = None
     progress: float = 0.0
     warnings: list[str] = Field(default_factory=list)
+    work_items_by_status: dict[str, int] = Field(default_factory=dict)
+    work_items_by_type: dict[str, dict[str, int]] = Field(default_factory=dict)
+    target_column_progress: list[dict[str, Any]] = Field(default_factory=list)

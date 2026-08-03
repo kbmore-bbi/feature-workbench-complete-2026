@@ -31,6 +31,8 @@ instructions:
     - context.relation_graph: the compiler-owned unified graph of PHYSICAL_TABLE,
       DERIVED_SOURCE, and CTE nodes, validated join edges, stable aliases, output contracts,
       and Value bindings
+      - project-scoped bindings have allow_project_specific_value=true, an attribute_name,
+        a stable binding_id, and a resolved_value owned by the current project
     - context.datahub_context
     - context.execution_context: canonical snapshot reference, exact FIR recommendations,
       curated inferences, confidence, and evidence IDs
@@ -77,6 +79,12 @@ instructions:
     8. Distinguish identifiers from display names. An ID target must not be mapped from an
        advisor/person name merely because the descriptions are similar. Enforce target
        type compatibility before recommending a mapping.
+    9. Project values are governed mappings, not source columns. When a target should use a
+       binding from context.relation_graph.value_bindings with
+       allow_project_specific_value=true, return mapping_mode=PROJECT_VALUE,
+       attribute_name exactly as supplied, constant_value as the binding placeholder
+       (for example $TransactionFirmID), source_attributes=[], and its binding_id in
+       value_binding_ids. Never copy resolved_value into constant_value or prose.
 
     ## Linked precedent decision contract
     For every target, compare the exact compatible linked precedent with current target
@@ -279,8 +287,9 @@ instructions:
     ## Output expectations per target attribute
     Return one mapping object per target attribute with:
     - source_attributes: array of fully-qualified source columns, possibly empty
-    - mapping_mode: SOURCE, VALUE, or UNRESOLVED
+    - mapping_mode: SOURCE, VALUE, PROJECT_VALUE, or UNRESOLVED
     - constant_value: preserved placeholder/literal for VALUE mode, otherwise null
+    - attribute_name: exact project attribute name for PROJECT_VALUE mode, otherwise null
     - source_dependencies: relation-alias-qualified columns required by the expression
     - value_binding_ids: Value binding IDs required by the expression
     - transformation_classification: VALUE, DIRECT, SIMPLE_MULTI_SOURCE, COMPLEX, or UNRESOLVED
@@ -328,6 +337,7 @@ instructions:
               "source_attributes": ["DB.SCHEMA.SOURCE_TABLE.SOURCE_COLUMN"],
               "mapping_mode": "SOURCE",
               "constant_value": null,
+              "attribute_name": null,
               "source_dependencies": ["contacts.legacy_hh_id"],
               "value_binding_ids": [],
               "transformation_classification": "DIRECT",
@@ -375,6 +385,12 @@ instructions:
     - source_attributes may contain multiple columns.
     - source_dependencies and value_binding_ids are mandatory arrays.
     - VALUE mappings preserve their exact placeholder in constant_value and have no fabricated source.
+    - PROJECT_VALUE mappings preserve the placeholder, set attribute_name, and cite the exact
+      project value binding ID. They never expose the resolved project value.
+    - For uploaded SQL, consume variable_bindings and variable_approval from the scoped document
+      package. A SET variable classified as mapping_value can be returned as PROJECT_VALUE only
+      when its name is approved for the project. Environment identifiers and draft/rejected values
+      remain evidence or unresolved review items; never convert them into learned constants.
     - Novel COMPLEX mappings leave preprocessing_rule null for the transformation agent.
     - candidate_source_attributes may be omitted or empty when there are no useful alternatives.
     - When no safe mapping exists:

@@ -213,19 +213,19 @@ const AiaAutocomplete = ({
           },
         },
       }}
-      renderTags={
+      renderValue={
         multiple
-          ? (tagValue, getTagProps) =>
-              tagValue.map((option, index) => {
-                const { key, ...tagProps } = getTagProps({ index });
+          ? (selectedValue, getItemProps) =>
+              (Array.isArray(selectedValue) ? selectedValue : [selectedValue]).map((option, index) => {
+                const itemProps = getItemProps({ index });
                 const label = typeof option === 'string' ? option : option.label;
                 return (
                   <AiaChip
-                    key={key}
+                    key={`${label}-${index}`}
                     label={label}
                     size="small"
                     color="primary"
-                    onDelete={tagProps.onDelete}
+                    onDelete={() => itemProps.onDelete({})}
                     sx={{ m: '2px' }}
                   />
                 );

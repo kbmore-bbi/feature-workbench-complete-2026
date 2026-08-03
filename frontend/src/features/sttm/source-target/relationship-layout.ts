@@ -229,12 +229,18 @@ export function buildRelationshipLayout(
     }
   }
 
-  let fallbackLevel = Math.max(0, ...Array.from(levels.values()));
-  for (const tableId of tableIds) {
-    if (levels.has(tableId)) continue;
-    fallbackLevel += 1;
-    levels.set(tableId, fallbackLevel);
-  }
+  const disconnectedIds = tableIds
+    .filter((tableId) => !levels.has(tableId))
+    .sort();
+  const connectedMaxLevel = Math.max(0, ...Array.from(levels.values()));
+  const disconnectedStartLevel = levels.size === 1 ? 0 : connectedMaxLevel + 1;
+  const disconnectedColumnCount = Math.min(3, Math.max(1, disconnectedIds.length));
+  disconnectedIds.forEach((tableId, index) => {
+    levels.set(
+      tableId,
+      disconnectedStartLevel + (index % disconnectedColumnCount),
+    );
+  });
 
   const tablesByLevel = new Map<number, string[]>();
   for (const tableId of tableIds) {

@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable react-hooks/set-state-in-effect -- Form state must hydrate when edit-modal inputs change. */
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -285,7 +286,7 @@ export default function NewAttributeModal({
             <AiaSelect
               fullWidth
               value={attributeType}
-              options={ATTRIBUTE_TYPE_OPTIONS}
+              options={[...ATTRIBUTE_TYPE_OPTIONS]}
               placeholder="Select attribute type"
               onChange={(value) => setAttributeType(value as AttributeType)}
             />

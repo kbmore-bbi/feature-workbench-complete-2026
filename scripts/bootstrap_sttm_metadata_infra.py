@@ -11,6 +11,7 @@ from pathlib import Path
 
 import snowflake.connector
 import yaml
+from snowflake.connector.util_text import split_statements
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -25,6 +26,8 @@ BASE_SQL_FILES = [
     ROOT_DIR / "infra/snowflake/create-table-ddl.sql",
     ROOT_DIR
     / "infra/snowflake/migrations/20260723_warehouse_routing_conversation_artifacts.sql",
+    ROOT_DIR / "infra/snowflake/migrations/20260731_project_attributes.sql",
+    ROOT_DIR / "infra/snowflake/migrations/20260801_agent_artifact_jobs.sql",
     ROOT_DIR / "infra/snowflake/create-derived-sources-table.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-ddl.sql",
     ROOT_DIR / "infra/snowflake/agentic_tools/sp-list-tables.sql",
@@ -79,6 +82,7 @@ FIR_SQL_FILES = [
     ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-precompute-permutations.sql",
     ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-score-recommendations.sql",
     ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-invoke-agent.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-process-learning-queue.sql",
     ROOT_DIR / "infra/snowflake/fir_system/cortex_search/workbench_rag_search_service.sql",
     ROOT_DIR / "infra/snowflake/fir_system/cortex_search/fir_search_services.sql",
 ]
@@ -244,6 +248,50 @@ def render_sql(
     )
 
 
+def _existing_column_names(connection, table_identifier: str) -> set[str]:
+    """Return normalized column names without relying on INFORMATION_SCHEMA casing."""
+    with connection.cursor() as cursor:
+        cursor.execute(f"DESC TABLE {table_identifier}")
+        return {
+            str(row[0]).strip().upper()
+            for row in cursor.fetchall()
+            if row and row[0] is not None
+        }
+
+
+def _skip_redundant_mime_type_add(connection, statement: str, label: str) -> bool:
+    """Work around Snowflake ambiguity on ADD COLUMN IF NOT EXISTS MIME_TYPE.
+
+    Some upgraded client tables already contain MIME_TYPE but Snowflake raises
+    002028 instead of treating this particular ALTER as a no-op. Inspect the
+    table first and skip only this one additive statement when the column is
+    demonstrably present.
+    """
+    if not label.endswith("20260723_warehouse_routing_conversation_artifacts.sql"):
+        return False
+    match = re.search(
+        r"""
+        ALTER\s+TABLE\s+
+        (?P<table>[A-Za-z0-9_$".]+)
+        \s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+
+        "?MIME_TYPE"?
+        \s+STRING
+        """,
+        statement,
+        flags=re.IGNORECASE | re.VERBOSE,
+    )
+    if not match:
+        return False
+    table_identifier = match.group("table")
+    if "MIME_TYPE" not in _existing_column_names(connection, table_identifier):
+        return False
+    print(
+        "[bootstrap-sttm-metadata] MIME_TYPE already exists on "
+        f"{table_identifier}; skipping redundant additive ALTER."
+    )
+    return True
+
+
 def execute_multi_statement(connection, sql_text: str, label: str) -> None:
     print(f"[bootstrap-sttm-metadata] Applying {label}")
     # Snowflake's execute_stream treats a trailing block of line comments after
@@ -253,12 +301,21 @@ def execute_multi_statement(connection, sql_text: str, label: str) -> None:
     executable_sql = re.sub(r"(?:\s*--[^\r\n]*(?:\r?\n|$))+\s*$", "", sql_text)
     if not executable_sql.strip():
         return
-    stream = io.StringIO(executable_sql)
-    for cursor in connection.execute_stream(stream, remove_comments=False):
-        try:
-            _ = cursor.rowcount
-        finally:
-            cursor.close()
+    try:
+        statements = split_statements(
+            io.StringIO(executable_sql),
+            remove_comments=False,
+        )
+        for statement, _is_put_or_get in statements:
+            if not statement.strip():
+                continue
+            if _skip_redundant_mime_type_add(connection, statement, label):
+                continue
+            with connection.cursor() as cursor:
+                cursor.execute(statement)
+                _ = cursor.rowcount
+    except Exception as exc:
+        raise RuntimeError(f"Failed while applying {label}: {exc}") from exc
 
 
 def create_schema(connection, database: str, schema: str) -> None:

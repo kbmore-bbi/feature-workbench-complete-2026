@@ -4,6 +4,7 @@ import { AiaText } from '@/components/ui/aia-text';
 
 import { AddRoundedIcon } from "@/utils/icons";
 import { CAPTION_SX, SECTION_TITLE_SX, SECONDARY_TEXT_SX } from '@/config/typography-tokens';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 
 type ProjectsHeaderProps = {
   projectCount: number;
@@ -18,6 +19,7 @@ export default function ProjectsHeader({
 }: ProjectsHeaderProps) {
   return (
     <AiaBox
+      data-tour={TOUR_TARGETS.projectsHeader}
       sx={{
         display: "flex",
         flexDirection: { xs: "column", lg: "row" },
@@ -50,6 +52,7 @@ export default function ProjectsHeader({
           variant="contained"
           color="primary"
           size="medium"
+          data-tour={TOUR_TARGETS.projectsNewProject}
           startIcon={<AddRoundedIcon sx={{ fontSize: 18 }} />}
           onClick={onNewProject}
         >

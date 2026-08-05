@@ -3,6 +3,7 @@ import { landingTour } from "./content/landing.tour";
 import { dashboardTour } from "./content/dashboard.tour";
 import { projectsTour } from "./content/projects.tour";
 import { mappingsTour } from "./content/mappings.tour";
+import { administrationUserManagementTour } from "./content/administration-user-management.tour";
 import { newMappingTour } from "./content/new-mapping.tour";
 import { sttmTableSelectionTour } from "./content/sttm-table-selection.tour";
 import { sttmTablesSelectedTour } from "./content/sttm-tables-selected.tour";
@@ -24,6 +25,7 @@ export const TOUR_REGISTRY: Record<TourId, TourDefinition> = {
   dashboard: dashboardTour,
   projects: projectsTour,
   mappings: mappingsTour,
+  "administration-user-management": administrationUserManagementTour,
   "new-mapping": newMappingTour,
   "sttm-table-selection": sttmTableSelectionTour,
   "sttm-tables-selected": sttmTablesSelectedTour,

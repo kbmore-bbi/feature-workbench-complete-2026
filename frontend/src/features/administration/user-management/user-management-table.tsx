@@ -11,6 +11,7 @@ import { EditOutlinedIcon } from '@/utils/icons';
 import { useMemo } from 'react';
 import type { AdminUserListItem } from '@/data/mock/administration';
 import AdminUserStatusBadge from './admin-user-status-badge';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 
 const ROLE_FILTER_OPTIONS = [
   { label: 'All', value: '' },
@@ -64,6 +65,12 @@ type UserManagementTableProps = {
 };
 
 export default function UserManagementTable({ rows, onEditProfile }: UserManagementTableProps) {
+
+  const tourAnchorUserId = useMemo(
+    () => rows.find((user) => !user.isPrimaryAdmin)?.id ?? null,
+    [rows],
+  );
+
   const columns = useMemo<Array<AiaDataTableColumnDef<AdminUserListItem, SortKey>>>(
     () => [
       {
@@ -149,6 +156,9 @@ export default function UserManagementTable({ rows, onEditProfile }: UserManagem
             <AiaButton
               variant="outlined"
               size="small"
+              data-tour={
+                user.id === tourAnchorUserId ? TOUR_TARGETS.adminUserEditProfile : undefined
+              }
               customColor="var(--aia-button-color)"
               customBorderColor="var(--aia-button-color)"
               startIcon={<EditOutlinedIcon sx={{ fontSize: 14 }} />}
@@ -159,7 +169,7 @@ export default function UserManagementTable({ rows, onEditProfile }: UserManagem
           ),
       },
     ],
-    [onEditProfile],
+    [onEditProfile, tourAnchorUserId],
   );
 
   return (
@@ -170,6 +180,10 @@ export default function UserManagementTable({ rows, onEditProfile }: UserManagem
       defaultSort={{ key: 'user', direction: 'asc' }}
       compareRows={compareUsers}
       emptyMessage="No users match the current column filters."
+      tourTargets={{
+        columnFilters: TOUR_TARGETS.adminUsersColumnFilters,
+        pagination: TOUR_TARGETS.adminUsersPagination,
+      }}
     />
   );
 }

@@ -14,6 +14,7 @@ import { buildProjectsSummary } from "./project-utils";
 import { PROJECT_CARD_WIDTH } from "./projects-ui-styles";
 import { PROJECT_COLOR_OPTIONS } from "./project-color-options";
 import { createProject, getAllProjectsSummary, projectRecordToItem } from "@/services/projectService";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
 
 export default function ProjectsPage() {
   const router = useRouter();
@@ -103,6 +104,7 @@ export default function ProjectsPage() {
           />
 
           <AiaBox
+            data-tour={TOUR_TARGETS.projectsGrid}
             sx={{
               mt: 2.5,
               display: "flex",
@@ -129,7 +131,7 @@ export default function ProjectsPage() {
                 No saved projects found. Create a project to start saving STTMs.
               </AiaBox>
             ) : (
-              projects.map((project) => (
+              projects.map((project, index) => (
                 <AiaBox
                   key={project.id}
                   sx={{
@@ -140,6 +142,7 @@ export default function ProjectsPage() {
                 >
                   <ProjectCard
                     project={project}
+                    isTourAnchor={index === 0}
                     onClick={() => router.push(`/mappings?project=${encodeURIComponent(project.id)}`)}
                     onHardcodedValues={() =>
                       router.push(

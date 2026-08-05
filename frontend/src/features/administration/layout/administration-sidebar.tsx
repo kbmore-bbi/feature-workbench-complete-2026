@@ -23,6 +23,15 @@ import {
   resolveAdministrationNavItem,
 } from './administration-sidebar-types';
 import { useAdministrationSidebar } from './administration-sidebar-context';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
+
+const ADMIN_NAV_TOUR_TARGETS: Record<AdministrationNavItem, string> = {
+  'User Management': TOUR_TARGETS.adminNavUserManagement,
+  'Audit Log': TOUR_TARGETS.adminNavAuditLog,
+  'Ownership Transfer': TOUR_TARGETS.adminNavOwnershipTransfer,
+  'Mapping Locks': TOUR_TARGETS.adminNavMappingLocks,
+  'Screen Permissions': TOUR_TARGETS.adminNavScreenPermissions,
+};
 
 const navItems: Array<{
   label: AdministrationNavItem;
@@ -130,6 +139,7 @@ function AdministrationSidebarNavItem({
   const link = (
     <Link
       href={href}
+      data-tour={ADMIN_NAV_TOUR_TARGETS[label]}
       aria-current={isActive ? 'page' : undefined}
       style={{
         textDecoration: 'none',
@@ -198,6 +208,7 @@ export default function AdministrationSidebar() {
 
   return (
     <AiaBox
+      data-tour={TOUR_TARGETS.adminSidebar}
       sx={{
         display: 'flex',
         width: hydrated ? sidebarWidth : EXPANDED_ADMINISTRATION_SIDEBAR_WIDTH,

@@ -50,6 +50,13 @@ const navItems: Array<{
   },
 ];
 
+const SIDEBAR_NAV_TOUR_TARGETS: Record<AppNavItem, string> = {
+  Dashboard: TOUR_TARGETS.sidebarDashboard,
+  Administration: TOUR_TARGETS.sidebarAdministration,
+  Projects: TOUR_TARGETS.sidebarProjects,
+  Mappings: TOUR_TARGETS.sidebarMappings,
+};
+
 type AppSidebarProps = {
   activeNav?: AppNavItem;
   initialNewMappingOpen?: boolean;
@@ -121,12 +128,7 @@ function SidebarNavItem({ href, label, icon: Icon, isActive, collapsed }: Sideba
     </AiaBox>
   );
 
-  const dataTour =
-    label === "Dashboard"
-      ? TOUR_TARGETS.sidebarDashboard
-      : label === "Projects"
-        ? TOUR_TARGETS.sidebarProjects
-        : TOUR_TARGETS.sidebarMappings;
+  const dataTour = SIDEBAR_NAV_TOUR_TARGETS[label];
 
   const link = (
     <Link

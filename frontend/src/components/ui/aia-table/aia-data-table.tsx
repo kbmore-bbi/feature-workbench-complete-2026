@@ -263,6 +263,7 @@ export function AiaDataTable<TRow, TSortKey extends string = string>({
   emptyMessage = 'No rows match the current column filters.',
   rowsPerPageOptions = DEFAULT_ROWS_PER_PAGE_OPTIONS,
   defaultRowsPerPage = DEFAULT_ROWS_PER_PAGE,
+  tourTargets,
 }: AiaDataTableProps<TRow, TSortKey>) {
   const initialFilters = useMemo(
     () =>
@@ -357,7 +358,7 @@ export function AiaDataTable<TRow, TSortKey extends string = string>({
               ))}
             </AiaTableRowPrimitive>
 
-            <AiaTableRowPrimitive>
+            <AiaTableRowPrimitive data-tour={tourTargets?.columnFilters}>
               {columns.map((column) => (
                 <AiaTableCellPrimitive
                   key={`${column.id}-filter`}
@@ -413,6 +414,7 @@ export function AiaDataTable<TRow, TSortKey extends string = string>({
 
       <AiaTablePagination
         component="div"
+        data-tour={tourTargets?.pagination}
         count={sortedRows.length}
         page={page}
         onPageChange={(_, nextPage) => setPage(nextPage)}

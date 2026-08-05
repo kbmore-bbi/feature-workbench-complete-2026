@@ -12,22 +12,28 @@ import type { ProjectItem } from "./projects-data";
 import ProjectCardMeta from "./project-card-meta";
 import ProjectProgressBar from "./project-progress-bar";
 import ProjectStatusBadge from "./project-status-badge";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
 
 type ProjectCardProps = {
   project: ProjectItem;
   onClick: () => void;
   onHardcodedValues: () => void;
+  isTourAnchor?: boolean;
 };
 
 export default function ProjectCard({
   project,
   onClick,
   onHardcodedValues,
+  isTourAnchor = false,
 }: ProjectCardProps) {
+  const tourTarget = (target: string) => (isTourAnchor ? target : undefined);
+
   return (
     <AiaPaper
       elevation={0}
       onClick={onClick}
+      data-tour={tourTarget(TOUR_TARGETS.projectsCard)}
       sx={{
         cursor: "pointer",
         width: "100%",
@@ -85,11 +91,14 @@ export default function ProjectCard({
           <KeyboardArrowRightRoundedIcon sx={{ fontSize: 18, color: "#94A3B8", mt: 0.25, flexShrink: 0 }} />
         </AiaBox>
 
-        <AiaBox sx={{ mt: 1.75 }}>
+        <AiaBox sx={{ mt: 1.75 }} data-tour={tourTarget(TOUR_TARGETS.projectsCardCoverage)}>
           <ProjectProgressBar percent={project.coveragePercent} barColor={project.coverageBarColor} />
         </AiaBox>
 
-        <AiaBox sx={{ mt: 1.5, display: "flex", flexWrap: "wrap", gap: 0.75 }}>
+        <AiaBox
+          data-tour={tourTarget(TOUR_TARGETS.projectsCardStatus)}
+          sx={{ mt: 1.5, display: "flex", flexWrap: "wrap", gap: 0.75 }}
+        >
           <ProjectStatusBadge
             variant="mappings"
             label={`${project.totalMappings} mapping${project.totalMappings === 1 ? "" : "s"}`}
@@ -115,6 +124,7 @@ export default function ProjectCard({
           <AiaButton
             variant="outlined"
             size="small"
+            data-tour={tourTarget(TOUR_TARGETS.projectsCardHardcodedValues)}
             startIcon={<LockOutlinedIcon sx={{ fontSize: 16 }} />}
             onClick={(event) => {
               event.stopPropagation();
@@ -142,6 +152,7 @@ export default function ProjectCard({
       </AiaBox>
 
       <AiaBox
+        data-tour={tourTarget(TOUR_TARGETS.projectsCardMeta)}
         sx={{
           display: "flex",
           gap: 2,

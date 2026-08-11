@@ -24,6 +24,7 @@ import { AiaSelect } from '@/components/ui/aia-select';
 import { AiaAutocomplete } from '@/components/ui/aia-auto-complete';
 import { AiaCheckboxCell, AiaInputCell } from '@/components/ui/aia-table';
 import {
+  MappingConfidenceCell,
   MappingRuleCell,
   MappingSourceColumnsCell,
   MappingStatusCell,
@@ -56,6 +57,19 @@ import {
   MAPPING_PREPROCESS_RULE_SELECT_WRAPPER_SX,
   mappingTableSx,
 } from './mapping-table-styles';
+import { MappingResizableHeaderCell } from './mapping-resizable-header-cell';
+import { mappingColumnDividerSx } from './mapping-column-divider';
+import {
+  getVisibleMappingColumnKeys,
+  useMappingColumnWidths,
+} from './use-mapping-column-widths';
+import {
+  countMappingsByConfidenceGroup,
+  getConfidenceGroup,
+  hasConfidenceScore,
+  sortMappingsByConfidenceGroups,
+} from './mapping-confidence-groups';
+import { MappingConfidenceGroupHeaderRow } from './mapping-confidence-group-header';
 
 const BUILT_IN_RULES = [
   'Direct',
@@ -204,10 +218,11 @@ function PreProcessRuleColumnFilter({
 
 /** Minimum column widths — table scrolls horizontally when viewport is narrower. */
 const MAPPING_COLUMN_MIN_WIDTH = {
-  checkbox: 64,
+  checkbox: 52,
   targetColumn: 168,
-  preProcessRule: 400,
   sourceColumn: 300,
+  preProcessRule: 400,
+  confidence: 120,
   typePreview: 112,
   nlRule: 220,
   order: 96,
@@ -216,10 +231,7 @@ const MAPPING_COLUMN_MIN_WIDTH = {
   dataPreview: 168,
 } as const;
 
-const MAPPING_TABLE_MIN_WIDTH = Object.values(MAPPING_COLUMN_MIN_WIDTH).reduce(
-  (total, width) => total + width,
-  0,
-);
+const FROZEN_CHECKBOX_LEFT = 0;
 
 const multilineCellInputSx = {
   ...MAPPING_TABLE_SECONDARY_INPUT_SX,
@@ -248,11 +260,6 @@ const mappingBodyInputSx = {
     ...MAPPING_TABLE_SECONDARY_INPUT_TYPOGRAPHY,
     paddingY: '8px !important',
   },
-} as const;
-
-const FROZEN_COLUMN_LEFT = {
-  checkbox: 0,
-  targetColumn: MAPPING_COLUMN_MIN_WIDTH.checkbox,
 } as const;
 
 function mappingFrozenCellSx(
@@ -287,6 +294,7 @@ const scrollableBodyCellSx = {
   zIndex: 1,
   bgcolor: '#fff',
   backgroundColor: '#fff',
+  ...mappingColumnDividerSx,
 } as const;
 
 const scrollableHeaderCellSx = {
@@ -381,6 +389,7 @@ const SourceTargetAttributeMapping = () => {
     mappingLoading,
     autoMapStatusMessage,
     autoMapProcessingIds,
+    autoMapGroupingEnabled,
     sourceAttributeGroups,
     derivedSources,
     activeProjectId,
@@ -405,6 +414,19 @@ const SourceTargetAttributeMapping = () => {
   }>>({});
   const [recommendationActionErrors, setRecommendationActionErrors] = useState<Record<string, string>>({});
   const [projectAttributes, setProjectAttributes] = useState<ProjectAttributeRecord[]>([]);
+  const showConfidenceColumn = useMemo(
+    () =>
+      autoMapGroupingEnabled
+      || mappings.some((row) => hasConfidenceScore(row.confidenceScore)),
+    [autoMapGroupingEnabled, mappings],
+  );
+  const confidenceGroupingActive = showConfidenceColumn;
+  const visibleColumnKeys = useMemo(
+    () => getVisibleMappingColumnKeys(showConfidenceColumn),
+    [showConfidenceColumn],
+  );
+  const { columnWidths, onResizeStart, tableMinWidth, frozenTargetColumnLeft } =
+    useMappingColumnWidths(MAPPING_COLUMN_MIN_WIDTH, MAPPING_COLUMN_MIN_WIDTH, visibleColumnKeys);
 
   const sortedMappings = mappings;
   const sourceColumnOptions = buildSourceColumnOptions(sourceAttributeGroups, derivedSources);
@@ -530,13 +552,31 @@ const SourceTargetAttributeMapping = () => {
     }
   }, [notifyTourContextChanged, selectedMappingIds.length]);
 
-  const maxPage = Math.max(0, Math.ceil(filteredMappings.length / rowsPerPage) - 1);
+  const sortedForDisplay = useMemo(() => {
+    if (!confidenceGroupingActive) {
+      return filteredMappings;
+    }
+    return sortMappingsByConfidenceGroups(filteredMappings);
+  }, [confidenceGroupingActive, filteredMappings]);
+
+  const confidenceGroupCounts = useMemo(
+    () => countMappingsByConfidenceGroup(filteredMappings),
+    [filteredMappings],
+  );
+
+  useEffect(() => {
+    if (confidenceGroupingActive) {
+      setPage(0);
+    }
+  }, [confidenceGroupingActive]);
+
+  const maxPage = Math.max(0, Math.ceil(sortedForDisplay.length / rowsPerPage) - 1);
   const safePage = Math.min(page, maxPage);
 
   const paginatedMappings = useMemo(() => {
     const start = safePage * rowsPerPage;
-    return filteredMappings.slice(start, start + rowsPerPage);
-  }, [filteredMappings, safePage, rowsPerPage]);
+    return sortedForDisplay.slice(start, start + rowsPerPage);
+  }, [sortedForDisplay, safePage, rowsPerPage]);
 
   useEffect(() => {
     if (!activeProjectId || !activeSttmId || !paginatedMappings.length) {
@@ -741,23 +781,24 @@ const SourceTargetAttributeMapping = () => {
           <AiaTablePrimitive
             stickyHeader
             size="small"
-            sx={mappingTableSx(MAPPING_TABLE_MIN_WIDTH)}
+            sx={mappingTableSx(tableMinWidth)}
           >
           <colgroup>
-            {Object.values(MAPPING_COLUMN_MIN_WIDTH).map((columnWidth, index) => (
-              <col key={`mapping-col-${index}`} style={{ width: columnWidth }} />
+            {visibleColumnKeys.map((key) => (
+              <col key={key} style={{ width: columnWidths[key] }} />
             ))}
           </colgroup>
           <AiaTableHead>
             <AiaTableRowPrimitive>
-              <AiaTableCellPrimitive
+              <MappingResizableHeaderCell
                 padding="none"
+                width={columnWidths.checkbox}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.checkbox}
+                resizeKey="checkbox"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
-                  ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.checkbox, { header: true }),
-                  width: MAPPING_COLUMN_MIN_WIDTH.checkbox,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
-                  maxWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+                  ...mappingFrozenCellSx(FROZEN_CHECKBOX_LEFT, { header: true }),
                   px: 0,
                   textAlign: 'center',
                   verticalAlign: 'middle',
@@ -784,130 +825,163 @@ const SourceTargetAttributeMapping = () => {
                     sx={MAPPING_TABLE_CHECKBOX_SX}
                   />
                 </AiaBox>
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
+              </MappingResizableHeaderCell>
+              <MappingResizableHeaderCell
                 data-tour={TOUR_TARGETS.sttmTargetColumn}
+                width={columnWidths.targetColumn}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.targetColumn}
+                resizeKey="targetColumn"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
-                  ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
+                  ...mappingFrozenCellSx(frozenTargetColumnLeft, {
                     header: true,
                     lastFrozen: true,
                   }),
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
-                  width: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
                 }}
               >
                 Target Column
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
+              </MappingResizableHeaderCell>
+              <MappingResizableHeaderCell
+                width={columnWidths.sourceColumn}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
+                resizeKey="sourceColumn"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
-                  width: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
-                }}
-              >
-                Pre-processing Rule
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
-                sx={{
-                  ...headerCellSx,
-                  ...scrollableHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
-                  width: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
                 }}
               >
                 Source Column
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
+              </MappingResizableHeaderCell>
+              <MappingResizableHeaderCell
+                width={columnWidths.preProcessRule}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
+                resizeKey="preProcessRule"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.typePreview,
-                  width: MAPPING_COLUMN_MIN_WIDTH.typePreview,
+                }}
+              >
+                Pre-processing Rule
+              </MappingResizableHeaderCell>
+              {showConfidenceColumn ? (
+                <MappingResizableHeaderCell
+                  width={columnWidths.confidence}
+                  minWidth={MAPPING_COLUMN_MIN_WIDTH.confidence}
+                  resizeKey="confidence"
+                  onResizeStart={onResizeStart}
+                  sx={{
+                    ...headerCellSx,
+                    ...scrollableHeaderCellSx,
+                  }}
+                >
+                  Confidence
+                </MappingResizableHeaderCell>
+              ) : null}
+              <MappingResizableHeaderCell
+                width={columnWidths.typePreview}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.typePreview}
+                resizeKey="typePreview"
+                onResizeStart={onResizeStart}
+                sx={{
+                  ...headerCellSx,
+                  ...scrollableHeaderCellSx,
                   whiteSpace: 'nowrap',
                 }}
               >
                 Type (Preview)
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
+              </MappingResizableHeaderCell>
+              <MappingResizableHeaderCell
+                width={columnWidths.nlRule}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.nlRule}
+                resizeKey="nlRule"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.nlRule,
-                  width: MAPPING_COLUMN_MIN_WIDTH.nlRule,
                 }}
               >
                 NL Rule
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
+              </MappingResizableHeaderCell>
+              <MappingResizableHeaderCell
+                width={columnWidths.order}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.order}
+                resizeKey="order"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.order,
-                  width: MAPPING_COLUMN_MIN_WIDTH.order,
                 }}
               >
                 Order
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
+              </MappingResizableHeaderCell>
+              <MappingResizableHeaderCell
                 data-tour={TOUR_TARGETS.sttmDescriptionAi}
+                width={columnWidths.description}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.description}
+                resizeKey="description"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.description,
-                  width: MAPPING_COLUMN_MIN_WIDTH.description,
                 }}
               >
                 <AiaBox sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
                   Description
                   <AiaChip label="AI" size="small" color="primary" sx={{ height: 22, fontSize: '0.6rem', fontWeight: 800 }} />
                 </AiaBox>
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
+              </MappingResizableHeaderCell>
+              <MappingResizableHeaderCell
                 data-tour={TOUR_TARGETS.sttmMappedStatus}
+                width={columnWidths.status}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.status}
+                resizeKey="status"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.status,
-                  width: MAPPING_COLUMN_MIN_WIDTH.status,
                 }}
               >
                 Status
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
+              </MappingResizableHeaderCell>
+              <MappingResizableHeaderCell
+                width={columnWidths.dataPreview}
+                minWidth={MAPPING_COLUMN_MIN_WIDTH.dataPreview}
+                resizeKey="dataPreview"
+                onResizeStart={onResizeStart}
                 sx={{
                   ...headerCellSx,
                   ...scrollableHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
-                  width: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
                   whiteSpace: 'nowrap',
                 }}
               >
                 Data Preview
-              </AiaTableCellPrimitive>
+              </MappingResizableHeaderCell>
             </AiaTableRowPrimitive>
             <AiaTableRowPrimitive>
               <AiaTableCellPrimitive
                 padding="none"
                 sx={{
                   ...searchRowCellSx,
-                  ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.checkbox, { searchRow: true }),
-                  width: MAPPING_COLUMN_MIN_WIDTH.checkbox,
+                  ...mappingColumnDividerSx,
+                  ...mappingFrozenCellSx(FROZEN_CHECKBOX_LEFT, { searchRow: true }),
+                  width: columnWidths.checkbox,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
-                  maxWidth: MAPPING_COLUMN_MIN_WIDTH.checkbox,
                   px: 0.5,
                 }}
               />
               <AiaTableCellPrimitive
                 sx={{
                   ...searchRowCellSx,
-                  ...mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
+                  ...mappingColumnDividerSx,
+                  ...mappingFrozenCellSx(frozenTargetColumnLeft, {
                     searchRow: true,
                     lastFrozen: true,
                   }),
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
-                  width: MAPPING_COLUMN_MIN_WIDTH.targetColumn,
+                  width: columnWidths.targetColumn,
                 }}
               >
                 <ColumnFilterInput
@@ -919,23 +993,10 @@ const SourceTargetAttributeMapping = () => {
               <AiaTableCellPrimitive
                 sx={{
                   ...searchRowCellSx,
-                  ...scrollableSearchHeaderCellSx,
-                  minWidth: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
-                  width: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
-                }}
-              >
-                <PreProcessRuleColumnFilter
-                  value={columnFilters.preProcessRule}
-                  options={RULE_FILTER_OPTIONS}
-                  onChange={(value) => updateColumnFilter('preProcessRule', value)}
-                />
-              </AiaTableCellPrimitive>
-              <AiaTableCellPrimitive
-                sx={{
-                  ...searchRowCellSx,
+                  ...mappingColumnDividerSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
-                  width: MAPPING_COLUMN_MIN_WIDTH.sourceColumn,
+                  width: columnWidths.sourceColumn,
                 }}
               >
                 <ColumnFilterInput
@@ -947,9 +1008,36 @@ const SourceTargetAttributeMapping = () => {
               <AiaTableCellPrimitive
                 sx={{
                   ...searchRowCellSx,
+                  ...mappingColumnDividerSx,
+                  ...scrollableSearchHeaderCellSx,
+                  minWidth: MAPPING_COLUMN_MIN_WIDTH.preProcessRule,
+                  width: columnWidths.preProcessRule,
+                }}
+              >
+                <PreProcessRuleColumnFilter
+                  value={columnFilters.preProcessRule}
+                  options={RULE_FILTER_OPTIONS}
+                  onChange={(value) => updateColumnFilter('preProcessRule', value)}
+                />
+              </AiaTableCellPrimitive>
+              {showConfidenceColumn ? (
+                <AiaTableCellPrimitive
+                  sx={{
+                    ...searchRowCellSx,
+                    ...mappingColumnDividerSx,
+                    ...scrollableSearchHeaderCellSx,
+                    minWidth: MAPPING_COLUMN_MIN_WIDTH.confidence,
+                    width: columnWidths.confidence,
+                  }}
+                />
+              ) : null}
+              <AiaTableCellPrimitive
+                sx={{
+                  ...searchRowCellSx,
+                  ...mappingColumnDividerSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.typePreview,
-                  width: MAPPING_COLUMN_MIN_WIDTH.typePreview,
+                  width: columnWidths.typePreview,
                 }}
               >
                 <ColumnFilterInput
@@ -961,9 +1049,10 @@ const SourceTargetAttributeMapping = () => {
               <AiaTableCellPrimitive
                 sx={{
                   ...searchRowCellSx,
+                  ...mappingColumnDividerSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.nlRule,
-                  width: MAPPING_COLUMN_MIN_WIDTH.nlRule,
+                  width: columnWidths.nlRule,
                 }}
               >
                 <ColumnFilterInput
@@ -975,9 +1064,10 @@ const SourceTargetAttributeMapping = () => {
               <AiaTableCellPrimitive
                 sx={{
                   ...searchRowCellSx,
+                  ...mappingColumnDividerSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.order,
-                  width: MAPPING_COLUMN_MIN_WIDTH.order,
+                  width: columnWidths.order,
                 }}
               >
                 <ColumnFilterInput
@@ -989,9 +1079,10 @@ const SourceTargetAttributeMapping = () => {
               <AiaTableCellPrimitive
                 sx={{
                   ...searchRowCellSx,
+                  ...mappingColumnDividerSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.description,
-                  width: MAPPING_COLUMN_MIN_WIDTH.description,
+                  width: columnWidths.description,
                 }}
               >
                 <ColumnFilterInput
@@ -1003,9 +1094,10 @@ const SourceTargetAttributeMapping = () => {
               <AiaTableCellPrimitive
                 sx={{
                   ...searchRowCellSx,
+                  ...mappingColumnDividerSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.status,
-                  width: MAPPING_COLUMN_MIN_WIDTH.status,
+                  width: columnWidths.status,
                 }}
               >
                 <ColumnFilterSelect
@@ -1017,15 +1109,33 @@ const SourceTargetAttributeMapping = () => {
               <AiaTableCellPrimitive
                 sx={{
                   ...searchRowCellSx,
+                  ...mappingColumnDividerSx,
                   ...scrollableSearchHeaderCellSx,
                   minWidth: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
-                  width: MAPPING_COLUMN_MIN_WIDTH.dataPreview,
+                  width: columnWidths.dataPreview,
                 }}
               />
             </AiaTableRowPrimitive>
           </AiaTableHead>
           <AiaTableBody>
-            {paginatedMappings.map((row) => {
+            {paginatedMappings.map((row, rowIndex) => {
+              const pageStart = safePage * rowsPerPage;
+              const globalIndex = pageStart + rowIndex;
+              const currentConfidenceGroup = confidenceGroupingActive
+                ? getConfidenceGroup(row.confidenceScore, row.status)
+                : null;
+              const previousConfidenceGroup =
+                confidenceGroupingActive && globalIndex > 0
+                  ? getConfidenceGroup(
+                      sortedForDisplay[globalIndex - 1].confidenceScore,
+                      sortedForDisplay[globalIndex - 1].status,
+                    )
+                  : null;
+              const showConfidenceGroupHeader =
+                confidenceGroupingActive
+                && currentConfidenceGroup != null
+                && currentConfidenceGroup !== previousConfidenceGroup;
+
               const isSelected = selectedMappingIds.includes(row.id);
               const isProcessing =
                 autoMapProcessingIds.includes(row.id) || row.status === 'PROCESSING';
@@ -1038,41 +1148,41 @@ const SourceTargetAttributeMapping = () => {
               const descriptionValue = resolveMappingDescription(row, sourceColumns, resolvedRule);
               const descriptionPlaceholder = 'Add description...';
               return (
+                <React.Fragment key={row.id}>
+                  {showConfidenceGroupHeader ? (
+                    <MappingConfidenceGroupHeaderRow
+                      groupId={currentConfidenceGroup}
+                      rowCount={confidenceGroupCounts[currentConfidenceGroup]}
+                      colSpan={visibleColumnKeys.length}
+                    />
+                  ) : null}
                 <AiaTableRowPrimitive
-                  key={row.id}
                   sx={MAPPING_TABLE_ROW_SX}
                 >
                   <AiaCheckboxCell
                     checked={isSelected}
                     onChange={() => toggleMappingSelection(row.id)}
-                    width={MAPPING_COLUMN_MIN_WIDTH.checkbox}
+                    width={columnWidths.checkbox}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.checkbox}
                     checkboxSx={MAPPING_TABLE_CHECKBOX_SX}
-                    sx={mappingFrozenCellSx(FROZEN_COLUMN_LEFT.checkbox)}
+                    sx={{
+                      ...mappingFrozenCellSx(FROZEN_CHECKBOX_LEFT),
+                      ...mappingColumnDividerSx,
+                    }}
                   />
 
                   <MappingTargetColumnCell
                     name={row.targetColumn}
                     isMapped={row.status === 'MAPPED'}
                     isProcessing={isProcessing}
-                    width={MAPPING_COLUMN_MIN_WIDTH.targetColumn}
+                    width={columnWidths.targetColumn}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.targetColumn}
-                    sx={mappingFrozenCellSx(FROZEN_COLUMN_LEFT.targetColumn, {
-                      lastFrozen: true,
-                    })}
-                  />
-
-                  <MappingRuleCell
-                    value={resolveMappingRuleSelectValue(row.rule)}
-                    options={RULE_OPTIONS}
-                    configureValue={PREPROCESS_CONFIGURE_VALUE}
-                    placeholder="Select rule..."
-                    width={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
-                    minWidth={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
-                    preProcessDisabled={resolveMappingRuleSelectValue(row.rule) !== 'Custom'}
-                    onRuleChange={(value) => handleRuleChange(row.id, value)}
-                    onPreProcess={() => setPreProcessModalOpen(true, row.id)}
-                    sx={scrollableBodyCellSx}
+                    sx={{
+                      ...mappingFrozenCellSx(frozenTargetColumnLeft, {
+                        lastFrozen: true,
+                      }),
+                      ...mappingColumnDividerSx,
+                    }}
                   />
 
                   <MappingSourceColumnsCell
@@ -1308,22 +1418,42 @@ const SourceTargetAttributeMapping = () => {
                         return next;
                       });
                     }}
-                    width={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
+                    width={columnWidths.sourceColumn}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.sourceColumn}
-                    confidenceScore={row.confidenceScore}
                     confidenceReason={row.confidenceReason}
                     businessMeaning={row.description ?? row.nlRule ?? null}
                     candidateSourceColumns={row.candidateSourceColumns}
-                    usedInferenceIds={row.usedInferenceIds}
-                    usedRecommendationIds={row.usedRecommendationIds}
-                    usedLearningIds={row.usedLearningIds}
-                    unmatchedReason={row.unmatchedReason}
                     sx={scrollableBodyCellSx}
                   />
 
+                  <MappingRuleCell
+                    value={resolveMappingRuleSelectValue(row.rule)}
+                    options={RULE_OPTIONS}
+                    configureValue={PREPROCESS_CONFIGURE_VALUE}
+                    placeholder="Select rule..."
+                    width={columnWidths.preProcessRule}
+                    minWidth={MAPPING_COLUMN_MIN_WIDTH.preProcessRule}
+                    preProcessDisabled={resolveMappingRuleSelectValue(row.rule) !== 'Custom'}
+                    onRuleChange={(value) => handleRuleChange(row.id, value)}
+                    onPreProcess={() => setPreProcessModalOpen(true, row.id)}
+                    sx={scrollableBodyCellSx}
+                  />
+
+                  {showConfidenceColumn ? (
+                    <MappingConfidenceCell
+                      confidenceScore={row.confidenceScore}
+                      status={row.status}
+                      reason={row.confidenceReason}
+                      businessMeaning={row.description ?? row.nlRule ?? null}
+                      width={columnWidths.confidence}
+                      minWidth={MAPPING_COLUMN_MIN_WIDTH.confidence}
+                      sx={scrollableBodyCellSx}
+                    />
+                  ) : null}
+
                   <MappingTypePreviewCell
                     dataType={previewType}
-                    width={MAPPING_COLUMN_MIN_WIDTH.typePreview}
+                    width={columnWidths.typePreview}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.typePreview}
                     sx={scrollableBodyCellSx}
                   />
@@ -1332,7 +1462,7 @@ const SourceTargetAttributeMapping = () => {
                     placeholder="Add NL rule..."
                     value={row.nlRule ?? ''}
                     onChange={(value) => updateMapping(row.id, { nlRule: value })}
-                    width={MAPPING_COLUMN_MIN_WIDTH.nlRule}
+                    width={columnWidths.nlRule}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.nlRule}
                     multiline
                     minRows={1}
@@ -1345,7 +1475,7 @@ const SourceTargetAttributeMapping = () => {
                     placeholder="Order..."
                     value={row.loadOrder ?? ''}
                     onChange={(value) => updateMapping(row.id, { loadOrder: value })}
-                    width={MAPPING_COLUMN_MIN_WIDTH.order}
+                    width={columnWidths.order}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.order}
                     inputSx={mappingBodyInputSx}
                     sx={scrollableBodyCellSx}
@@ -1360,7 +1490,7 @@ const SourceTargetAttributeMapping = () => {
                         descriptionEdited: value.trim().length > 0,
                       })
                     }
-                    width={MAPPING_COLUMN_MIN_WIDTH.description}
+                    width={columnWidths.description}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.description}
                     multiline
                     minRows={1}
@@ -1371,23 +1501,24 @@ const SourceTargetAttributeMapping = () => {
 
                   <MappingStatusCell
                     status={isProcessing ? 'PROCESSING' : row.status}
-                    width={MAPPING_COLUMN_MIN_WIDTH.status}
+                    width={columnWidths.status}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.status}
                     sx={scrollableBodyCellSx}
                   />
 
                   <MappingDataPreviewCell
                     mapping={row}
-                    width={MAPPING_COLUMN_MIN_WIDTH.dataPreview}
+                    width={columnWidths.dataPreview}
                     minWidth={MAPPING_COLUMN_MIN_WIDTH.dataPreview}
                     sx={scrollableBodyCellSx}
                   />
                 </AiaTableRowPrimitive>
+                </React.Fragment>
               );
             })}
             {!paginatedMappings.length ? (
               <AiaTableRowPrimitive>
-                <AiaTableCellPrimitive colSpan={10} sx={{ py: 4, textAlign: 'center' }}>
+                <AiaTableCellPrimitive colSpan={visibleColumnKeys.length} sx={{ py: 4, textAlign: 'center' }}>
                   <AiaText sx={{ fontSize: '0.82rem', color: '#64748b' }}>
                     No mapping rows match the current column filters.
                   </AiaText>

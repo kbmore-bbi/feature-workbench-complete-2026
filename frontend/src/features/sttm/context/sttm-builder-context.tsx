@@ -1286,6 +1286,7 @@ export function SttmBuilderProvider({
       mappingLoading: state.mappingLoading,
       autoMapStatusMessage: state.autoMapStatusMessage,
       autoMapProcessingIds: state.autoMapProcessingIds,
+      autoMapGroupingEnabled: state.autoMapGroupingEnabled,
 
       // Chat
       chatMessages: state.chatMessages,

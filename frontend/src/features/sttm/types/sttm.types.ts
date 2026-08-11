@@ -330,6 +330,7 @@ export type SttmBuilderContextValue = {
   mappingLoading: boolean;
   autoMapStatusMessage: string | null;
   autoMapProcessingIds: string[];
+  autoMapGroupingEnabled: boolean;
 
   // Chat
   chatMessages: ChatMessage[];

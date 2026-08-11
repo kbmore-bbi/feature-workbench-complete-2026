@@ -1,10 +1,8 @@
 import { AiaBox, AiaButton, AiaInput, AiaSelect, AiaTableCellPrimitive, AiaTooltip } from '@/components/ui';
 import { AiaText } from '@/components/ui/aia-text';
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 
 import type { SxProps, Theme } from '@mui/material/styles';
-import { InfoOutlinedIcon } from '@/utils/icons';
-import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 
 import { aiaTableCellSx } from '@/components/ui/aia-table';
 import { AiaAutocomplete } from '@/components/ui/aia-auto-complete';
@@ -31,14 +29,9 @@ type MappingSourceColumnsCellProps = {
   displayAsPlainText?: boolean;
   width?: number | string;
   minWidth?: number | string;
-  confidenceScore?: number | null;
   confidenceReason?: string | null;
   businessMeaning?: string | null;
   candidateSourceColumns?: string[];
-  unmatchedReason?: string | null;
-  usedInferenceIds?: string[];
-  usedRecommendationIds?: string[];
-  usedLearningIds?: string[];
   firCandidates?: FIRMappingCandidate[];
   onApplyFirCandidate?: (candidate: FIRMappingCandidate) => void;
   onPrepareSource?: (candidate: FIRMappingCandidate) => void;
@@ -83,92 +76,6 @@ function compactCandidateLabels(candidates: string[]): Map<string, string> {
   }));
 }
 
-function ConfidenceMeta({
-  confidenceScore,
-  helperText,
-}: {
-  confidenceScore?: number | null;
-  helperText: ReactNode;
-}) {
-  if (confidenceScore !== null && confidenceScore !== undefined) {
-    return (
-      <AiaBox
-        data-tour={TOUR_TARGETS.sttmConfidenceScore}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'flex-end',
-          gap: 0.5,
-          minWidth: 54,
-          pt: 0.15,
-          flexShrink: 0,
-        }}
-      >
-        <AiaText
-          sx={{
-            fontSize: '0.68rem',
-            fontWeight: 800,
-            color:
-              confidenceScore >= 0.8
-                ? '#166534'
-                : confidenceScore >= 0.55
-                  ? '#92400e'
-                  : '#b91c1c',
-          }}
-        >
-          {Math.round(confidenceScore * 100)}%
-        </AiaText>
-
-        {helperText ? (
-          <AiaTooltip
-            title={helperText}
-            placement="top"
-            arrow
-            enterDelay={200}
-            slotProps={{
-              tooltip: {
-                sx: {
-                  fontSize: '0.72rem',
-                  maxWidth: 360,
-                  lineHeight: 1.5,
-                },
-              },
-            }}
-          >
-            <InfoOutlinedIcon sx={{ fontSize: 15, color: '#64748b', cursor: 'help' }} />
-          </AiaTooltip>
-        ) : null}
-      </AiaBox>
-    );
-  }
-
-  if (!helperText) {
-    return null;
-  }
-
-  return (
-    <AiaBox sx={{ display: 'flex', justifyContent: 'flex-end', minWidth: 24, pt: 0.15, flexShrink: 0 }}>
-      <AiaTooltip
-        title={helperText}
-        placement="top"
-        arrow
-        enterDelay={200}
-        slotProps={{
-          tooltip: {
-            sx: {
-              fontSize: '0.72rem',
-              maxWidth: 360,
-              lineHeight: 1.5,
-            },
-          },
-        }}
-      >
-        <InfoOutlinedIcon sx={{ fontSize: 15, color: '#64748b', cursor: 'help' }} />
-      </AiaTooltip>
-    </AiaBox>
-  );
-}
-
 export const MappingSourceColumnsCell = ({
   value,
   options,
@@ -184,14 +91,9 @@ export const MappingSourceColumnsCell = ({
   displayAsPlainText = false,
   width,
   minWidth,
-  confidenceScore,
   confidenceReason,
   businessMeaning,
   candidateSourceColumns = [],
-  unmatchedReason,
-  usedInferenceIds = [],
-  usedRecommendationIds = [],
-  usedLearningIds = [],
   firCandidates = [],
   onApplyFirCandidate,
   onPrepareSource,
@@ -207,63 +109,6 @@ export const MappingSourceColumnsCell = ({
     .slice(0, 3);
   const candidateLabels = compactCandidateLabels(visibleCandidates);
   const visibleFirCandidates = firCandidates.slice(0, 3);
-  const reasonText =
-    confidenceReason ||
-    unmatchedReason ||
-    (candidateSourceColumns.length
-      ? `Best alternatives: ${candidateSourceColumns.join(', ')}`
-      : '');
-  const confidenceBand = confidenceScore == null
-    ? null
-    : confidenceScore >= 0.8
-      ? "High confidence"
-      : confidenceScore >= 0.55
-        ? "Medium confidence"
-        : "Low confidence";
-  const reviewGuidance = confidenceScore == null
-    ? null
-    : confidenceScore >= 0.8
-      ? "The source meaning, type, and learned mapping pattern agree. Confirm the business rule before publishing."
-      : confidenceScore >= 0.55
-        ? "The candidate is plausible, but at least one semantic or precedent signal is incomplete. Review the source and preprocessing rule."
-        : "The available evidence is weak or conflicting. Select a source, Value binding, or derived output explicitly before publishing.";
-  const evidenceTopics = [
-    usedInferenceIds.length
-      ? "Selected-table semantics and inferred business meaning"
-      : null,
-    usedRecommendationIds.length
-      ? "A FIR recommendation matched to this source/target context"
-      : null,
-    usedLearningIds.length
-      ? "Prior accepted or published mapping behavior"
-      : null,
-  ].filter(Boolean) as string[];
-  const helperText = [confidenceBand, businessMeaning, reasonText, ...evidenceTopics, reviewGuidance].filter(Boolean).join('\n');
-  const tooltipContent = helperText ? (
-    <AiaBox sx={{ display: 'grid', gap: 0.7, whiteSpace: 'normal', overflowWrap: 'anywhere' }}>
-      {confidenceBand ? <AiaText sx={{ fontSize: 'inherit', lineHeight: 'inherit', fontWeight: 800 }}>{confidenceBand}</AiaText> : null}
-      {businessMeaning ? (
-        <AiaText sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
-          <strong>Business fit:</strong> {businessMeaning}
-        </AiaText>
-      ) : null}
-      {reasonText ? <AiaText sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}><strong>Why:</strong> {reasonText}</AiaText> : null}
-      {evidenceTopics.length ? (
-        <AiaBox sx={{ display: 'grid', gap: 0.25 }}>
-          <AiaText sx={{ fontSize: 'inherit', lineHeight: 'inherit', fontWeight: 800 }}>Evidence considered</AiaText>
-          {evidenceTopics.map((topic) => (
-            <AiaText key={topic} sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>• {topic}</AiaText>
-          ))}
-        </AiaBox>
-      ) : null}
-      {candidateSourceColumns.length ? (
-        <AiaText sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}>
-          <strong>Compared candidates:</strong> {candidateSourceColumns.slice(0, 4).join(', ')}
-        </AiaText>
-      ) : null}
-      {reviewGuidance ? <AiaText sx={{ fontSize: 'inherit', lineHeight: 'inherit' }}><strong>What to do:</strong> {reviewGuidance}</AiaText> : null}
-    </AiaBox>
-  ) : null;
 
   if (displayAsPlainText) {
     const displayValue =
@@ -275,37 +120,26 @@ export const MappingSourceColumnsCell = ({
 
     return (
       <AiaTableCellPrimitive sx={aiaTableCellSx({ width, minWidth, sx })}>
-        <AiaBox
+        <AiaText
+          component="div"
           sx={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 0.9,
+            minWidth: 0,
+            ...MAPPING_TABLE_BODY_TEXT_SX,
+            color: displayValue ? undefined : '#94a3b8',
+            whiteSpace: 'normal',
+            wordBreak: 'break-word',
+            overflowWrap: 'anywhere',
+            lineHeight: 1.45,
           }}
         >
-          <AiaText
-            component="div"
-            sx={{
-              flex: 1,
-              minWidth: 0,
-              ...MAPPING_TABLE_BODY_TEXT_SX,
-              color: displayValue ? undefined : '#94a3b8',
-              whiteSpace: 'normal',
-              wordBreak: 'break-word',
-              overflowWrap: 'anywhere',
-              lineHeight: 1.45,
-            }}
-          >
-            {displayValue || (
-              mappingMode === "constant"
-                ? "Enter a hard-coded value..."
-                : mappingMode === "attribute"
-                  ? "Select a project value..."
-                  : "Use Pre-process to add source columns..."
-            )}
-          </AiaText>
-
-          <ConfidenceMeta confidenceScore={confidenceScore} helperText={tooltipContent ?? ''} />
-        </AiaBox>
+          {displayValue || (
+            mappingMode === "constant"
+              ? "Enter a hard-coded value..."
+              : mappingMode === "attribute"
+                ? "Select a project value..."
+                : "Use Pre-process to add source columns..."
+          )}
+        </AiaText>
       </AiaTableCellPrimitive>
     );
   }
@@ -360,14 +194,7 @@ export const MappingSourceColumnsCell = ({
             Project Value
           </AiaButton>
         </AiaBox>
-        <AiaBox
-          sx={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            gap: 0.9,
-          }}
-        >
-          <AiaBox sx={{ minWidth: 0, flex: 1 }}>
+        <AiaBox sx={{ minWidth: 0, width: '100%' }}>
             {mappingMode === "constant" ? (
               <AiaInput
                 fullWidth
@@ -456,9 +283,6 @@ export const MappingSourceColumnsCell = ({
               />
             )}
           </AiaBox>
-
-          <ConfidenceMeta confidenceScore={confidenceScore} helperText={tooltipContent ?? ''} />
-        </AiaBox>
         {mappingMode === "source" && (visibleFirCandidates.length || visibleCandidates.length) ? (
           <AiaBox sx={{ display: 'grid', gap: 0.5 }}>
             <AiaButton

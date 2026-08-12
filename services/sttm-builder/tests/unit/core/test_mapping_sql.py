@@ -1,3 +1,5 @@
+import pytest
+
 from app.core.mapping_sql import MappingSqlService
 from app.core.snowflake_analyst import SnowflakeAnalystResponse
 from app.schema.common import TableRef
@@ -41,7 +43,7 @@ class _FailingSession:
 
 class _AiRepairSession:
     def sql(self, query, params=None):
-        if "CORTEX.COMPLETE" in query:
+        if "AI_COMPLETE" in query or "CORTEX.COMPLETE" in query:
             class Completion:
                 def collect(self):
                     return [{"RESPONSE": '{"sql":"SELECT SRC.AMOUNT / 100 AS AMOUNT FROM DB.SCHEMA.SRC AS SRC","summary":"Replaced the invalid operator phrase."}'}]
@@ -655,3 +657,296 @@ def test_compile_rejects_column_missing_from_derived_output_contract() -> None:
         assert "is not produced by relation household_rollup" in str(exc)
     else:
         raise AssertionError("Expected missing derived output to be rejected")
+
+
+def test_compile_resolves_a_project_attribute_placeholder_inside_an_expression() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+    graph = RelationGraphContext(
+        nodes=[
+            RelationNode(
+                relation_id="DB.CRM.CONTACTS",
+                kind=RelationNodeKind.PHYSICAL_TABLE,
+                alias="contacts_9",
+                table=TableRef(database="DB", schema="CRM", table="CONTACTS"),
+            )
+        ],
+        value_bindings=[
+            ValueBinding(
+                binding_id="backup-owner",
+                value="$BackupOwnerID",
+                is_placeholder=True,
+                resolution_status="project_attribute",
+                resolved_value="005Qi00000ZBGiAIAX",
+            )
+        ],
+    )
+
+    response = service.compile(
+        MappingSqlCompileRequest(
+            relation_graph=graph,
+            target_table=TableRef(database="DB", schema="CRM", table="TARGET"),
+            driving_relation_id="DB.CRM.CONTACTS",
+            validate_with_explain=False,
+            mappings=[
+                MappingSqlMappingItem(
+                    target_column="OWNERID",
+                    source_columns=["DB.CRM.CONTACTS.ID"],
+                    source_dependencies=["DB.CRM.CONTACTS.ID"],
+                    expression="COALESCE(contacts_9.ID, $BackupOwnerID)",
+                    status="MAPPED",
+                )
+            ],
+        )
+    )
+
+    assert response.ready is True
+    assert response.unresolved_placeholders == []
+    assert "$BackupOwnerID" not in response.preview_sql
+    assert "COALESCE(contacts_9.ID, '005Qi00000ZBGiAIAX')" in response.preview_sql
+
+
+def _bare_qualifier_graph(second_schema: str = "CRM") -> RelationGraphContext:
+    return RelationGraphContext(
+        nodes=[
+            RelationNode(
+                relation_id="DB.CRM.CONTACTS",
+                kind=RelationNodeKind.PHYSICAL_TABLE,
+                alias="contacts_9",
+                table=TableRef(database="DB", schema="CRM", table="CONTACTS"),
+            ),
+            RelationNode(
+                relation_id=f"DB.{second_schema}.ADDRESSES",
+                kind=RelationNodeKind.PHYSICAL_TABLE,
+                alias="addresses_18",
+                table=TableRef(database="DB", schema=second_schema, table="ADDRESSES"),
+            ),
+        ],
+        edges=[
+            RelationEdge(
+                edge_id="contacts-addresses",
+                left_relation_id="DB.CRM.CONTACTS",
+                right_relation_id=f"DB.{second_schema}.ADDRESSES",
+                join_type="LEFT",
+                conditions=[
+                    RelationshipConditionItem(
+                        left_column="ID", right_column="ADDRESSABLE_ID", operator="="
+                    )
+                ],
+            )
+        ],
+    )
+
+
+def _bare_qualifier_request(
+    graph: RelationGraphContext, expression: str
+) -> MappingSqlCompileRequest:
+    return MappingSqlCompileRequest(
+        relation_graph=graph,
+        target_table=TableRef(database="DB", schema="CRM", table="TARGET"),
+        driving_relation_id="DB.CRM.CONTACTS",
+        validate_with_explain=False,
+        mappings=[
+            MappingSqlMappingItem(
+                target_column="BILLINGCOUNTRY",
+                source_columns=["DB.CRM.CONTACTS.ID"],
+                source_dependencies=["DB.CRM.CONTACTS.ID"],
+                expression=expression,
+                status="MAPPED",
+            )
+        ],
+    )
+
+
+def test_compile_resolves_a_bare_table_name_qualifier_to_its_alias() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+
+    response = service.compile(
+        _bare_qualifier_request(
+            _bare_qualifier_graph(),
+            "NULLIF(UPPER(TRIM(ADDRESSES.COUNTRY)), '')",
+        )
+    )
+
+    assert response.ready is True
+    assert "addresses_18.COUNTRY" in response.preview_sql
+    assert "ADDRESSES.COUNTRY" not in response.preview_sql
+    assert "LEFT JOIN DB.CRM.ADDRESSES AS addresses_18" in response.preview_sql
+
+
+def test_compile_resolves_a_schema_qualified_table_name_to_its_alias() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+
+    response = service.compile(
+        _bare_qualifier_request(
+            _bare_qualifier_graph(),
+            "TRIM(CRM.ADDRESSES.COUNTRY)",
+        )
+    )
+
+    assert response.ready is True
+    assert "addresses_18.COUNTRY" in response.preview_sql
+
+
+def test_compile_still_rejects_an_unknown_bare_table_name() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+
+    with pytest.raises(ValueError, match="Undefined SQL alias in mapping expression: PHONES"):
+        service.compile(
+            _bare_qualifier_request(_bare_qualifier_graph(), "TRIM(PHONES.NUMBER)")
+        )
+
+
+def test_compile_refuses_an_ambiguous_bare_table_name() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+    graph = _bare_qualifier_graph(second_schema="BILLING")
+    graph.nodes.append(
+        RelationNode(
+            relation_id="DB.SHIPPING.ADDRESSES",
+            kind=RelationNodeKind.PHYSICAL_TABLE,
+            alias="addresses_21",
+            table=TableRef(database="DB", schema="SHIPPING", table="ADDRESSES"),
+        )
+    )
+
+    with pytest.raises(ValueError, match="Undefined SQL alias in mapping expression: ADDRESSES"):
+        service.compile(_bare_qualifier_request(graph, "TRIM(ADDRESSES.COUNTRY)"))
+
+    response = service.compile(
+        _bare_qualifier_request(graph, "TRIM(BILLING.ADDRESSES.COUNTRY)")
+    )
+    assert response.ready is True
+    assert "addresses_18.COUNTRY" in response.preview_sql
+
+
+def test_compile_inherits_parent_join_for_a_disconnected_derived_source() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+    graph = RelationGraphContext(
+        nodes=[
+            RelationNode(
+                relation_id="DB.CRM.CONTACTS",
+                kind=RelationNodeKind.PHYSICAL_TABLE,
+                alias="contacts_1",
+                table=TableRef(database="DB", schema="CRM", table="CONTACTS"),
+            ),
+            RelationNode(
+                relation_id="DB.CRM.ADDRESSES",
+                kind=RelationNodeKind.PHYSICAL_TABLE,
+                alias="addresses_2",
+                table=TableRef(database="DB", schema="CRM", table="ADDRESSES"),
+            ),
+            RelationNode(
+                relation_id="billing_address",
+                kind=RelationNodeKind.DERIVED_SOURCE,
+                alias="billing_address_3",
+                sql_text=(
+                    "SELECT a.ADDRESSABLE_ID AS CONTACT_ID, a.COUNTRY "
+                    "FROM DB.CRM.ADDRESSES AS a WHERE a.IS_PRIMARY = 1"
+                ),
+                output_columns=[{"name": "CONTACT_ID"}, {"name": "COUNTRY"}],
+                column_semantics=[
+                    {
+                        "name": "CONTACT_ID",
+                        "source_columns": ["a.ADDRESSABLE_ID"],
+                    },
+                    {"name": "COUNTRY", "source_columns": ["a.COUNTRY"]},
+                ],
+                base_relation_ids=["DB.CRM.ADDRESSES"],
+            ),
+        ],
+        edges=[
+            RelationEdge(
+                edge_id="contacts-addresses",
+                left_relation_id="DB.CRM.CONTACTS",
+                right_relation_id="DB.CRM.ADDRESSES",
+                join_type="LEFT",
+                conditions=[
+                    RelationshipConditionItem(
+                        left_column="ID",
+                        right_column="ADDRESSABLE_ID",
+                        operator="=",
+                    )
+                ],
+            )
+        ],
+    )
+
+    response = service.compile(
+        MappingSqlCompileRequest(
+            relation_graph=graph,
+            driving_relation_id="DB.CRM.CONTACTS",
+            validate_with_explain=False,
+            mappings=[
+                MappingSqlMappingItem(
+                    target_column="BILLINGCOUNTRY",
+                    source_dependencies=["billing_address.COUNTRY"],
+                    status="MAPPED",
+                )
+            ],
+        )
+    )
+
+    assert response.ready is True
+    assert "LEFT JOIN billing_address_3" in response.preview_sql
+    assert "contacts_1.ID = billing_address_3.CONTACT_ID" in response.preview_sql
+
+
+def test_compile_does_not_inherit_a_join_when_the_parent_key_was_dropped() -> None:
+    service = MappingSqlService(session=_Session(), analyst_client=_Analyst())
+    graph = RelationGraphContext(
+        nodes=[
+            RelationNode(
+                relation_id="DB.CRM.CONTACTS",
+                kind=RelationNodeKind.PHYSICAL_TABLE,
+                alias="contacts_1",
+                table=TableRef(database="DB", schema="CRM", table="CONTACTS"),
+            ),
+            RelationNode(
+                relation_id="DB.CRM.ADDRESSES",
+                kind=RelationNodeKind.PHYSICAL_TABLE,
+                alias="addresses_2",
+                table=TableRef(database="DB", schema="CRM", table="ADDRESSES"),
+            ),
+            RelationNode(
+                relation_id="billing_address",
+                kind=RelationNodeKind.DERIVED_SOURCE,
+                alias="billing_address_3",
+                sql_text="SELECT a.COUNTRY FROM DB.CRM.ADDRESSES AS a",
+                output_columns=[{"name": "COUNTRY"}],
+                column_semantics=[
+                    {"name": "COUNTRY", "source_columns": ["a.COUNTRY"]}
+                ],
+                base_relation_ids=["DB.CRM.ADDRESSES"],
+            ),
+        ],
+        edges=[
+            RelationEdge(
+                edge_id="contacts-addresses",
+                left_relation_id="DB.CRM.CONTACTS",
+                right_relation_id="DB.CRM.ADDRESSES",
+                join_type="LEFT",
+                conditions=[
+                    RelationshipConditionItem(
+                        left_column="ID",
+                        right_column="ADDRESSABLE_ID",
+                        operator="=",
+                    )
+                ],
+            )
+        ],
+    )
+
+    with pytest.raises(ValueError, match="Required relations are disconnected"):
+        service.compile(
+            MappingSqlCompileRequest(
+                relation_graph=graph,
+                driving_relation_id="DB.CRM.CONTACTS",
+                validate_with_explain=False,
+                mappings=[
+                    MappingSqlMappingItem(
+                        target_column="BILLINGCOUNTRY",
+                        source_dependencies=["billing_address.COUNTRY"],
+                        status="MAPPED",
+                    )
+                ],
+            )
+        )

@@ -365,7 +365,7 @@ def create_semantic_version(session, semantic_view_fqn: str, parent_version_id: 
                 LEARNING_SOURCES, MAPPING_EXECUTION_IDS, PROJECT_IDS,
                 CONFIDENCE, VALIDATION_STATUS, STATUS,
                 CREATED_AT, UPDATED_AT
-            ) VALUES (
+            ) SELECT
                 ?, ?, ?, ?,
                 ?, ?,
                 PARSE_JSON(?), PARSE_JSON(?), PARSE_JSON(?),
@@ -373,7 +373,6 @@ def create_semantic_version(session, semantic_view_fqn: str, parent_version_id: 
                 PARSE_JSON(?), PARSE_JSON(?), PARSE_JSON(?),
                 ?, 'pending', 'active',
                 CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
-            )
         """, [
             version_id, semantic_view_fqn, new_version_number, new_version_label,
             parent_id, f'Created from {len(inferences)} inferences',

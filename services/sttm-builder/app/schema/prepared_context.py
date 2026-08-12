@@ -42,6 +42,8 @@ class PreparedWorkspaceContextResponse(BaseModel):
     artifact_refs: list[dict[str, Any]] = Field(default_factory=list)
     status: PreparedContextStatus = "ready"
     cache_status: str = "miss"
+    cache_persisted: bool | None = None
+    dependency_fingerprint: str | None = None
     readiness: dict[str, bool] = Field(default_factory=dict)
     stage_timings_ms: dict[str, float] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)

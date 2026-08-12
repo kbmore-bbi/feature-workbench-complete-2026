@@ -278,7 +278,11 @@ export default function NewMappingDialog({
         setMappingDescription("");
         setLinkedMappingIds([]);
         onClose();
-        router.push("/sttm/builder/new");
+        router.push(
+          process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== "false"
+            ? `/sttm/builder/${encodeURIComponent(sttm.sttm_id)}`
+            : "/sttm/builder/new",
+        );
       } catch (error) {
         alert(error instanceof Error ? error.message : "Unable to create mapping.");
       } finally {
@@ -429,9 +433,11 @@ export default function NewMappingDialog({
       setSelectedMode(null);
       onClose();
       router.push(
-        workspace.targetTableFqn
-          ? "/sttm/builder/new/mapping?source=upload"
-          : "/sttm/builder/new?source=upload",
+        process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== "false"
+          ? `/sttm/builder/${encodeURIComponent(sttm.sttm_id)}${workspace.targetTableFqn ? "/mapping" : ""}?source=upload`
+          : workspace.targetTableFqn
+            ? "/sttm/builder/new/mapping?source=upload"
+            : "/sttm/builder/new?source=upload",
       );
     } catch (error) {
       alert(error instanceof Error ? error.message : "Unable to create mapping from SQL.");

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 
 from app.api.deps import get_project_service
 from app.auth.dependencies import get_current_principal
+from app.core.config import Settings, get_settings
 from app.core.exceptions import SnowflakeQueryError
 from app.core.project_service import ProjectService
+from app.core.read_cache import invalidate_read_cache, read_through
 from app.schema.contracts import ApiActor, ApiRequestEnvelope, ApiResponseEnvelope, build_response_envelope
 from app.schema.project import (
     MappingPrecedentLinkRecord,
@@ -71,12 +73,14 @@ def _require_edit(request: Request) -> None:
     principal = get_current_principal(request)
     if not principal.permissions.can_edit:
         raise HTTPException(status_code=403, detail="Project edit permission is required.")
+    invalidate_read_cache("projects:", "recommendations:")
 
 
 def _require_publish(request: Request) -> None:
     principal = get_current_principal(request)
     if not principal.permissions.can_publish:
         raise HTTPException(status_code=403, detail="Project publish permission is required.")
+    invalidate_read_cache("projects:", "recommendations:")
 
 
 def _unwrap(body, expected_type):
@@ -91,10 +95,24 @@ def _unwrap(body, expected_type):
 def get_projects_summary(
     request: Request,
     service: Annotated[ProjectService, Depends(get_project_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> ApiResponseEnvelope[ProjectsSummaryResponse]:
     """Return all projects and all STTMs in a single response — avoids N+1 per-project fetches."""
-    get_current_principal(request)
-    projects, sttms = service.list_all_projects_summary()
+    principal = get_current_principal(request)
+    cache_key = (
+        "projects:summary:"
+        f"{principal.snowflake_user or principal.user_id}:"
+        f"{principal.snowflake_role or ''}"
+    )
+    if settings.backend_read_cache_v1:
+        projects, sttms = read_through(
+            cache_key,
+            ttl_seconds=settings.backend_project_summary_cache_seconds,
+            loader=service.list_all_projects_summary,
+            sliding=True,
+        )
+    else:
+        projects, sttms = service.list_all_projects_summary()
     return build_response_envelope(
         operation="projects.summary",
         request=request,
@@ -403,6 +421,7 @@ def get_sttm(
 @router.post("/sttms/{sttm_id}/autosave", response_model=ApiResponseEnvelope[STTMAutosaveResponse])
 def autosave_sttm(
     request: Request,
+    background_tasks: BackgroundTasks,
     sttm_id: str,
     body: ApiRequestEnvelope[STTMAutosaveRequest] | STTMAutosaveRequest,
     service: Annotated[ProjectService, Depends(get_project_service)],
@@ -413,6 +432,12 @@ def autosave_sttm(
         data = service.autosave_sttm(sttm_id, payload, user_id=_user_id(request))
     except SnowflakeQueryError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    if data.post_save_job_id:
+        background_tasks.add_task(
+            service.process_postsave_jobs,
+            worker_id=f"autosave:{sttm_id}",
+            max_jobs=4,
+        )
     return build_response_envelope(
         operation="sttms.autosave",
         request=request,

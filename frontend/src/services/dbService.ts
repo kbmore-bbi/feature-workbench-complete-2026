@@ -128,8 +128,12 @@ type RelationshipItem = {
   right_table: TableRef;
   constraint_name?: string | null;
   join_type?: "INNER" | "LEFT" | "RIGHT" | "FULL";
-  source?: "FOREIGN_KEY" | "USER_DEFINED" | null;
+  source?: "FOREIGN_KEY" | "USER_DEFINED" | "SEMANTIC_VIEW" | null;
   locked?: boolean;
+  review_required?: boolean;
+  confidence?: number | null;
+  review_reason?: string | null;
+  evidence?: Record<string, unknown> | null;
   conditions?: Array<{
     left_column?: string;
     right_column?: string;
@@ -152,7 +156,7 @@ type DerivedSourcePayload = {
     right_table: TableRef;
     join_type?: "INNER" | "LEFT" | "RIGHT" | "FULL";
     constraint_name?: string | null;
-    source?: "FOREIGN_KEY" | "USER_DEFINED" | null;
+    source?: "FOREIGN_KEY" | "USER_DEFINED" | "SEMANTIC_VIEW" | null;
     locked?: boolean;
     conditions?: Array<{
       left_column: string;
@@ -490,6 +494,33 @@ export const dbService = {
       .finally(() => relationshipRequests.delete(key));
     relationshipRequests.set(key, request);
     return request;
+  },
+
+  recordRelationshipReview: async (
+    relationship: RelationshipItem,
+    outcome: "accepted" | "rejected",
+    context: {
+      project_id?: string | null;
+      sttm_id?: string | null;
+      context_hash?: string | null;
+    },
+  ): Promise<void> => {
+    if (useMockDb) return;
+    await postEnvelopeData<{ recorded: boolean }>(
+      API_ROUTES.tableSelection.relationshipReview,
+      buildApiEnvelope(
+        "table_selection.relationship_review",
+        {
+          relationship,
+          outcome,
+          project_id: context.project_id ?? null,
+          sttm_id: context.sttm_id ?? null,
+          context_hash: context.context_hash ?? null,
+        },
+        context,
+      ),
+      { timeout: 30000, skipGlobalError: true },
+    );
   },
 
   listDerivedSources: async (): Promise<DerivedSourceRecord[]> => {

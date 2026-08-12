@@ -91,6 +91,12 @@ LINKING_MIGRATION_SQL_FILES = [
     ROOT_DIR / "infra/snowflake/fir_system/tables/fir_v2_linking_schema.sql",
 ]
 
+PERFORMANCE_R13_SQL_FILES = [
+    ROOT_DIR / "infra/snowflake/migrations/20260805_safe_performance.sql",
+    ROOT_DIR / "infra/snowflake/agentic_tools/sp-get-table-relationship.sql",
+    ROOT_DIR / "infra/snowflake/fir_system/procedures/sp-fir-get-agent-recommendations.sql",
+]
+
 POST_AGENT_SQL_FILES = [
     ROOT_DIR / "infra/snowflake/fir_system/tasks/fir_tasks.sql",
 ]
@@ -167,6 +173,14 @@ def parse_args() -> argparse.Namespace:
         "--linking-migration-only",
         action="store_true",
         help="Apply only the FIR project/mapping linking migration; do not deploy agents or skills.",
+    )
+    parser.add_argument(
+        "--performance-r13-only",
+        action="store_true",
+        help=(
+            "Apply only the R13 performance table and optimized procedures; "
+            "do not deploy agents, tasks, streams, stages, skills, or grants."
+        ),
     )
     return parser.parse_args()
 
@@ -580,6 +594,23 @@ def main() -> int:
 
     with connect(args) as connection:
         activate_session(connection, args)
+        if args.performance_r13_only:
+            apply_sql_files(
+                connection,
+                PERFORMANCE_R13_SQL_FILES,
+                namespace=namespace,
+                warehouse=args.warehouse,
+                role=args.role,
+                database=args.database,
+                semantic_namespace=semantic_namespace,
+                semantic_table_object=args.semantic_table_object,
+                semantic_column_object=args.semantic_column_object,
+                semantic_native_object=args.semantic_native_object,
+            )
+            print("")
+            print("[bootstrap-sttm-metadata] R13 safe-performance migration completed.")
+            print("[bootstrap-sttm-metadata] No tasks, streams, agents, stages, or grants were modified.")
+            return 0
         if args.linking_migration_only:
             apply_sql_files(
                 connection,

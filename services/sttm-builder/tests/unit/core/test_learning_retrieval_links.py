@@ -221,6 +221,8 @@ def test_prepared_learning_context_persists_exact_payload() -> None:
     )
 
     query = session.sql.call_args.args[0]
+    params = session.sql.call_args.kwargs["params"]
     assert "MERGE INTO DB.META.TBL_PREPARED_LEARNING_CONTEXTS" in query
-    assert "learn_123" in query
-    assert "abc123" in query
+    assert "PARSE_JSON(?)" in query
+    assert params[2] == "learn_123"
+    assert params[3] == "abc123"

@@ -1,6 +1,7 @@
 param(
     [string]$EnvFile = "",
-    [switch]$LinkingMigrationOnly
+    [switch]$LinkingMigrationOnly,
+    [switch]$PerformanceR13Only
 )
 
 $ErrorActionPreference = "Stop"
@@ -66,6 +67,9 @@ $args = @(
 
 if ($LinkingMigrationOnly) {
     $args += "--linking-migration-only"
+}
+if ($PerformanceR13Only) {
+    $args += "--performance-r13-only"
 }
 
 $semanticDatabase = if ($cfg.ContainsKey("SNOWFLAKE_SEMANTIC_VIEWS_DATABASE") -and $cfg["SNOWFLAKE_SEMANTIC_VIEWS_DATABASE"]) {

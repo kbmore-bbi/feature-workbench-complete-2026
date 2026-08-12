@@ -2,7 +2,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
 
-from app.api.deps import get_table_selection_service
+from app.api.deps import get_conversation_memory_service, get_table_selection_service
+from app.auth.dependencies import get_current_principal
+from app.core.conversation_memory import ConversationMemoryService
 from app.core.table_selection import TableSelectionService
 from app.schema.contracts import ApiRequestEnvelope, ApiResponseEnvelope, build_response_envelope
 from app.schema.table_selection import (
@@ -13,6 +15,7 @@ from app.schema.table_selection import (
     ListTablesRequestData,
     RelationshipItem,
     RelationshipRequest,
+    RelationshipReviewRequest,
     SchemaItem,
     TableAttributes,
     TableItem,
@@ -185,4 +188,46 @@ def get_relationships(
         warnings=warnings,
         meta=meta,
         data=svc.list_relationships_for_tables(tables),
+    )
+
+
+@router.post("/relationships/review", response_model=ApiResponseEnvelope[dict[str, bool]])
+def review_relationship(
+    body: ApiRequestEnvelope[RelationshipReviewRequest] | RelationshipReviewRequest,
+    request: Request,
+    memory: ConversationMemoryService = Depends(get_conversation_memory_service),
+):
+    payload = body if isinstance(body, RelationshipReviewRequest) else body.data
+    principal = get_current_principal(request)
+    relationship = payload.relationship
+    request_id = None if isinstance(body, RelationshipReviewRequest) else body.request_id
+    entity_ids = [
+        relationship.left_table.qualified_name,
+        relationship.right_table.qualified_name,
+    ]
+    memory.record_fir_event(
+        event_type=f"semantic_relationship.{payload.outcome}",
+        user_id=str(principal.user_id),
+        session_id=None,
+        request_id=request_id,
+        page="builder",
+        surface="SOURCE_SELECTION",
+        entity_type="relationship",
+        entity_ids=entity_ids,
+        event_payload={
+            "project_id": payload.project_id,
+            "sttm_id": payload.sttm_id,
+            "context_hash": payload.context_hash,
+            "relationship": relationship.model_dump(mode="json"),
+            "review_outcome": payload.outcome,
+        },
+        context_key=payload.context_hash,
+        milestone="relationship_reviewed",
+    )
+    return build_response_envelope(
+        operation="table_selection.relationship_review",
+        request=request,
+        request_id=request_id,
+        context={"project_id": payload.project_id, "sttm_id": payload.sttm_id},
+        data={"recorded": True},
     )

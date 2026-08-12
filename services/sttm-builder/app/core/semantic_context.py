@@ -1002,6 +1002,15 @@ class SemanticContextService:
         return SemanticProjectionResponse(**projection)
 
     def ensure_storage_exists(self) -> None:
+        # Request-time DDL is intentionally disabled for execute-as-caller OAuth
+        # sessions. The deployment/bootstrap path owns schema creation and grants;
+        # trying CREATE/ALTER here requires CALLER MODIFY and turns a harmless
+        # missing grant into latency on every semantic refresh.
+        if (
+            self._settings.uses_custom_oauth
+            and self._settings.spcs_execute_as_caller_enabled
+        ):
+            return
         try:
             self._session.sql(
                 f"""

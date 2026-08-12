@@ -190,6 +190,10 @@ class Settings(BaseSettings):
         default="",
         alias="SNOWFLAKE_EXECUTION_WAREHOUSE",
     )
+    snowflake_preparation_warehouse: str = Field(
+        default="",
+        alias="SNOWFLAKE_PREPARATION_WAREHOUSE",
+    )
     auto_mapping_warehouse: str = Field(
         default="",
         alias="AUTO_MAPPING_WAREHOUSE",
@@ -205,6 +209,10 @@ class Settings(BaseSettings):
     snowflake_execution_statement_timeout_seconds: int = Field(
         default=900,
         alias="SNOWFLAKE_EXECUTION_STATEMENT_TIMEOUT_SECONDS",
+    )
+    snowflake_preparation_statement_timeout_seconds: int = Field(
+        default=300,
+        alias="SNOWFLAKE_PREPARATION_STATEMENT_TIMEOUT_SECONDS",
     )
     snowflake_automap_statement_timeout_seconds: int = Field(
         default=600,
@@ -411,6 +419,94 @@ class Settings(BaseSettings):
         default=True,
         alias="PREPARED_WORKSPACE_CONTEXT_V2",
     )
+    perf_diagnostics_v1: bool = Field(
+        default=True,
+        alias="PERF_DIAGNOSTICS_V1",
+    )
+    prepared_context_cache_v2: bool = Field(
+        default=True,
+        alias="PREPARED_CONTEXT_CACHE_V2",
+    )
+    context_singleflight_v1: bool = Field(
+        default=True,
+        alias="CONTEXT_SINGLEFLIGHT_V1",
+    )
+    fir_query_pruning_v1: bool = Field(
+        default=True,
+        alias="FIR_QUERY_PRUNING_V1",
+    )
+    target_scoped_cache_invalidation_v1: bool = Field(
+        default=True,
+        alias="TARGET_SCOPED_CACHE_INVALIDATION_V1",
+    )
+    relationship_capability_cache_v1: bool = Field(
+        default=True,
+        alias="RELATIONSHIP_CAPABILITY_CACHE_V1",
+    )
+    relationship_proc_fast_guards_v1: bool = Field(
+        default=True,
+        alias="RELATIONSHIP_PROC_FAST_GUARDS_V1",
+    )
+    low_confidence_join_review_v1: bool = Field(
+        default=False,
+        alias="LOW_CONFIDENCE_JOIN_REVIEW_V1",
+    )
+    conversation_memory_v2: bool = Field(
+        default=True,
+        alias="CONVERSATION_MEMORY_V2",
+    )
+    snowflake_session_lease_pool_v1: bool = Field(
+        default=False,
+        alias="SNOWFLAKE_SESSION_LEASE_POOL_V1",
+    )
+    learning_parallel_v1: bool = Field(
+        default=False,
+        alias="LEARNING_PARALLEL_V1",
+    )
+    prepare_parallel_v1: bool = Field(
+        default=False,
+        alias="PREPARE_PARALLEL_V1",
+    )
+    autosave_singleflight_v1: bool = Field(
+        default=True,
+        alias="AUTOSAVE_SINGLEFLIGHT_V1",
+    )
+    autosave_postsave_async_v1: bool = Field(
+        default=False,
+        alias="AUTOSAVE_POSTSAVE_ASYNC_V1",
+    )
+    preparation_warehouse_routing_v1: bool = Field(
+        default=False,
+        alias="PREPARATION_WAREHOUSE_ROUTING_V1",
+    )
+    durable_sttm_route_v1: bool = Field(
+        default=True,
+        alias="DURABLE_STTM_ROUTE_V1",
+    )
+    agent_stream_batching_v1: bool = Field(
+        default=True,
+        alias="AGENT_STREAM_BATCHING_V1",
+    )
+    agent_payload_budget_v1: bool = Field(
+        default=True,
+        alias="AGENT_PAYLOAD_BUDGET_V1",
+    )
+    auto_mapping_payload_budget_v1: bool = Field(
+        default=True,
+        alias="AUTO_MAPPING_PAYLOAD_BUDGET_V1",
+    )
+    agent_oversize_retry_v1: bool = Field(
+        default=True,
+        alias="AGENT_OVERSIZE_RETRY_V1",
+    )
+    backend_read_cache_v1: bool = Field(
+        default=True,
+        alias="BACKEND_READ_CACHE_V1",
+    )
+    sttm_source_bulk_write_v1: bool = Field(
+        default=True,
+        alias="STTM_SOURCE_BULK_WRITE_V1",
+    )
     assistant_streaming_v2: bool = Field(
         default=True,
         alias="ASSISTANT_STREAMING_V2",
@@ -443,6 +539,18 @@ class Settings(BaseSettings):
     prepared_context_debounce_ms: int = Field(
         default=750,
         alias="PREPARED_CONTEXT_DEBOUNCE_MS",
+    )
+    learning_parallel_workers: int = Field(
+        default=4,
+        alias="LEARNING_PARALLEL_WORKERS",
+    )
+    snowflake_session_lease_limit_per_instance: int = Field(
+        default=12,
+        alias="SNOWFLAKE_SESSION_LEASE_LIMIT_PER_INSTANCE",
+    )
+    relationship_capability_cache_seconds: int = Field(
+        default=86400,
+        alias="RELATIONSHIP_CAPABILITY_CACHE_SECONDS",
     )
     snowflake_prepared_workspace_contexts_table: str = Field(
         default="TBL_PREPARED_WORKSPACE_CONTEXTS",
@@ -533,6 +641,10 @@ class Settings(BaseSettings):
         default=32768,
         alias="AGENT_INLINE_ARTIFACT_LIMIT_BYTES",
     )
+    agent_caller_inline_fallback_limit_bytes: int = Field(
+        default=1048576,
+        alias="AGENT_CALLER_INLINE_FALLBACK_LIMIT_BYTES",
+    )
     agent_artifact_draft_retention_days: int = Field(
         default=90,
         alias="AGENT_ARTIFACT_DRAFT_RETENTION_DAYS",
@@ -544,6 +656,26 @@ class Settings(BaseSettings):
     agent_context_limit_tokens: int = Field(
         default=90000,
         alias="AGENT_CONTEXT_LIMIT_TOKENS",
+    )
+    agent_outbound_message_max_chars: int = Field(
+        default=60000,
+        alias="AGENT_OUTBOUND_MESSAGE_MAX_CHARS",
+    )
+    agent_outbound_message_max_bytes: int = Field(
+        default=65536,
+        alias="AGENT_OUTBOUND_MESSAGE_MAX_BYTES",
+    )
+    agent_thread_context_max_chars: int = Field(
+        default=80000,
+        alias="AGENT_THREAD_CONTEXT_MAX_CHARS",
+    )
+    backend_project_summary_cache_seconds: int = Field(
+        default=300,
+        alias="BACKEND_PROJECT_SUMMARY_CACHE_SECONDS",
+    )
+    backend_recommendation_cache_seconds: int = Field(
+        default=15,
+        alias="BACKEND_RECOMMENDATION_CACHE_SECONDS",
     )
     agent_thread_rollover_ratio: float = Field(
         default=0.65,
@@ -929,13 +1061,23 @@ class Settings(BaseSettings):
         if raw_value and not _looks_like_placeholder(raw_value):
             parts = _split_qualified_name(self.qualify_metadata_object_name(raw_value))
             if parts:
+                if (
+                    self.relationship_proc_fast_guards_v1
+                    and parts[2].upper() == "SP_GET_TABLE_RELATIONSHIPS"
+                ):
+                    parts = (parts[0], parts[1], "SP_GET_TABLE_RELATIONSHIPS_V2")
                 return f"{parts[0]}.{parts[1]}.{parts[2]}"
 
         database = self.resolved_metadata_database
         schema = self.resolved_metadata_schema
         if not database or not schema:
             return ""
-        return f"{database}.{schema}.SP_GET_TABLE_RELATIONSHIPS"
+        procedure = (
+            "SP_GET_TABLE_RELATIONSHIPS_V2"
+            if self.relationship_proc_fast_guards_v1
+            else "SP_GET_TABLE_RELATIONSHIPS"
+        )
+        return f"{database}.{schema}.{procedure}"
 
     @property
     def qualified_users_table(self) -> str:

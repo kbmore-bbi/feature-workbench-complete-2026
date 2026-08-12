@@ -215,6 +215,9 @@ function relationGraph(
       keys: source.keys ?? [],
       dependency_hash: source.sourceDependencyHash ?? source.upstreamHash ?? null,
       parent_relation_ids: source.parentDerivedSourceIds ?? source.derivedSourceIds ?? [],
+      base_relation_ids: (source.baseSourceTables ?? []).map((table) =>
+        `${table.database}.${table.schema}.${table.table}`.replace(/\.+/g, "."),
+      ),
     })),
   ];
   const nodeIds = new Set(nodes.map((node) => node.relation_id));

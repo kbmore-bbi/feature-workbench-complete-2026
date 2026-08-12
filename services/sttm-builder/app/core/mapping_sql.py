@@ -25,8 +25,15 @@ from app.schema.mapping_sql import (
     MappingSqlParseRequest,
     MappingSqlParseResponse,
 )
-from app.schema.sttm_builder import RelationGraphContext, RelationNode, RelationNodeKind
+from app.schema.sttm_builder import (
+    RelationEdge,
+    RelationGraphContext,
+    RelationNode,
+    RelationNodeKind,
+    RelationshipConditionItem,
+)
 from app.core.sql_parser import parse_sql_document
+from app.core.cortex_completion import CortexCompletionUnavailable, complete_text
 
 logger = logging.getLogger(__name__)
 
@@ -297,6 +304,12 @@ class MappingSqlService:
             expression = self._substitute_placeholders(expression, resolved_placeholders)
             expression = self._normalize_expression_namespace(expression, nodes, aliases)
             self._validate_expression_aliases(expression, alias_to_id, nodes)
+            # Expressions can reference a relation that was omitted from the
+            # explicit dependency list. Once the qualifier is validated, make
+            # that relation part of the join plan as well.
+            required_relation_ids.update(
+                self._expression_relation_ids(expression, alias_to_id)
+            )
             select_items.append(f"  {expression} AS {target}")
             target_columns.append(target)
 
@@ -313,6 +326,28 @@ class MappingSqlService:
         ]
         connected_ids, ordered_edges = self._connected_join_plan(driving_id, required_relation_ids, edges)
         disconnected = required_relation_ids - connected_ids
+        if disconnected:
+            inherited_ids = {edge.edge_id for edge in edges}
+            # A newly inherited edge may connect an ancestor used by another
+            # derived source, so retry within a strict graph-sized bound.
+            for _ in range(len(nodes)):
+                inherited = self._lineage_inherited_edges(
+                    disconnected_ids=disconnected,
+                    nodes=nodes,
+                    edges=graph.edges,
+                    connected_ids=connected_ids,
+                    existing_edge_ids=inherited_ids,
+                )
+                if not inherited:
+                    break
+                inherited_ids.update(edge.edge_id for edge in inherited)
+                edges = edges + inherited
+                connected_ids, ordered_edges = self._connected_join_plan(
+                    driving_id, required_relation_ids, edges
+                )
+                disconnected = required_relation_ids - connected_ids
+                if not disconnected:
+                    break
         if disconnected:
             disconnected_labels = []
             for relation_id in sorted(disconnected):
@@ -630,13 +665,34 @@ class MappingSqlService:
     ) -> str:
         normalized = expression
         replacements: list[tuple[str, str]] = []
+        short_form_owners: dict[str, set[str]] = {}
+
+        def collect_short_forms(name: str | None, relation_id: str) -> None:
+            parts = [part for part in str(name or "").split(".") if part]
+            if len(parts) < 2:
+                return
+            for candidate in (parts[-1], ".".join(parts[-2:])):
+                short_form_owners.setdefault(candidate.upper(), set()).add(relation_id)
+
         for relation_id, node in nodes.items():
             alias = aliases[relation_id]
             replacements.append((relation_id, alias))
             if node.table:
                 replacements.append((node.table.qualified_name, alias))
+                collect_short_forms(node.table.qualified_name, relation_id)
             if node.physical_view_name:
                 replacements.append((node.physical_view_name, alias))
+                collect_short_forms(node.physical_view_name, relation_id)
+
+        # Only unique short forms are safe. Ambiguous table names deliberately
+        # remain unresolved and are rejected by alias validation.
+        reserved = {alias.upper() for alias in aliases.values()}
+        reserved.update(source.upper() for source, _ in replacements)
+        for candidate, owners in short_form_owners.items():
+            if len(owners) != 1 or candidate in reserved:
+                continue
+            replacements.append((candidate, aliases[next(iter(owners))]))
+
         for source, alias in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
             normalized = re.sub(
                 rf"(?i)(?<![A-Za-z0-9_$]){re.escape(source)}\.",
@@ -730,6 +786,168 @@ class MappingSqlService:
                 pending.remove(edge)
                 progressed = True
         return connected, ordered
+
+    @staticmethod
+    def _expression_relation_ids(expression: str, alias_to_id: dict[str, str]) -> set[str]:
+        """Return relations referenced by qualified columns in an expression."""
+        scrubbed = re.sub(r"'(?:''|[^'])*'", "''", expression)
+        found: set[str] = set()
+        for qualifier, _column in re.findall(
+            r"(?<![$\w])([A-Za-z_][A-Za-z0-9_$]*)\s*\.\s*([A-Za-z_][A-Za-z0-9_$]*)",
+            scrubbed,
+        ):
+            relation_id = alias_to_id.get(qualifier.upper())
+            if relation_id is not None:
+                found.add(relation_id)
+        return found
+
+    @staticmethod
+    def _derived_source_aliases(node: RelationNode) -> dict[str, str]:
+        """Resolve aliases in derived SQL back to qualified physical tables."""
+        if not node.sql_text:
+            return {}
+        try:
+            statement = parse_one(node.sql_text, read="snowflake")
+        except Exception:
+            return {}
+        aliases: dict[str, str] = {}
+        for table in statement.find_all(exp.Table):
+            qualified = ".".join(
+                part for part in (table.catalog, table.db, table.name) if part
+            ).upper()
+            alias = str(table.alias_or_name or "").strip().upper()
+            if alias and qualified:
+                aliases[alias] = qualified
+        return aliases
+
+    @classmethod
+    def _derived_output_column_for_parent(
+        cls,
+        node: RelationNode,
+        base_id: str,
+        parent_column: str,
+    ) -> str | None:
+        """Find the derived output carrying one physical parent's join column."""
+        target = str(parent_column or "").strip().upper()
+        if not target:
+            return None
+        available = cls._relation_output_columns(node)
+        base_upper = base_id.upper()
+        base_short = base_upper.rsplit(".", 1)[-1]
+        lineage = [
+            item
+            for item in node.column_semantics
+            if isinstance(item, dict) and item.get("source_columns")
+        ]
+        if lineage:
+            alias_map = cls._derived_source_aliases(node)
+
+            def qualifier_is_base(qualifier: str) -> bool:
+                resolved = alias_map.get(qualifier)
+                if resolved is not None:
+                    return (
+                        resolved == base_upper
+                        or resolved.rsplit(".", 1)[-1] == base_short
+                    )
+                return qualifier in {base_upper, base_short}
+
+            matches: set[str] = set()
+            for item in lineage:
+                name = str(item.get("name") or "").strip().upper()
+                if not name or name not in available:
+                    continue
+                for source in item.get("source_columns") or []:
+                    text = str(source or "").strip().upper()
+                    qualifier, separator, column = text.rpartition(".")
+                    if separator:
+                        if column == target and qualifier_is_base(qualifier):
+                            matches.add(name)
+                    elif text == target and len(node.base_relation_ids) == 1:
+                        matches.add(name)
+            return next(iter(matches)) if len(matches) == 1 else None
+        if len(node.base_relation_ids) == 1 and target in available:
+            return target
+        return None
+
+    @classmethod
+    def _lineage_inherited_edges(
+        cls,
+        *,
+        disconnected_ids: set[str],
+        nodes: dict[str, RelationNode],
+        edges: list[Any],
+        connected_ids: set[str],
+        existing_edge_ids: set[str],
+    ) -> list[RelationEdge]:
+        """Re-project a validated parent join onto a disconnected derived source."""
+        inherited: list[RelationEdge] = []
+        for relation_id in sorted(disconnected_ids):
+            node = nodes.get(relation_id)
+            if node is None or node.kind != RelationNodeKind.DERIVED_SOURCE:
+                continue
+            if not cls._relation_output_columns(node):
+                continue
+            for base_id in node.base_relation_ids:
+                if base_id == relation_id or base_id not in nodes:
+                    continue
+                for edge in edges:
+                    if edge.left_relation_id == base_id:
+                        other_id, base_on_left = edge.right_relation_id, True
+                    elif edge.right_relation_id == base_id:
+                        other_id, base_on_left = edge.left_relation_id, False
+                    else:
+                        continue
+                    if other_id == relation_id or other_id not in connected_ids:
+                        continue
+                    if not edge.conditions:
+                        continue
+                    rewritten: list[RelationshipConditionItem] = []
+                    for condition in edge.conditions:
+                        parent_column = (
+                            condition.left_column
+                            if base_on_left
+                            else condition.right_column
+                        )
+                        derived_column = cls._derived_output_column_for_parent(
+                            node, base_id, parent_column
+                        )
+                        if derived_column is None:
+                            rewritten = []
+                            break
+                        rewritten.append(
+                            RelationshipConditionItem(
+                                left_column=(
+                                    derived_column
+                                    if base_on_left
+                                    else condition.left_column
+                                ),
+                                operator=condition.operator,
+                                right_column=(
+                                    condition.right_column
+                                    if base_on_left
+                                    else derived_column
+                                ),
+                            )
+                        )
+                    if not rewritten:
+                        continue
+                    edge_id = f"lineage:{relation_id}:{edge.edge_id}"
+                    if edge_id in existing_edge_ids:
+                        continue
+                    existing_edge_ids.add(edge_id)
+                    inherited.append(
+                        RelationEdge(
+                            edge_id=edge_id,
+                            left_relation_id=(relation_id if base_on_left else other_id),
+                            right_relation_id=(other_id if base_on_left else relation_id),
+                            join_type=edge.join_type,
+                            conditions=rewritten,
+                            additional_predicate=edge.additional_predicate,
+                            provenance="DERIVED_LINEAGE",
+                            validation_status=edge.validation_status,
+                        )
+                    )
+        return inherited
 
     @staticmethod
     def _ordered_cte_nodes(nodes: list[RelationNode], required_ids: set[str]) -> list[RelationNode]:
@@ -1234,18 +1452,10 @@ class MappingSqlService:
             f"Snowflake error: {validation_error}\nSQL:\n{preview_sql}"
         )
         try:
-            rows = self._session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE",
-                params=[model, prompt],
-            ).collect()
-            raw = (
-                rows[0].as_dict(recursive=True).get("RESPONSE")
-                if rows and hasattr(rows[0], "as_dict")
-                else rows[0].get("RESPONSE")
-                if rows and isinstance(rows[0], dict)
-                else rows[0][0]
-                if rows
-                else None
+            raw = complete_text(
+                self._session,
+                model=model,
+                prompt=prompt,
             )
             parsed = self._parse_json_object(raw)
             candidate = self._normalize_sql(str(parsed.get("sql") or ""))
@@ -1253,6 +1463,9 @@ class MappingSqlService:
                 return None, "AI did not return a contract-preserving SQL repair."
             summary = str(parsed.get("summary") or "AI prepared a syntax repair for review.")
             return candidate, summary
+        except CortexCompletionUnavailable as exc:
+            logger.warning("Cortex SQL repair unavailable: %s", exc)
+            return None, "AI could not prepare a safe SQL repair."
         except Exception as exc:
             logger.warning("Cortex SQL repair failed: %s", exc)
             return None, "AI could not prepare a safe SQL repair."

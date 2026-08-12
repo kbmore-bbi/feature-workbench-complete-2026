@@ -221,10 +221,10 @@ $webPoolFamily = if ($cfg.ContainsKey("WEB_COMPUTE_POOL_INSTANCE_FAMILY")) { $cf
 $webPoolSuspend = if ($cfg.ContainsKey("WEB_COMPUTE_POOL_AUTO_SUSPEND_SECONDS")) { $cfg["WEB_COMPUTE_POOL_AUTO_SUSPEND_SECONDS"] } else { "3600" }
 $webServiceMinInstances = if ($cfg.ContainsKey("WEB_SERVICE_MIN_INSTANCES")) { $cfg["WEB_SERVICE_MIN_INSTANCES"] } else { "1" }
 $webServiceMaxInstances = if ($cfg.ContainsKey("WEB_SERVICE_MAX_INSTANCES")) { $cfg["WEB_SERVICE_MAX_INSTANCES"] } else { "1" }
-$automapPoolMinNodes = if ($cfg.ContainsKey("AUTO_MAPPING_COMPUTE_POOL_MIN_NODES")) { $cfg["AUTO_MAPPING_COMPUTE_POOL_MIN_NODES"] } else { "2" }
+$automapPoolMinNodes = if ($cfg.ContainsKey("AUTO_MAPPING_COMPUTE_POOL_MIN_NODES")) { $cfg["AUTO_MAPPING_COMPUTE_POOL_MIN_NODES"] } else { "1" }
 $automapPoolMaxNodes = if ($cfg.ContainsKey("AUTO_MAPPING_COMPUTE_POOL_MAX_NODES")) { $cfg["AUTO_MAPPING_COMPUTE_POOL_MAX_NODES"] } else { "2" }
 $automapPoolFamily = if ($cfg.ContainsKey("AUTO_MAPPING_COMPUTE_POOL_INSTANCE_FAMILY")) { $cfg["AUTO_MAPPING_COMPUTE_POOL_INSTANCE_FAMILY"] } else { "CPU_X64_S" }
-$automapPoolSuspend = if ($cfg.ContainsKey("AUTO_MAPPING_COMPUTE_POOL_AUTO_SUSPEND_SECONDS")) { $cfg["AUTO_MAPPING_COMPUTE_POOL_AUTO_SUSPEND_SECONDS"] } else { "3600" }
+$automapPoolSuspend = if ($cfg.ContainsKey("AUTO_MAPPING_COMPUTE_POOL_AUTO_SUSPEND_SECONDS")) { $cfg["AUTO_MAPPING_COMPUTE_POOL_AUTO_SUSPEND_SECONDS"] } else { "300" }
 $automapServiceMinInstances = if ($cfg.ContainsKey("AUTO_MAPPING_SERVICE_MIN_INSTANCES")) { $cfg["AUTO_MAPPING_SERVICE_MIN_INSTANCES"] } else { "2" }
 $automapServiceMaxInstances = if ($cfg.ContainsKey("AUTO_MAPPING_SERVICE_MAX_INSTANCES")) { $cfg["AUTO_MAPPING_SERVICE_MAX_INSTANCES"] } else { "2" }
 
@@ -246,6 +246,7 @@ $conversationTurnsTable = if ($cfg.ContainsKey("SNOWFLAKE_CONVERSATION_TURNS_TAB
 $conversationSegmentsTable = if ($cfg.ContainsKey("SNOWFLAKE_CONVERSATION_SEGMENTS_TABLE") -and $cfg["SNOWFLAKE_CONVERSATION_SEGMENTS_TABLE"]) { $cfg["SNOWFLAKE_CONVERSATION_SEGMENTS_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_CONVERSATION_SEGMENTS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
 $agentArtifactStage = if ($cfg.ContainsKey("SNOWFLAKE_AGENT_ARTIFACT_STAGE") -and $cfg["SNOWFLAKE_AGENT_ARTIFACT_STAGE"]) { $cfg["SNOWFLAKE_AGENT_ARTIFACT_STAGE"] } else { "{0}.{1}.AI_WORKBENCH_ARTIFACTS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
 $agentInlineArtifactLimit = if ($cfg.ContainsKey("AGENT_INLINE_ARTIFACT_LIMIT_BYTES")) { $cfg["AGENT_INLINE_ARTIFACT_LIMIT_BYTES"] } else { "32768" }
+$agentCallerInlineFallbackLimit = if ($cfg.ContainsKey("AGENT_CALLER_INLINE_FALLBACK_LIMIT_BYTES")) { $cfg["AGENT_CALLER_INLINE_FALLBACK_LIMIT_BYTES"] } else { "1048576" }
 $agentArtifactRetention = if ($cfg.ContainsKey("AGENT_ARTIFACT_DRAFT_RETENTION_DAYS")) { $cfg["AGENT_ARTIFACT_DRAFT_RETENTION_DAYS"] } else { "90" }
 $agentContextLimit = if ($cfg.ContainsKey("AGENT_CONTEXT_LIMIT_TOKENS")) { $cfg["AGENT_CONTEXT_LIMIT_TOKENS"] } else { "90000" }
 $agentRolloverRatio = if ($cfg.ContainsKey("AGENT_THREAD_ROLLOVER_RATIO")) { $cfg["AGENT_THREAD_ROLLOVER_RATIO"] } else { "0.65" }
@@ -270,6 +271,23 @@ $firAgentMaxPatternsPerBatch = if ($cfg.ContainsKey("FIR_AGENT_MAX_PATTERNS_PER_
 $firAgentMaxConcurrency = if ($cfg.ContainsKey("FIR_AGENT_MAX_CONCURRENCY")) { $cfg["FIR_AGENT_MAX_CONCURRENCY"] } else { "2" }
 $firAgentRetryLimit = if ($cfg.ContainsKey("FIR_AGENT_RETRY_LIMIT")) { $cfg["FIR_AGENT_RETRY_LIMIT"] } else { "2" }
 $firJobMaxRuntimeSeconds = if ($cfg.ContainsKey("FIR_JOB_MAX_RUNTIME_SECONDS")) { $cfg["FIR_JOB_MAX_RUNTIME_SECONDS"] } else { "3600" }
+$firAgentDailyRequestLimit = if ($cfg.ContainsKey("FIR_AGENT_DAILY_REQUEST_LIMIT")) { $cfg["FIR_AGENT_DAILY_REQUEST_LIMIT"] } else { "50" }
+$firAgentDailyTokenLimit = if ($cfg.ContainsKey("FIR_AGENT_DAILY_TOKEN_LIMIT")) { $cfg["FIR_AGENT_DAILY_TOKEN_LIMIT"] } else { "20000000" }
+$firAgentProcessingEnabled = if ($cfg.ContainsKey("FIR_AGENT_PROCESSING_ENABLED")) { $cfg["FIR_AGENT_PROCESSING_ENABLED"] } else { "true" }
+$firCatchupScheduleCron = if ($cfg.ContainsKey("FIR_CATCHUP_SCHEDULE_CRON")) { $cfg["FIR_CATCHUP_SCHEDULE_CRON"] } else { "USING CRON 0 2,14 * * * UTC" }
+$firDocumentLineageV3 = if ($cfg.ContainsKey("FIR_DOCUMENT_LINEAGE_V3")) { $cfg["FIR_DOCUMENT_LINEAGE_V3"] } else { "true" }
+$firPipelineEnabled = if ($cfg.ContainsKey("FIR_PIPELINE_ENABLED")) { $cfg["FIR_PIPELINE_ENABLED"] } else { "true" }
+$firProcessUploadsImmediately = if ($cfg.ContainsKey("FIR_PROCESS_UPLOADS_IMMEDIATELY")) { $cfg["FIR_PROCESS_UPLOADS_IMMEDIATELY"] } else { "true" }
+$agentPayloadBudgetV1 = if ($cfg.ContainsKey("AGENT_PAYLOAD_BUDGET_V1")) { $cfg["AGENT_PAYLOAD_BUDGET_V1"] } else { "true" }
+$autoMappingPayloadBudgetV1 = if ($cfg.ContainsKey("AUTO_MAPPING_PAYLOAD_BUDGET_V1")) { $cfg["AUTO_MAPPING_PAYLOAD_BUDGET_V1"] } else { "true" }
+$agentOversizeRetryV1 = if ($cfg.ContainsKey("AGENT_OVERSIZE_RETRY_V1")) { $cfg["AGENT_OVERSIZE_RETRY_V1"] } else { "true" }
+$agentOutboundMessageMaxChars = if ($cfg.ContainsKey("AGENT_OUTBOUND_MESSAGE_MAX_CHARS")) { $cfg["AGENT_OUTBOUND_MESSAGE_MAX_CHARS"] } else { "60000" }
+$agentOutboundMessageMaxBytes = if ($cfg.ContainsKey("AGENT_OUTBOUND_MESSAGE_MAX_BYTES")) { $cfg["AGENT_OUTBOUND_MESSAGE_MAX_BYTES"] } else { "65536" }
+$agentThreadContextMaxChars = if ($cfg.ContainsKey("AGENT_THREAD_CONTEXT_MAX_CHARS")) { $cfg["AGENT_THREAD_CONTEXT_MAX_CHARS"] } else { "80000" }
+$backendReadCacheV1 = if ($cfg.ContainsKey("BACKEND_READ_CACHE_V1")) { $cfg["BACKEND_READ_CACHE_V1"] } else { "true" }
+$backendProjectSummaryCacheSeconds = if ($cfg.ContainsKey("BACKEND_PROJECT_SUMMARY_CACHE_SECONDS")) { $cfg["BACKEND_PROJECT_SUMMARY_CACHE_SECONDS"] } else { "300" }
+$backendRecommendationCacheSeconds = if ($cfg.ContainsKey("BACKEND_RECOMMENDATION_CACHE_SECONDS")) { $cfg["BACKEND_RECOMMENDATION_CACHE_SECONDS"] } else { "15" }
+$sttmSourceBulkWriteV1 = if ($cfg.ContainsKey("STTM_SOURCE_BULK_WRITE_V1")) { $cfg["STTM_SOURCE_BULK_WRITE_V1"] } else { "true" }
 $conversationFeedbackTable = if ($cfg.ContainsKey("SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE") -and $cfg["SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE"]) { $cfg["SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_FEEDBACK" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
 $conversationRecommendationsTable = if ($cfg.ContainsKey("SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE") -and $cfg["SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE"]) { $cfg["SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_RECOMMENDATIONS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
 $relationshipFactsTable = if ($cfg.ContainsKey("SNOWFLAKE_RELATIONSHIP_FACTS_TABLE") -and $cfg["SNOWFLAKE_RELATIONSHIP_FACTS_TABLE"]) { $cfg["SNOWFLAKE_RELATIONSHIP_FACTS_TABLE"] } else { "{0}.{1}.TBL_WORKBENCH_RELATIONSHIP_FACTS" -f $cfg["SNOWFLAKE_DATABASE"], $cfg["SNOWFLAKE_SCHEMA"] }
@@ -393,6 +411,9 @@ $sttmBuilderImage = "{0}/sttm-builder:{1}" -f $registryBase, $ImageTag
 $automapImage = "{0}/sttm-automap-worker:{1}" -f $registryBase, $ImageTag
 $frontendImage = "{0}/frontend:{1}" -f $registryBase, $ImageTag
 $nginxImage = "{0}/nginx:{1}" -f $registryBase, $ImageTag
+$cocoSidecarEnabled = $cfg.ContainsKey("COCO_SIDECAR_ENABLED") -and $cfg["COCO_SIDECAR_ENABLED"].ToLowerInvariant() -eq "true"
+$env:COCO_SIDECAR_ENABLED = if ($cocoSidecarEnabled) { "true" } else { "false" }
+$installCortexCli = if ($cocoSidecarEnabled) { "1" } else { "0" }
 
 if (-not $SkipBuild) {
     Build-AndPushImage `
@@ -400,7 +421,8 @@ if (-not $SkipBuild) {
         -ContextDir (Join-Path $RootDir "services\sttm-builder") `
         -RemoteImage $sttmBuilderImage `
         -BuildArgs @(
-            "PYTHON_BASE_IMAGE=python:3.11-slim"
+            "PYTHON_BASE_IMAGE=python:3.11-slim",
+            "INSTALL_CORTEX_CLI=$installCortexCli"
         )
 
     if ($deployAutomap) {
@@ -409,7 +431,8 @@ if (-not $SkipBuild) {
             -ContextDir (Join-Path $RootDir "services\sttm-builder") `
             -RemoteImage $automapImage `
             -BuildArgs @(
-                "PYTHON_BASE_IMAGE=python:3.11-slim"
+                "PYTHON_BASE_IMAGE=python:3.11-slim",
+                "INSTALL_CORTEX_CLI=0"
             )
     }
 
@@ -418,7 +441,9 @@ if (-not $SkipBuild) {
         -ContextDir (Join-Path $RootDir "frontend") `
         -RemoteImage $frontendImage `
         -BuildArgs @(
-            "NODE_BASE_IMAGE=node:22-alpine"
+            "NODE_BASE_IMAGE=node:22-alpine",
+            "NEXT_PUBLIC_AGENT_STREAM_BATCHING_V1=$(if ($cfg.ContainsKey('AGENT_STREAM_BATCHING_V1')) { $cfg['AGENT_STREAM_BATCHING_V1'] } else { 'true' })",
+            "NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1=$(if ($cfg.ContainsKey('DURABLE_STTM_ROUTE_V1')) { $cfg['DURABLE_STTM_ROUTE_V1'] } else { 'true' })"
         )
 
     Build-AndPushImage `
@@ -473,6 +498,7 @@ $env:SNOWFLAKE_CONVERSATION_TURNS_TABLE = $conversationTurnsTable
 $env:SNOWFLAKE_CONVERSATION_SEGMENTS_TABLE = $conversationSegmentsTable
 $env:SNOWFLAKE_AGENT_ARTIFACT_STAGE = $agentArtifactStage
 $env:AGENT_INLINE_ARTIFACT_LIMIT_BYTES = $agentInlineArtifactLimit
+$env:AGENT_CALLER_INLINE_FALLBACK_LIMIT_BYTES = $agentCallerInlineFallbackLimit
 $env:AGENT_ARTIFACT_DRAFT_RETENTION_DAYS = $agentArtifactRetention
 $env:AGENT_CONTEXT_LIMIT_TOKENS = $agentContextLimit
 $env:AGENT_THREAD_ROLLOVER_RATIO = $agentRolloverRatio
@@ -497,6 +523,42 @@ $env:FIR_AGENT_MAX_PATTERNS_PER_BATCH = $firAgentMaxPatternsPerBatch
 $env:FIR_AGENT_MAX_CONCURRENCY = $firAgentMaxConcurrency
 $env:FIR_AGENT_RETRY_LIMIT = $firAgentRetryLimit
 $env:FIR_JOB_MAX_RUNTIME_SECONDS = $firJobMaxRuntimeSeconds
+$env:FIR_AGENT_DAILY_REQUEST_LIMIT = $firAgentDailyRequestLimit
+$env:FIR_AGENT_DAILY_TOKEN_LIMIT = $firAgentDailyTokenLimit
+$env:FIR_AGENT_PROCESSING_ENABLED = $firAgentProcessingEnabled
+$env:FIR_CATCHUP_SCHEDULE_CRON = $firCatchupScheduleCron
+$env:FIR_DOCUMENT_LINEAGE_V3 = $firDocumentLineageV3
+$env:FIR_PIPELINE_ENABLED = $firPipelineEnabled
+$env:FIR_PROCESS_UPLOADS_IMMEDIATELY = $firProcessUploadsImmediately
+$env:AGENT_PAYLOAD_BUDGET_V1 = $agentPayloadBudgetV1
+$env:AUTO_MAPPING_PAYLOAD_BUDGET_V1 = $autoMappingPayloadBudgetV1
+$env:AGENT_OVERSIZE_RETRY_V1 = $agentOversizeRetryV1
+$env:AGENT_OUTBOUND_MESSAGE_MAX_CHARS = $agentOutboundMessageMaxChars
+$env:AGENT_OUTBOUND_MESSAGE_MAX_BYTES = $agentOutboundMessageMaxBytes
+$env:AGENT_THREAD_CONTEXT_MAX_CHARS = $agentThreadContextMaxChars
+$env:BACKEND_READ_CACHE_V1 = $backendReadCacheV1
+$env:BACKEND_PROJECT_SUMMARY_CACHE_SECONDS = $backendProjectSummaryCacheSeconds
+$env:BACKEND_RECOMMENDATION_CACHE_SECONDS = $backendRecommendationCacheSeconds
+$env:STTM_SOURCE_BULK_WRITE_V1 = $sttmSourceBulkWriteV1
+$env:PERF_DIAGNOSTICS_V1 = if ($cfg.ContainsKey("PERF_DIAGNOSTICS_V1")) { $cfg["PERF_DIAGNOSTICS_V1"] } else { "true" }
+$env:PREPARED_CONTEXT_CACHE_V2 = if ($cfg.ContainsKey("PREPARED_CONTEXT_CACHE_V2")) { $cfg["PREPARED_CONTEXT_CACHE_V2"] } else { "true" }
+$env:CONTEXT_SINGLEFLIGHT_V1 = if ($cfg.ContainsKey("CONTEXT_SINGLEFLIGHT_V1")) { $cfg["CONTEXT_SINGLEFLIGHT_V1"] } else { "true" }
+$env:FIR_QUERY_PRUNING_V1 = if ($cfg.ContainsKey("FIR_QUERY_PRUNING_V1")) { $cfg["FIR_QUERY_PRUNING_V1"] } else { "true" }
+$env:TARGET_SCOPED_CACHE_INVALIDATION_V1 = if ($cfg.ContainsKey("TARGET_SCOPED_CACHE_INVALIDATION_V1")) { $cfg["TARGET_SCOPED_CACHE_INVALIDATION_V1"] } else { "true" }
+$env:RELATIONSHIP_CAPABILITY_CACHE_V1 = if ($cfg.ContainsKey("RELATIONSHIP_CAPABILITY_CACHE_V1")) { $cfg["RELATIONSHIP_CAPABILITY_CACHE_V1"] } else { "true" }
+$env:RELATIONSHIP_PROC_FAST_GUARDS_V1 = if ($cfg.ContainsKey("RELATIONSHIP_PROC_FAST_GUARDS_V1")) { $cfg["RELATIONSHIP_PROC_FAST_GUARDS_V1"] } else { "true" }
+$env:LOW_CONFIDENCE_JOIN_REVIEW_V1 = if ($cfg.ContainsKey("LOW_CONFIDENCE_JOIN_REVIEW_V1")) { $cfg["LOW_CONFIDENCE_JOIN_REVIEW_V1"] } else { "false" }
+$env:CONVERSATION_MEMORY_V2 = if ($cfg.ContainsKey("CONVERSATION_MEMORY_V2")) { $cfg["CONVERSATION_MEMORY_V2"] } else { "true" }
+$env:SNOWFLAKE_SESSION_LEASE_POOL_V1 = if ($cfg.ContainsKey("SNOWFLAKE_SESSION_LEASE_POOL_V1")) { $cfg["SNOWFLAKE_SESSION_LEASE_POOL_V1"] } else { "false" }
+$env:LEARNING_PARALLEL_V1 = if ($cfg.ContainsKey("LEARNING_PARALLEL_V1")) { $cfg["LEARNING_PARALLEL_V1"] } else { "false" }
+$env:PREPARE_PARALLEL_V1 = if ($cfg.ContainsKey("PREPARE_PARALLEL_V1")) { $cfg["PREPARE_PARALLEL_V1"] } else { "false" }
+$env:AUTOSAVE_SINGLEFLIGHT_V1 = if ($cfg.ContainsKey("AUTOSAVE_SINGLEFLIGHT_V1")) { $cfg["AUTOSAVE_SINGLEFLIGHT_V1"] } else { "true" }
+$env:AUTOSAVE_POSTSAVE_ASYNC_V1 = if ($cfg.ContainsKey("AUTOSAVE_POSTSAVE_ASYNC_V1")) { $cfg["AUTOSAVE_POSTSAVE_ASYNC_V1"] } else { "true" }
+$env:PREPARATION_WAREHOUSE_ROUTING_V1 = if ($cfg.ContainsKey("PREPARATION_WAREHOUSE_ROUTING_V1")) { $cfg["PREPARATION_WAREHOUSE_ROUTING_V1"] } else { "false" }
+$env:DURABLE_STTM_ROUTE_V1 = if ($cfg.ContainsKey("DURABLE_STTM_ROUTE_V1")) { $cfg["DURABLE_STTM_ROUTE_V1"] } else { "true" }
+$env:AGENT_STREAM_BATCHING_V1 = if ($cfg.ContainsKey("AGENT_STREAM_BATCHING_V1")) { $cfg["AGENT_STREAM_BATCHING_V1"] } else { "true" }
+$env:SNOWFLAKE_PREPARATION_WAREHOUSE = if ($cfg.ContainsKey("SNOWFLAKE_PREPARATION_WAREHOUSE")) { $cfg["SNOWFLAKE_PREPARATION_WAREHOUSE"] } else { $controlWarehouse }
+$env:SNOWFLAKE_PREPARATION_STATEMENT_TIMEOUT_SECONDS = if ($cfg.ContainsKey("SNOWFLAKE_PREPARATION_STATEMENT_TIMEOUT_SECONDS")) { $cfg["SNOWFLAKE_PREPARATION_STATEMENT_TIMEOUT_SECONDS"] } else { "900" }
 $env:SNOWFLAKE_CONVERSATION_FEEDBACK_TABLE = $conversationFeedbackTable
 $env:SNOWFLAKE_CONVERSATION_RECOMMENDATIONS_TABLE = $conversationRecommendationsTable
 $env:SNOWFLAKE_RELATIONSHIP_FACTS_TABLE = $relationshipFactsTable

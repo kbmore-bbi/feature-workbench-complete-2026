@@ -204,6 +204,8 @@ class STTMAutosaveResponse(BaseModel):
     semantic_bundle_id: str | None = None
     semantic_bundle_hash: str | None = None
     has_unpublished_draft: bool = True
+    post_save_job_id: str | None = None
+    post_save_job_status: str | None = None
 
 
 class STTMPublishRequest(BaseModel):

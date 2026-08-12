@@ -728,15 +728,18 @@ export function AddDerivedModal({
         );
         if (cancelled) return;
 
-        const autoJoins: JoinConfig[] = relationships.map(
+        const autoJoins: JoinConfig[] = relationships
+          .filter((item) => !item.review_required)
+          .map(
           (item: {
             id?: string;
             left_table: { database: string; schema: string; table: string };
             right_table: { database: string; schema: string; table: string };
             constraint_name?: string | null;
             join_type?: "INNER" | "LEFT" | "RIGHT" | "FULL";
-            source?: "FOREIGN_KEY" | "USER_DEFINED" | null;
+            source?: "FOREIGN_KEY" | "USER_DEFINED" | "SEMANTIC_VIEW" | null;
             locked?: boolean;
+            review_required?: boolean;
             conditions?: Array<{
               left_column?: string;
               right_column?: string;

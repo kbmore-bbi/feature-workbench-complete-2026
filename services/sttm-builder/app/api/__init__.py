@@ -24,6 +24,7 @@ from app.routers import (
     coco,
     dbt_conversion,
     derived_source,
+    diagnostics,
     export_workbook,
     fir_admin,
     fir_learning,
@@ -42,6 +43,7 @@ from app.routers import (
 router = APIRouter(prefix="/api/v1")
 router.include_router(table_selection.router)
 router.include_router(derived_source.router)
+router.include_router(diagnostics.router)
 router.include_router(sttm_builder.router)
 router.include_router(agent_gateway.router)
 router.include_router(artifacts.router)

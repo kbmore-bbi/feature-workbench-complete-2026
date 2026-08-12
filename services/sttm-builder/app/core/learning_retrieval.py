@@ -10,6 +10,9 @@ import json
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import AbstractContextManager
+from typing import Callable
 from typing import Any
 
 from snowflake.snowpark import Session
@@ -17,6 +20,7 @@ from snowflake.snowpark import Session
 from app.core.config import Settings
 from app.core.agent_learning_service import AgentLearningService, AgentLearning
 from app.core.exceptions import ContextPrecedentUnavailableError
+from app.core.performance import increment, observe
 from app.core.target_mapping_patterns import TargetMappingPatternService
 from app.schema.sttm_builder import (
     LearningContext,
@@ -57,7 +61,13 @@ class LearningRetrievalService:
     - Correction history to avoid repeating mistakes
     """
 
-    def __init__(self, session: Session, settings: Settings, access_scope: str = "default") -> None:
+    def __init__(
+        self,
+        session: Session,
+        settings: Settings,
+        access_scope: str = "default",
+        session_lease: Callable[[], AbstractContextManager[Any]] | None = None,
+    ) -> None:
         self._session = session
         self._settings = settings
         self._agent_learning_service = AgentLearningService(session, settings)
@@ -67,8 +77,20 @@ class LearningRetrievalService:
             else None
         )
         self._last_fir_retrieval_error: str | None = None
+        self._session_lease = session_lease
         effective_scope = access_scope if access_scope != "default" else f"session:{id(session)}"
         self._access_fingerprint = hashlib.sha256(effective_scope.encode("utf-8")).hexdigest()
+
+    def _leased_method(self, method_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]) -> Any:
+        if self._session_lease is None:
+            raise RuntimeError("No independent Snowflake session lease is configured")
+        with self._session_lease() as client:
+            worker = LearningRetrievalService(
+                client.session,
+                self._settings,
+                self._access_fingerprint,
+            )
+            return getattr(worker, method_name)(*args, **kwargs)
 
     @staticmethod
     def _quote(value: Any) -> str:
@@ -84,16 +106,22 @@ class LearningRetrievalService:
                 f"""
                 SELECT CONTEXT_PAYLOAD
                 FROM {table_name}
-                WHERE CONTEXT_KEY = {self._quote(cache_key)}
-                  AND ACCESS_FINGERPRINT = {self._quote(self._access_fingerprint)}
+                WHERE CONTEXT_KEY = ?
+                  AND ACCESS_FINGERPRINT = ?
                   AND UPDATED_AT >= DATEADD(
-                      'second', -{int(_LEARNING_DURABLE_REVALIDATE_SECONDS)}, CURRENT_TIMESTAMP()
+                      'second', ?, CURRENT_TIMESTAMP()
                   )
                 ORDER BY UPDATED_AT DESC
                 LIMIT 1
-                """
+                """,
+                params=[
+                    cache_key,
+                    self._access_fingerprint,
+                    -int(_LEARNING_DURABLE_REVALIDATE_SECONDS),
+                ],
             ).collect()
             if not rows:
+                increment("learning_context.cache.l2_miss")
                 return None
             payload = rows[0].as_dict().get("CONTEXT_PAYLOAD")
             if isinstance(payload, str):
@@ -102,11 +130,13 @@ class LearningRetrievalService:
                 return None
             result = LearningContext.model_validate(payload)
             result.cache_status = "l2"
+            increment("learning_context.cache.l2_hit")
             return result
         except Exception as exc:
             # Older installations may not have this table until the accompanying
             # idempotent DDL is bootstrapped. Retrieval remains functional.
-            logger.debug("Prepared FIR context L2 cache unavailable: %s", exc)
+            increment("learning_context.cache.l2_error")
+            logger.warning("Prepared FIR context L2 cache unavailable: %s", exc)
             return None
 
     def get_prepared_learning_context(
@@ -127,21 +157,21 @@ class LearningRetrievalService:
             table_name = self._settings.qualify_metadata_object_name(
                 "TBL_PREPARED_LEARNING_CONTEXTS"
             )
-            hash_predicate = (
-                f"AND LEARNING_CONTEXT_HASH = {self._quote(learning_context_hash)}"
-                if learning_context_hash
-                else ""
-            )
+            hash_predicate = "AND LEARNING_CONTEXT_HASH = ?" if learning_context_hash else ""
+            params = [learning_context_id, self._access_fingerprint]
+            if learning_context_hash:
+                params.append(learning_context_hash)
             rows = self._session.sql(
                 f"""
                 SELECT CONTEXT_PAYLOAD
                 FROM {table_name}
-                WHERE LEARNING_CONTEXT_ID = {self._quote(learning_context_id)}
-                  AND ACCESS_FINGERPRINT = {self._quote(self._access_fingerprint)}
+                WHERE LEARNING_CONTEXT_ID = ?
+                  AND ACCESS_FINGERPRINT = ?
                   {hash_predicate}
                 ORDER BY UPDATED_AT DESC
                 LIMIT 1
-                """
+                """,
+                params=params,
             ).collect()
             if not rows:
                 return None
@@ -161,8 +191,12 @@ class LearningRetrievalService:
         self,
         cache_key: str,
         context: LearningContext,
-    ) -> None:
+    ) -> bool:
         """Persist the exact prepared object so agents do not repeat retrieval."""
+        if not self._settings.prepared_context_cache_v2:
+            increment("learning_context.cache.persist_disabled")
+            return False
+        started = time.perf_counter()
         try:
             table_name = self._settings.qualify_metadata_object_name(
                 "TBL_PREPARED_LEARNING_CONTEXTS"
@@ -178,11 +212,11 @@ class LearningRetrievalService:
                 MERGE INTO {table_name} target
                 USING (
                     SELECT
-                        {self._quote(cache_key)} AS CONTEXT_KEY,
-                        {self._quote(self._access_fingerprint)} AS ACCESS_FINGERPRINT,
-                        {self._quote(context.learning_context_id or '')} AS LEARNING_CONTEXT_ID,
-                        {self._quote(context.learning_context_hash or '')} AS LEARNING_CONTEXT_HASH,
-                        PARSE_JSON({self._quote(payload)}) AS CONTEXT_PAYLOAD
+                        ? AS CONTEXT_KEY,
+                        ? AS ACCESS_FINGERPRINT,
+                        ? AS LEARNING_CONTEXT_ID,
+                        ? AS LEARNING_CONTEXT_HASH,
+                        PARSE_JSON(?) AS CONTEXT_PAYLOAD
                 ) source
                 ON target.CONTEXT_KEY = source.CONTEXT_KEY
                    AND target.ACCESS_FINGERPRINT = source.ACCESS_FINGERPRINT
@@ -199,10 +233,31 @@ class LearningRetrievalService:
                     source.LEARNING_CONTEXT_ID, source.LEARNING_CONTEXT_HASH,
                     source.CONTEXT_PAYLOAD, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP()
                 )
-                """
+                """,
+                params=[
+                    cache_key,
+                    self._access_fingerprint,
+                    context.learning_context_id or "",
+                    context.learning_context_hash or "",
+                    payload,
+                ],
             ).collect()
+            increment("learning_context.cache.persist_success")
+            return True
         except Exception as exc:
-            logger.debug("Unable to persist prepared FIR context in L2 cache: %s", exc)
+            increment("learning_context.cache.persist_failure")
+            logger.error(
+                "Unable to persist prepared FIR context id=%s caller_rights=%s: %s",
+                context.learning_context_id,
+                self._settings.spcs_execute_as_caller_enabled,
+                exc,
+            )
+            return False
+        finally:
+            observe(
+                "learning_context.cache.persist",
+                (time.perf_counter() - started) * 1000,
+            )
 
     def _get_link_scope(self, *, project_id: str, sttm_id: str | None) -> dict[str, Any]:
         """Return only explicitly directed precedent scopes for this workspace."""
@@ -345,9 +400,11 @@ class LearningRetrievalService:
             if cached and time.monotonic() - cached[0] <= _LEARNING_CACHE_IDLE_SECONDS:
                 result = cached[1].model_copy(deep=True)
                 result.cache_status = "l1"
+                increment("learning_context.cache.l1_hit")
                 return result
             if cached:
                 _LEARNING_CACHE.pop(cache_key, None)
+            increment("learning_context.cache.l1_miss")
             build_lock = _LEARNING_BUILD_LOCKS.setdefault(cache_key, threading.Lock())
         build_lock.acquire()
         with _LEARNING_CACHE_LOCK:
@@ -369,62 +426,65 @@ class LearningRetrievalService:
             return durable
         link_scope = self._get_link_scope(project_id=project_id, sttm_id=sttm_id)
         try:
-            fir_learnings = self._get_fir_learnings(
-                source_tables,
-                target_table,
-                target_columns,
-                max_fir_learnings,
-                context_key=context_key,
-                project_id=project_id,
-                sttm_id=sttm_id,
-                linked_project_ids=link_scope["project_ids"],
-                linked_sttm_ids=link_scope["sttm_ids"],
-            )
-            similar_mappings = self._get_similar_mappings(
-                project_id,
-                source_tables,
-                target_table,
-                target_columns,
-                max_similar_mappings,
-                linked_project_ids=link_scope["project_ids"],
-                linked_sttm_ids=link_scope["sttm_ids"],
-            )
-            semantic_learnings = self._get_semantic_learnings(target_columns)
-            intent = self._get_or_infer_mapping_intent(
-                project_id, target_table, source_tables, mapping_intent
-            )
-            project_context = self._get_project_context(project_id, source_tables, sttm_id)
-            cross_project_patterns = self._get_cross_project_patterns(
-                source_tables,
-                target_table,
-                target_columns,
-                linked_project_ids=link_scope["project_ids"],
-            )
-            correction_history = self._get_correction_history(
-                project_id, target_columns, max_corrections
-            )
             all_tables = list(source_tables) + ([target_table] if target_table else [])
-            semantic_version_learnings = self.get_semantic_version_learnings(all_tables)
-
-            self._last_fir_retrieval_error = None
-            fir_recommendations = self._get_fir_recommendations_for_context(
-                project_id=project_id,
-                source_tables=source_tables,
-                target_table=target_table,
-                target_columns=target_columns,
-                context_key=context_key,
-                source_set_hash=source_set_hash,
-                derived_set_hash=derived_set_hash,
-                milestone=milestone,
-                target_agent=target_agent,
-                linked_project_ids=link_scope["project_ids"],
-                linked_sttm_ids=link_scope["sttm_ids"],
+            jobs: dict[str, tuple[str, tuple[Any, ...], dict[str, Any]]] = {
+                "fir_learnings": ("_get_fir_learnings", (source_tables, target_table, target_columns, max_fir_learnings), {"context_key": context_key, "project_id": project_id, "sttm_id": sttm_id, "linked_project_ids": link_scope["project_ids"], "linked_sttm_ids": link_scope["sttm_ids"]}),
+                "similar_mappings": ("_get_similar_mappings", (project_id, source_tables, target_table, target_columns, max_similar_mappings), {"linked_project_ids": link_scope["project_ids"], "linked_sttm_ids": link_scope["sttm_ids"]}),
+                "semantic_learnings": ("_get_semantic_learnings", (target_columns,), {}),
+                "intent": ("_get_or_infer_mapping_intent", (project_id, target_table, source_tables, mapping_intent), {}),
+                "project_context": ("_get_project_context", (project_id, source_tables, sttm_id), {}),
+                "cross_project_patterns": ("_get_cross_project_patterns", (source_tables, target_table, target_columns), {"linked_project_ids": link_scope["project_ids"]}),
+                "correction_history": ("_get_correction_history", (project_id, target_columns, max_corrections), {}),
+                "semantic_version_learnings": ("get_semantic_version_learnings", (all_tables,), {}),
+                "fir_recommendations": ("_get_fir_recommendations_for_context", (), {"project_id": project_id, "source_tables": source_tables, "target_table": target_table, "target_columns": target_columns, "context_key": context_key, "source_set_hash": source_set_hash, "derived_set_hash": derived_set_hash, "milestone": milestone, "target_agent": target_agent, "linked_project_ids": link_scope["project_ids"], "linked_sttm_ids": link_scope["sttm_ids"]}),
+                "mapping_precedents": ("_get_mapping_precedents", (), {"linked_sttm_ids": link_scope["sttm_ids"], "link_explanations": link_scope["explanations"], "target_columns": target_columns}),
+            }
+            parallel_enabled = bool(
+                self._settings.learning_parallel_v1 and self._session_lease is not None
             )
-            mapping_precedents = self._get_mapping_precedents(
-                linked_sttm_ids=link_scope["sttm_ids"],
-                link_explanations=link_scope["explanations"],
-                target_columns=target_columns,
-            )
+            if parallel_enabled:
+                started_parallel = time.perf_counter()
+                try:
+                    with ThreadPoolExecutor(
+                        max_workers=max(
+                            1,
+                            min(
+                                3 if self._settings.prepare_parallel_v1 else 4,
+                                self._settings.learning_parallel_workers,
+                            ),
+                        )
+                    ) as executor:
+                        futures = {
+                            name: executor.submit(self._leased_method, method, args, kwargs)
+                            for name, (method, args, kwargs) in jobs.items()
+                        }
+                        values = {name: futures[name].result() for name in jobs}
+                    observe(
+                        "learning_context.parallel.duration_ms",
+                        (time.perf_counter() - started_parallel) * 1000,
+                    )
+                except Exception as exc:
+                    increment("learning_context.parallel.fallback")
+                    logger.warning("Parallel FIR retrieval fell back to sequential execution: %s", exc)
+                    values = {
+                        name: getattr(self, method)(*args, **kwargs)
+                        for name, (method, args, kwargs) in jobs.items()
+                    }
+            else:
+                values = {
+                    name: getattr(self, method)(*args, **kwargs)
+                    for name, (method, args, kwargs) in jobs.items()
+                }
+            fir_learnings = values["fir_learnings"]
+            similar_mappings = values["similar_mappings"]
+            semantic_learnings = values["semantic_learnings"]
+            intent = values["intent"]
+            project_context = values["project_context"]
+            cross_project_patterns = values["cross_project_patterns"]
+            correction_history = values["correction_history"]
+            semantic_version_learnings = values["semantic_version_learnings"]
+            fir_recommendations = values["fir_recommendations"]
+            mapping_precedents = values["mapping_precedents"]
             if link_scope["sttm_ids"] and not mapping_precedents:
                 raise ContextPrecedentUnavailableError(
                     "The mapping is linked to completed precedent context, but that context could not be loaded."
@@ -1477,19 +1537,48 @@ class LearningRetrievalService:
             - payload: Agent-specific formatted data
             - usage_stats: {used: int, successful: int}
         """
+        started = time.perf_counter()
+        project_metric = str(context.get("project_id") or "none")
+        target_metric = str(context.get("target_fqn") or "none")
+        increment(
+            "fir.recommendations.invocation",
+            project=project_metric,
+            target=target_metric,
+            trigger=trigger_type,
+        )
         try:
             agent_name = f"AGT_{agent_type}" if not agent_type.startswith("AGT_") else agent_type
             context_with_max = {**context, "max_results": max_results}
 
-            proc_name = self._settings.qualify_metadata_object_name(
-                "SP_FIR_GET_AGENT_RECOMMENDATIONS"
+            procedure = (
+                "SP_FIR_GET_AGENT_RECOMMENDATIONS_V2"
+                if self._settings.fir_query_pruning_v1
+                else "SP_FIR_GET_AGENT_RECOMMENDATIONS"
             )
-            result = self._session.call(
-                proc_name,
-                agent_name,
-                trigger_type,
-                context_with_max,
-            )
+            proc_name = self._settings.qualify_metadata_object_name(procedure)
+            try:
+                result = self._session.call(
+                    proc_name,
+                    agent_name,
+                    trigger_type,
+                    context_with_max,
+                )
+            except Exception:
+                if procedure != "SP_FIR_GET_AGENT_RECOMMENDATIONS_V2":
+                    raise
+                increment("fir.recommendations.v1_compatibility_fallback")
+                logger.warning(
+                    "FIR V2 recommendation procedure is unavailable; using V1 for this request",
+                    exc_info=True,
+                )
+                result = self._session.call(
+                    self._settings.qualify_metadata_object_name(
+                        "SP_FIR_GET_AGENT_RECOMMENDATIONS"
+                    ),
+                    agent_name,
+                    trigger_type,
+                    context_with_max,
+                )
 
             if isinstance(result, str):
                 import json
@@ -1515,6 +1604,14 @@ class LearningRetrievalService:
             self._last_fir_retrieval_error = str(exc)
             logger.warning("Failed to get FIR recommendations: %s", exc)
             return []
+        finally:
+            observe(
+                "fir.recommendations.duration_ms",
+                (time.perf_counter() - started) * 1000,
+                project=project_metric,
+                target=target_metric,
+                trigger=trigger_type,
+            )
 
     def get_semantic_version_learnings(
         self,

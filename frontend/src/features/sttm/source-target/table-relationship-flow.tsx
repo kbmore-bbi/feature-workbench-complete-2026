@@ -194,6 +194,9 @@ export default function SttmTableRelationshipFlow({
     drivingTableId,
     relationships,
     setRelationships,
+    relationshipCandidates,
+    approveRelationshipCandidate,
+    rejectRelationshipCandidate,
     derivedSources,
     sourceAttributeGroups,
     updateDerivedSource,
@@ -624,6 +627,52 @@ export default function SttmTableRelationshipFlow({
 
   return (
     <div className="flex w-full flex-col gap-3">
+      {relationshipCandidates.length > 0 ? (
+        <section
+          aria-label="Relationship candidates needing review"
+          className="rounded-lg border border-amber-300 bg-amber-50 p-3"
+        >
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <AiaText sx={{ fontWeight: 700, color: "#92400e" }}>
+              Needs review ({relationshipCandidates.length})
+            </AiaText>
+            <AiaText sx={{ fontSize: 12, color: "#78350f" }}>
+              Semantic candidates are excluded from SQL until approved.
+            </AiaText>
+          </div>
+          <div className="flex flex-col gap-2">
+            {relationshipCandidates.map((candidate) => (
+              <div
+                key={candidate.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-amber-200 bg-white px-3 py-2"
+              >
+                <div className="min-w-0 flex-1">
+                  <div className="break-words text-sm font-semibold text-slate-800">
+                    {candidate.leftTableId} → {candidate.rightTableId}
+                  </div>
+                  <div className="break-words text-xs text-slate-600">
+                    {(candidate.conditions ?? [])
+                      .map((condition) => `${condition.leftColumn ?? "?"} ${condition.operator ?? "="} ${condition.rightColumn ?? "?"}`)
+                      .join(" AND ") || "Columns require review"}
+                    {candidate.confidence != null
+                      ? ` · ${Math.round(candidate.confidence * 100)}% confidence`
+                      : ""}
+                    {candidate.reviewReason ? ` · ${candidate.reviewReason}` : ""}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <AiaButton size="small" variant="outlined" onClick={() => rejectRelationshipCandidate(String(candidate.id))}>
+                    Reject
+                  </AiaButton>
+                  <AiaButton size="small" variant="contained" onClick={() => approveRelationshipCandidate(String(candidate.id))}>
+                    Approve
+                  </AiaButton>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
       <div className="canvas-area">
         <div ref={headerRef} className="canvas-area__header">
           <div className="canvas-area__title">

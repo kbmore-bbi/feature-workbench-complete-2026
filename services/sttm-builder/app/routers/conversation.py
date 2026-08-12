@@ -31,6 +31,7 @@ from app.schema.conversation import (
     AssistantPreferenceState,
     AssistantSignalResponseData,
 )
+from app.schema.workspace_context import WorkbenchContextSnapshotV1
 
 router = APIRouter(prefix="/workbench/conversation", tags=["Conversation"])
 
@@ -51,7 +52,7 @@ def _hydrate_prepared_workspace(
         and body.context.workspace_context_hash != prepared.workspace_context_hash
     ):
         return body
-    workspace = hydrated["workspace"]
+    workspace = WorkbenchContextSnapshotV1.model_validate(hydrated["workspace"])
     learning = hydrated.get("learning_context")
     updates: dict[str, Any] = {
         "workspace_context": workspace,

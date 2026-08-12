@@ -109,7 +109,12 @@ export default function AppHeader({
     mappingPreviewSql,
     mappingIntent,
     activeProjectName,
+    activeSttmId,
   } = useAppSelector((state) => state.sttmBuilder);
+  const builderRouteBase =
+    process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== "false" && activeSttmId
+      ? `/sttm/builder/${encodeURIComponent(activeSttmId)}`
+      : "/sttm/builder/new";
   const { resolvedSourceTables, selectedTargetTable, canProceedToMapping } =
     resolveBuilderSelectionState({
       sourceDatabases,
@@ -420,7 +425,7 @@ export default function AppHeader({
                 return;
               }
               if (currentStep === 2) {
-                router.push("/sttm/builder/new/summary");
+                router.push(`${builderRouteBase}/summary`);
               }
             }}
             onPublish={() => {
@@ -437,7 +442,7 @@ export default function AppHeader({
             }}
             onStepChange={(step) => {
               if (step === 1) {
-                router.push("/sttm/builder/new");
+                router.push(builderRouteBase);
                 return;
               }
               if (step === 2) {
@@ -445,7 +450,7 @@ export default function AppHeader({
                   return;
                 }
                 if (isSummaryPage) {
-                  router.push("/sttm/builder/new/mapping");
+                  router.push(`${builderRouteBase}/mapping`);
                   return;
                 }
                 requestProceedToMapping();
@@ -454,7 +459,7 @@ export default function AppHeader({
               if (!canProceedToMapping) {
                 return;
               }
-              router.push("/sttm/builder/new/summary");
+              router.push(`${builderRouteBase}/summary`);
             }}
             nextDisabled={currentStep === 1 ? !canProceedToMapping : false}
           />

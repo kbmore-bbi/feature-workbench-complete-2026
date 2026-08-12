@@ -85,6 +85,7 @@ export type RelationNode = {
   keys?: string[];
   dependency_hash?: string | null;
   parent_relation_ids?: string[];
+  base_relation_ids?: string[];
 };
 
 export type RelationEdge = {

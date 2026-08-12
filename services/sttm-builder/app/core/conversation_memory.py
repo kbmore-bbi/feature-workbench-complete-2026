@@ -16,6 +16,7 @@ from snowflake.snowpark import Session
 
 from app.core.config import Settings
 from app.core.exceptions import SnowflakeQueryError
+from app.core.performance import increment, observe
 from app.schema.conversation import (
     AssistantInferenceRecord,
     AssistantPreferenceState,
@@ -53,6 +54,7 @@ def _serialize_artifact_writes(function):
 class ConversationMemoryService:
     _ensured_storage_keys: set[str] = set()
     _search_preview_unavailable_services: set[str] = set()
+    _artifact_stage_warning_keys: set[str] = set()
 
     def __init__(self, session: Session, settings: Settings) -> None:
         self._session = session
@@ -656,27 +658,68 @@ class ConversationMemoryService:
         user_id: str | None,
     ) -> str:
         self.ensure_storage_exists()
-        turn_id = f"turn_{uuid.uuid4().hex[:16]}"
-        self._session.sql(
-            f"""
-            INSERT INTO {self._turns_table} (
-                TURN_ID, CONVERSATION_ID, REQUEST_ID, TRACE_ID, ROLE, ROUTE, INTENT_CLASS,
-                MESSAGE, CITATIONS, GUARDRAILS_META, USER_ID
+        if (
+            not self._settings.conversation_memory_v2
+            or (not request_id and not trace_id)
+        ):
+            turn_id = f"turn_{uuid.uuid4().hex[:16]}"
+        else:
+            identity = "\x1f".join(
+                (conversation_id, request_id or "", role, trace_id or "", route)
             )
-            SELECT
-                {self._quote_literal(turn_id)},
-                {self._quote_literal(conversation_id)},
-                {self._quote_literal(request_id or "")},
-                {self._quote_literal(trace_id or "")},
-                {self._quote_literal(role)},
-                {self._quote_literal(route)},
-                {self._quote_literal(intent_class)},
-                {self._quote_literal(message or "")},
-                PARSE_JSON({self._json_literal([item.model_dump(mode="json") for item in citations])}),
-                PARSE_JSON({self._json_literal(guardrails_meta)}),
-                {self._quote_literal(user_id or "")}
+            turn_id = f"turn_{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]}"
+        increment("conversation.turn.attempted", role=role, route=route)
+        citations_json = json.dumps(
+            [item.model_dump(mode="json") for item in citations],
+            default=str,
+        )
+        guardrails_json = json.dumps(guardrails_meta, default=str)
+        statement = (
+            f"""
+            MERGE INTO {self._turns_table} target
+            USING (
+                SELECT ? AS TURN_ID, ? AS CONVERSATION_ID, ? AS REQUEST_ID,
+                       ? AS TRACE_ID, ? AS ROLE, ? AS ROUTE, ? AS INTENT_CLASS,
+                       ? AS MESSAGE, PARSE_JSON(?) AS CITATIONS,
+                       PARSE_JSON(?) AS GUARDRAILS_META, ? AS USER_ID
+            ) source
+            ON target.TURN_ID = source.TURN_ID
+            WHEN NOT MATCHED THEN INSERT (
+                TURN_ID, CONVERSATION_ID, REQUEST_ID, TRACE_ID, ROLE, ROUTE,
+                INTENT_CLASS, MESSAGE, CITATIONS, GUARDRAILS_META, USER_ID
+            ) VALUES (
+                source.TURN_ID, source.CONVERSATION_ID, source.REQUEST_ID,
+                source.TRACE_ID, source.ROLE, source.ROUTE, source.INTENT_CLASS,
+                source.MESSAGE, source.CITATIONS, source.GUARDRAILS_META, source.USER_ID
+            )
             """
-        ).collect()
+        )
+        params = [
+            turn_id,
+            conversation_id,
+            request_id or "",
+            trace_id or "",
+            role,
+            route,
+            intent_class,
+            message or "",
+            citations_json,
+            guardrails_json,
+            user_id or "",
+        ]
+        try:
+            self._session.sql(statement, params=params).collect()
+            increment("conversation.turn.persisted", role=role, route=route)
+        except Exception:
+            increment("conversation.turn.failed", role=role, route=route)
+            logger.exception(
+                "Conversation turn persistence failed conversation=%s request=%s role=%s caller_rights=%s",
+                conversation_id,
+                request_id,
+                role,
+                self._settings.spcs_execute_as_caller_enabled,
+            )
+            raise
         return turn_id
 
     def load_recent_turns(
@@ -1565,6 +1608,12 @@ class ConversationMemoryService:
     ) -> str:
         self.ensure_storage_exists()
         snapshot_id = f"snapshot_{uuid.uuid4().hex[:20]}"
+        snapshot_json = json.dumps(snapshot_payload, default=str, allow_nan=False)
+        parsed_mapping_json = json.dumps(
+            snapshot_payload.get("parsed_mapping_model") or {},
+            default=str,
+            allow_nan=False,
+        )
         self._session.sql(
             f"""
             INSERT INTO {self._workspace_snapshots_table} (
@@ -1575,28 +1624,39 @@ class ConversationMemoryService:
                 RUNTIME_SUPPRESSED, USER_ID
             )
             SELECT
-                {self._quote_literal(snapshot_id)},
-                {self._quote_literal(session_id or "")},
-                {self._quote_literal(thread_id or "")},
-                {self._quote_literal(context_version or "2.0")},
-                {self._quote_literal(context_hash)},
-                {self._quote_literal(context_key or "")},
-                {self._quote_literal(action or "")},
-                {self._quote_literal(milestone or "")},
-                {self._quote_literal(page or "")},
-                {self._quote_literal(surface or "")},
-                {self._quote_literal(project_id or "")},
-                {self._quote_literal(sttm_id or "")},
-                {self._quote_literal(semantic_bundle_id or "")},
-                {self._quote_literal(semantic_bundle_hash or "")},
-                {self._quote_literal(mapping_version or "")},
-                PARSE_JSON({self._json_literal(snapshot_payload)}),
-                {self._quote_literal(str(snapshot_payload.get('raw_mapping_sql') or snapshot_payload.get('mapping_sql') or ''))},
-                PARSE_JSON({self._json_literal(snapshot_payload.get('parsed_mapping_model') or {})}),
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                PARSE_JSON(?), ?, PARSE_JSON(?),
                 FALSE,
-                {self._quote_literal(user_id or "")}
-            """
+                ?
+            """,
+            params=[
+                snapshot_id,
+                session_id or "",
+                thread_id or "",
+                context_version or "2.0",
+                context_hash,
+                context_key or "",
+                action or "",
+                milestone or "",
+                page or "",
+                surface or "",
+                project_id or "",
+                sttm_id or "",
+                semantic_bundle_id or "",
+                semantic_bundle_hash or "",
+                mapping_version or "",
+                snapshot_json,
+                str(
+                    snapshot_payload.get("raw_mapping_sql")
+                    or snapshot_payload.get("mapping_sql")
+                    or ""
+                ),
+                parsed_mapping_json,
+                user_id or "",
+            ],
         ).collect()
+        observe("workspace_snapshot.persisted_bytes", len(snapshot_json.encode("utf-8")))
+        increment("workspace_snapshot.persisted")
         return snapshot_id
 
     @_serialize_artifact_writes
@@ -1664,44 +1724,74 @@ class ConversationMemoryService:
         stored_payload: dict[str, Any] = normalized_payload
         inline_limit = max(0, int(self._settings.agent_inline_artifact_limit_bytes))
         if len(serialized) > inline_limit:
-            relative_path = (
-                f"sha256/{content_hash[:2]}/{content_hash}.json.gz"
+            caller_runtime = (
+                self._settings.uses_custom_oauth
+                and self._settings.spcs_execute_as_caller_enabled
             )
-            local_path = ""
-            try:
-                with tempfile.NamedTemporaryFile(
-                    mode="wb",
-                    suffix=".json.gz",
-                    delete=False,
-                ) as handle:
-                    local_path = handle.name
-                    with gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
-                        compressed.write(serialized)
-                compressed_size = os.path.getsize(local_path)
-                destination = (
-                    f"{self._agent_artifact_stage}/sha256/{content_hash[:2]}"
+            if caller_runtime:
+                stored_payload = self._bounded_inline_artifact_fallback(
+                    artifact_id=artifact_id,
+                    normalized_payload=normalized_payload,
+                    serialized_size=len(serialized),
+                    content_hash=content_hash,
+                    mime_type=mime_type,
+                    reason="stage_upload_disabled_for_caller_rights_runtime",
                 )
-                self._session.file.put(
-                    f"file://{local_path}",
-                    destination,
-                    auto_compress=False,
-                    overwrite=False,
+                self._warn_artifact_stage_once(
+                    "caller-rights",
+                    "Agent artifact stage upload is disabled in caller-rights OAuth "
+                    "sessions; using bounded inline persistence.",
                 )
-                stage_path = f"{destination}/{content_hash}.json.gz"
-                stored_payload = {
-                    "artifact_ref": artifact_id,
-                    "content_hash": content_hash,
-                    "stage_path": stage_path,
-                    "mime_type": mime_type,
-                    "original_size": len(serialized),
-                    "compressed_size": compressed_size,
-                }
-            finally:
-                if local_path:
-                    try:
-                        os.unlink(local_path)
-                    except OSError:
-                        logger.debug("Failed to remove temporary artifact file %s", local_path)
+            else:
+                local_path = ""
+                try:
+                    with tempfile.NamedTemporaryFile(
+                        mode="wb",
+                        suffix=".json.gz",
+                        delete=False,
+                    ) as handle:
+                        local_path = handle.name
+                        with gzip.GzipFile(fileobj=handle, mode="wb") as compressed:
+                            compressed.write(serialized)
+                    compressed_size = os.path.getsize(local_path)
+                    destination = (
+                        f"{self._agent_artifact_stage}/sha256/{content_hash[:2]}"
+                    )
+                    self._session.file.put(
+                        f"file://{local_path}",
+                        destination,
+                        auto_compress=False,
+                        overwrite=False,
+                    )
+                    stage_path = f"{destination}/{content_hash}.json.gz"
+                    stored_payload = {
+                        "artifact_ref": artifact_id,
+                        "content_hash": content_hash,
+                        "stage_path": stage_path,
+                        "mime_type": mime_type,
+                        "original_size": len(serialized),
+                        "compressed_size": compressed_size,
+                    }
+                except Exception as exc:
+                    stored_payload = self._bounded_inline_artifact_fallback(
+                        artifact_id=artifact_id,
+                        normalized_payload=normalized_payload,
+                        serialized_size=len(serialized),
+                        content_hash=content_hash,
+                        mime_type=mime_type,
+                        reason="stage_upload_failed",
+                    )
+                    self._warn_artifact_stage_once(
+                        self._agent_artifact_stage,
+                        f"Agent artifact stage upload failed; using bounded inline "
+                        f"persistence: {exc}",
+                    )
+                finally:
+                    if local_path:
+                        try:
+                            os.unlink(local_path)
+                        except OSError:
+                            logger.debug("Failed to remove temporary artifact file %s", local_path)
 
         self._session.sql(
             f"""
@@ -1756,6 +1846,39 @@ class ConversationMemoryService:
             """
         ).collect()
         return artifact_id
+
+    def _bounded_inline_artifact_fallback(
+        self,
+        *,
+        artifact_id: str,
+        normalized_payload: dict[str, Any],
+        serialized_size: int,
+        content_hash: str,
+        mime_type: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        fallback_limit = max(
+            int(self._settings.agent_inline_artifact_limit_bytes),
+            int(self._settings.agent_caller_inline_fallback_limit_bytes),
+        )
+        if serialized_size <= fallback_limit:
+            return normalized_payload
+        return {
+            "artifact_ref": artifact_id,
+            "content_hash": content_hash,
+            "mime_type": mime_type,
+            "original_size": serialized_size,
+            "persistence": "metadata_only",
+            "payload_truncated": True,
+            "reason": reason,
+        }
+
+    @classmethod
+    def _warn_artifact_stage_once(cls, key: str, message: str) -> None:
+        if key in cls._artifact_stage_warning_keys:
+            return
+        cls._artifact_stage_warning_keys.add(key)
+        logger.warning(message)
 
     def get_agent_artifact(
         self,
@@ -4103,3 +4226,53 @@ Generated SQL: {(generated_sql or '')[:2000]}
             if len(compatible) >= limit:
                 break
         return compatible
+
+    def readiness(self) -> dict[str, Any]:
+        """Check runtime turn-write capability without mutating durable state."""
+        try:
+            self._session.sql(
+                f"""
+                INSERT INTO {self._turns_table} (
+                    TURN_ID, CONVERSATION_ID, ROLE, ROUTE, INTENT_CLASS, MESSAGE
+                )
+                SELECT 'readiness_probe', 'readiness_probe', 'system',
+                       'readiness', 'readiness', NULL
+                WHERE 1 = 0
+                """
+            ).collect()
+            return {"conversation_memory_writable": True, "error": None}
+        except Exception as exc:
+            logger.error("Conversation memory is not writable: %s", exc)
+            increment("conversation_memory.readiness.not_writable")
+            return {
+                "conversation_memory_writable": False,
+                "error": str(exc),
+            }
+
+    def prepared_cache_readiness(self) -> dict[str, Any]:
+        """Report durable cache freshness without reading any cached payload."""
+        result: dict[str, Any] = {}
+        for label, object_name in (
+            ("prepared_workspace", "TBL_PREPARED_WORKSPACE_CONTEXTS"),
+            ("prepared_learning", "TBL_PREPARED_LEARNING_CONTEXTS"),
+        ):
+            table = self._settings.qualify_metadata_object_name(object_name)
+            try:
+                rows = self._session.sql(
+                    f"SELECT COUNT(*) AS ROW_COUNT, MAX(UPDATED_AT) AS LAST_UPDATED_AT "
+                    f"FROM {table}"
+                ).collect()
+                row = rows[0].as_dict() if rows else {}
+                result[label] = {
+                    "row_count": int(row.get("ROW_COUNT") or 0),
+                    "last_updated_at": str(row.get("LAST_UPDATED_AT") or "") or None,
+                    "readable": True,
+                }
+            except Exception as exc:
+                result[label] = {
+                    "row_count": None,
+                    "last_updated_at": None,
+                    "readable": False,
+                    "error": str(exc),
+                }
+        return result

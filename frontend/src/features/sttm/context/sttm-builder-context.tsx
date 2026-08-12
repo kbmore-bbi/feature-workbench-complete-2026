@@ -27,6 +27,8 @@ import {
   clearTargets as clearTargetsAction,
   setDrivingTable as setDrivingTableAction,
   setRelationships as setRelationshipsAction,
+  approveRelationshipCandidate as approveRelationshipCandidateAction,
+  rejectRelationshipCandidate as rejectRelationshipCandidateAction,
   setSourceFilterConditions as setSourceFilterConditionsAction,
   addDerivedSource as addDerivedSourceAction,
   updateDerivedSource as updateDerivedSourceAction,
@@ -219,6 +221,7 @@ export function SttmBuilderProvider({
   const lastPreparedContextSignatureRef = useRef<string | null>(null);
   const semanticRefreshInFlightSignatureRef = useRef<string | null>(null);
   const lastSemanticRefreshSignatureRef = useRef<string | null>(null);
+  const backendHydrationAttemptRef = useRef<string | null>(null);
   const [sessionHydrated, setSessionHydrated] = useState(false);
   // Track last persisted state signatures to avoid redundant writes
   const lastCriticalStateSignatureRef = useRef<string | null>(null);
@@ -345,7 +348,25 @@ export function SttmBuilderProvider({
       // A saved mapping can navigate back to Selection at the same /new route.
       // Preserve that backend identity rather than treating it as a new draft.
       if (state.activeProjectId && state.activeSttmId) {
-        if (state.openSttmStatus !== "loading") setSessionHydrated(true);
+        if (state.openSttmStatus === "success") {
+          setSessionHydrated(true);
+          return;
+        }
+        if (state.openSttmStatus === "loading") return;
+
+        const hydrationKey = `${pathname}:${state.activeProjectId}:${state.activeSttmId}`;
+        if (backendHydrationAttemptRef.current !== hydrationKey) {
+          backendHydrationAttemptRef.current = hydrationKey;
+          try {
+            await dispatch(openSttmFromBackend({
+              projectId: String(state.activeProjectId),
+              sttmId: String(state.activeSttmId),
+            })).unwrap();
+          } catch (error) {
+            console.warn("Unable to refresh the saved STTM workspace.", error);
+          }
+        }
+        if (!cancelled) setSessionHydrated(true);
         return;
       }
       if (state.openSttmStatus === "loading") {
@@ -359,10 +380,12 @@ export function SttmBuilderProvider({
             ? JSON.parse(rawPointer) as { projectId?: string; sttmId?: string }
             : null;
           if (pointer?.projectId && pointer?.sttmId) {
+            const hydrationKey = `${pathname}:${pointer.projectId}:${pointer.sttmId}`;
+            backendHydrationAttemptRef.current = hydrationKey;
             await dispatch(openSttmFromBackend({
               projectId: String(pointer.projectId),
               sttmId: String(pointer.sttmId),
-            }));
+            })).unwrap();
             if (!cancelled) setSessionHydrated(true);
             return;
           }
@@ -685,6 +708,7 @@ export function SttmBuilderProvider({
     derivedSourceDraftRequested: state.derivedSourceDraftRequested,
     drivingTableId: state.drivingTableId,
     relationships: state.relationships,
+    relationshipCandidates: state.relationshipCandidates,
     derivedSources: state.derivedSources,
     sourceFilterSql: state.sourceFilterSql,
     sourceFilterGroups: state.sourceFilterGroups,
@@ -1563,6 +1587,87 @@ export function SttmBuilderProvider({
         dispatch(setDrivingTableAction({ tableId })),
       relationships: state.relationships,
       setRelationships: (joins) => dispatch(setRelationshipsAction({ joins })),
+      relationshipCandidates: state.relationshipCandidates,
+      approveRelationshipCandidate: (id) => {
+        const candidate = state.relationshipCandidates.find((item) => item.id === id);
+        if (candidate?.leftTableId && candidate.rightTableId) {
+          const tableRef = (qualifiedName: string) => {
+            const parts = qualifiedName.split(".");
+            return {
+              database: parts.at(-3) ?? "",
+              schema: parts.at(-2) ?? "",
+              table: parts.at(-1) ?? qualifiedName,
+            };
+          };
+          void dbService.recordRelationshipReview(
+            {
+              id,
+              left_table: tableRef(candidate.leftTableId),
+              right_table: tableRef(candidate.rightTableId),
+              constraint_name: candidate.constraintName ?? null,
+              join_type: candidate.joinType,
+              source: candidate.source,
+              locked: candidate.locked,
+              review_required: true,
+              confidence: candidate.confidence,
+              review_reason: candidate.reviewReason,
+              evidence: candidate.evidence,
+              conditions: (candidate.conditions ?? []).map((condition) => ({
+                left_column: condition.leftColumn,
+                right_column: condition.rightColumn,
+                operator: condition.operator,
+              })),
+            },
+            "accepted",
+            {
+              project_id: state.activeProjectId,
+              sttm_id: state.activeSttmId,
+              context_hash: state.workspaceContextHash,
+            },
+          ).catch((error) => console.warn("Could not record relationship approval feedback.", error));
+        }
+        dispatch(approveRelationshipCandidateAction({ id }));
+      },
+      rejectRelationshipCandidate: (id) => {
+        const candidate = state.relationshipCandidates.find((item) => item.id === id);
+        if (candidate?.leftTableId && candidate.rightTableId) {
+          const tableRef = (qualifiedName: string) => {
+            const parts = qualifiedName.split(".");
+            return {
+              database: parts.at(-3) ?? "",
+              schema: parts.at(-2) ?? "",
+              table: parts.at(-1) ?? qualifiedName,
+            };
+          };
+          void dbService.recordRelationshipReview(
+            {
+              id,
+              left_table: tableRef(candidate.leftTableId),
+              right_table: tableRef(candidate.rightTableId),
+              constraint_name: candidate.constraintName ?? null,
+              join_type: candidate.joinType,
+              source: candidate.source,
+              locked: candidate.locked,
+              review_required: true,
+              confidence: candidate.confidence,
+              review_reason: candidate.reviewReason,
+              evidence: candidate.evidence,
+              conditions: (candidate.conditions ?? []).map((condition) => ({
+                left_column: condition.leftColumn,
+                right_column: condition.rightColumn,
+                operator: condition.operator,
+              })),
+            },
+            "rejected",
+            {
+              project_id: state.activeProjectId,
+              sttm_id: state.activeSttmId,
+              context_hash: state.workspaceContextHash,
+            },
+          ).catch((error) => console.warn("Could not record relationship rejection feedback.", error));
+        }
+        dispatch(rejectRelationshipCandidateAction({ id }));
+      },
       derivedSources: state.derivedSources,
       addDerivedSource: (source: DerivedSource) =>
         dispatch(addDerivedSourceAction(source)),

@@ -16,6 +16,7 @@ from app.auth.router import admin_router, auth_router
 from app.core.config import get_settings
 from app.core.docs import setup_docs
 from app.core.exceptions import AppError
+from app.core.performance import observe, snapshot
 from app.guardrails.config.loader import load_config
 from app.guardrails.integrations.fastapi import GuardrailsMiddleware
 from app.routers.auto_mapping import router as auto_mapping_router
@@ -96,9 +97,17 @@ if _settings.debug_routes_enabled:
 async def workbench_timing_headers(request: Request, call_next):
     started = time.perf_counter()
     request.state.workbench_timings_ms = {}
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    finally:
+        lease_pool = getattr(request.state, "snowflake_learning_lease_pool", None)
+        if lease_pool is not None:
+            lease_pool.close()
     timings = getattr(request.state, "workbench_timings_ms", {}) or {}
     total_ms = (time.perf_counter() - started) * 1000
+    observe(f"http.{request.method.lower()}.{request.url.path}.total", total_ms)
+    if not _settings.perf_diagnostics_v1:
+        return response
     response.headers["x-workbench-timing-total-ms"] = f"{total_ms:.1f}"
     response.headers["x-workbench-timing-auth-ms"] = f"{float(timings.get('auth', 0.0)):.1f}"
     response.headers["x-workbench-timing-session-ms"] = f"{float(timings.get('session', 0.0)):.1f}"
@@ -106,6 +115,20 @@ async def workbench_timing_headers(request: Request, call_next):
     response.headers["x-workbench-timing-agent-ms"] = f"{float(timings.get('agent', 0.0)):.1f}"
     if cache_hit := timings.get("cache_hit"):
         response.headers["x-workbench-cache-hit"] = str(cache_hit).lower()
+    server_timing = [f"total;dur={total_ms:.1f}"]
+    for name in (
+        "auth",
+        "session",
+        "snowflake",
+        "semantic_refresh",
+        "prepared_context",
+        "fir",
+        "agent",
+    ):
+        duration = float(timings.get(name, 0.0) or 0.0)
+        if duration > 0:
+            server_timing.append(f"{name};dur={duration:.1f}")
+    response.headers["Server-Timing"] = ", ".join(server_timing)
     return response
 
 
@@ -119,6 +142,13 @@ def health():
             "AGT_TRANSFORMATION_RULE": _settings.agent_spec_transformation_rule_sha256 or None,
         },
     }
+
+
+@app.get("/health/performance")
+def performance_health():
+    if not _settings.perf_diagnostics_v1:
+        raise HTTPException(status_code=404, detail="Performance diagnostics are disabled")
+    return snapshot()
 
 
 @app.get("/healthz")

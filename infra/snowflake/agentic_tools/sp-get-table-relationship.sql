@@ -1,4 +1,4 @@
-CREATE OR REPLACE PROCEDURE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_RELATIONSHIPS(
+CREATE OR REPLACE PROCEDURE FFP_HDP_CRM_MIG_DB_DEV.SCH_STTM_METADATA.SP_GET_TABLE_RELATIONSHIPS_V2(
     "DB_NAME"     VARCHAR,
     "SCHEMA_NAME" VARCHAR,
     "TABLE_NAME"  VARCHAR
@@ -11,8 +11,6 @@ DECLARE
     result        VARIANT;
     query         VARCHAR;
     rs            RESULTSET;
-    db_count      INTEGER;
-    schema_count  INTEGER;
     table_count   INTEGER;
 
     -- Outgoing FK accumulators
@@ -23,54 +21,8 @@ DECLARE
     in_arr        ARRAY  DEFAULT ARRAY_CONSTRUCT();
     in_obj        OBJECT;
 BEGIN
-    -- ----------------------------------------------------------------
-    -- Validate DB
-    -- ----------------------------------------------------------------
-    query := ''
-        SELECT COUNT(*)
-        FROM SNOWFLAKE.ACCOUNT_USAGE.DATABASES
-        WHERE DATABASE_NAME = UPPER('''''' || DB_NAME || '''''')
-          AND DELETED IS NULL
-    '';
-    rs := (EXECUTE IMMEDIATE :query);
-    LET c1 CURSOR FOR rs;
-    FOR r IN c1 DO
-        db_count := r."COUNT(*)";
-    END FOR;
-
-    IF (db_count = 0) THEN
-        RETURN OBJECT_CONSTRUCT(
-            ''status'',  ''ERROR'',
-            ''code'',    ''DB_NOT_FOUND'',
-            ''message'', ''Database "'' || DB_NAME || ''" does not exist or is not visible to this role.''
-        );
-    END IF;
-
-    -- ----------------------------------------------------------------
-    -- Validate Schema
-    -- ----------------------------------------------------------------
-    query := ''
-        SELECT COUNT(*)
-        FROM '' || DB_NAME || ''.INFORMATION_SCHEMA.SCHEMATA
-        WHERE SCHEMA_NAME = UPPER('''''' || SCHEMA_NAME || '''''')
-    '';
-    rs := (EXECUTE IMMEDIATE :query);
-    LET c2 CURSOR FOR rs;
-    FOR r IN c2 DO
-        schema_count := r."COUNT(*)";
-    END FOR;
-
-    IF (schema_count = 0) THEN
-        RETURN OBJECT_CONSTRUCT(
-            ''status'',  ''ERROR'',
-            ''code'',    ''SCHEMA_NOT_FOUND'',
-            ''message'', ''Schema "'' || SCHEMA_NAME || ''" does not exist in "'' || DB_NAME || ''". Check name or verify access.''
-        );
-    END IF;
-
-    -- ----------------------------------------------------------------
-    -- Validate Table
-    -- ----------------------------------------------------------------
+    -- One local metadata probe replaces three V1 guards, including the
+    -- multi-second SNOWFLAKE.ACCOUNT_USAGE.DATABASES scan.
     query := ''
         SELECT COUNT(*)
         FROM '' || DB_NAME || ''.INFORMATION_SCHEMA.TABLES
@@ -78,8 +30,8 @@ BEGIN
           AND TABLE_NAME   = UPPER('''''' || TABLE_NAME  || '''''')
     '';
     rs := (EXECUTE IMMEDIATE :query);
-    LET c3 CURSOR FOR rs;
-    FOR r IN c3 DO
+    LET c1 CURSOR FOR rs;
+    FOR r IN c1 DO
         table_count := r."COUNT(*)";
     END FOR;
 
@@ -110,8 +62,8 @@ BEGIN
         GROUP BY "pk_schema_name", "pk_table_name", "fk_name"
     '';
     rs := (EXECUTE IMMEDIATE :query);
-    LET c4 CURSOR FOR rs;
-    FOR r IN c4 DO
+    LET c2 CURSOR FOR rs;
+    FOR r IN c2 DO
         out_obj := OBJECT_CONSTRUCT(
             ''schema'',          r.ref_schema,
             ''table'',           r.ref_table,
@@ -141,8 +93,8 @@ BEGIN
         GROUP BY "fk_schema_name", "fk_table_name", "fk_name"
     '';
     rs := (EXECUTE IMMEDIATE :query);
-    LET c5 CURSOR FOR rs;
-    FOR r IN c5 DO
+    LET c3 CURSOR FOR rs;
+    FOR r IN c3 DO
         in_obj := OBJECT_CONSTRUCT(
             ''schema'',          r.src_schema,
             ''table'',           r.src_table,
@@ -178,7 +130,7 @@ EXCEPTION
     WHEN OTHER THEN
         RETURN OBJECT_CONSTRUCT(
             ''status'',  ''ERROR'',
-            ''code'',    ''UNEXPECTED_ERROR'',
+            ''code'',    ''RELATIONSHIP_LOOKUP_FAILED'',
             ''message'', SQLERRM
         );
 END;

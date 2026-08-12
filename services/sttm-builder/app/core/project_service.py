@@ -6,7 +6,10 @@ import logging
 import math
 import re
 import uuid
+import time
 from datetime import datetime
+from functools import wraps
+from threading import Lock, RLock
 from typing import Any
 
 from snowflake.snowpark import Session
@@ -15,7 +18,9 @@ from app.core.config import Settings
 from app.core.conversation_memory import ConversationMemoryService
 from app.core.exceptions import AppValidationError, SnowflakeQueryError
 from app.core.agent_learning_service import AgentLearningService
+from app.core.async_jobs import AsyncJobService
 from app.core.mapping_knowledge_projector import MappingKnowledgeProjector
+from app.core.performance import increment, observe
 from app.core.target_mapping_patterns import TargetMappingPatternService
 from app.schema.common import TableRef
 from app.schema.project import (
@@ -42,6 +47,29 @@ from app.schema.project import (
 from app.schema.workspace_context import WorkbenchContextSnapshotV1
 
 logger = logging.getLogger(__name__)
+
+_autosave_locks_guard = Lock()
+_autosave_locks: dict[str, RLock] = {}
+
+
+def _serialize_autosave(function):
+    @wraps(function)
+    def wrapped(self, sttm_id, *args, **kwargs):
+        started = time.perf_counter()
+        if not self._settings.autosave_singleflight_v1:
+            try:
+                return function(self, sttm_id, *args, **kwargs)
+            finally:
+                observe("autosave.duration_ms", (time.perf_counter() - started) * 1000)
+        with _autosave_locks_guard:
+            lock = _autosave_locks.setdefault(str(sttm_id), RLock())
+        with lock:
+            increment("autosave.singleflight.executed")
+            try:
+                return function(self, sttm_id, *args, **kwargs)
+            finally:
+                observe("autosave.duration_ms", (time.perf_counter() - started) * 1000)
+    return wrapped
 
 
 class ProjectService:
@@ -88,6 +116,7 @@ class ProjectService:
         self._memory = memory_service
         self._agent_learning = AgentLearningService(session, settings)
         self._knowledge_projector = MappingKnowledgeProjector(self._agent_learning)
+        self._async_jobs = AsyncJobService(session, settings)
 
     @staticmethod
     def _quote_identifier(identifier: str) -> str:
@@ -323,6 +352,70 @@ class ProjectService:
         except Exception as exc:
             raise SnowflakeQueryError(f"Failed to insert metadata into {table_name}: {exc}") from exc
 
+    def _insert_existing_columns_bound(
+        self,
+        table_name: str,
+        values: dict[str, str | tuple[str, list[Any]]],
+    ) -> None:
+        """Insert into a version-compatible table with bound large values."""
+        columns = self._table_columns(table_name)
+        filtered = {
+            column: expression
+            for column, expression in values.items()
+            if not columns or column.upper() in columns
+        }
+        if not filtered:
+            raise SnowflakeQueryError(f"No writable columns found for metadata table {table_name}.")
+        expressions: list[str] = []
+        params: list[Any] = []
+        for value in filtered.values():
+            if isinstance(value, tuple):
+                expressions.append(value[0])
+                params.extend(value[1])
+            else:
+                expressions.append(value)
+        try:
+            self._session.sql(
+                f"INSERT INTO {table_name} ({', '.join(filtered)}) "
+                f"SELECT {', '.join(expressions)}",
+                params=params or None,
+            ).collect()
+        except Exception as exc:
+            raise SnowflakeQueryError(f"Failed to insert metadata into {table_name}: {exc}") from exc
+
+    def _update_existing_columns_bound(
+        self,
+        table_name: str,
+        assignments: dict[str, str | tuple[str, list[Any]]],
+        where_sql: str,
+        *,
+        where_params: list[Any] | None = None,
+    ) -> None:
+        columns = self._table_columns(table_name)
+        filtered = {
+            column: expression
+            for column, expression in assignments.items()
+            if not columns or column.upper() in columns
+        }
+        if not filtered:
+            return
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value in filtered.items():
+            if isinstance(value, tuple):
+                clauses.append(f"{column} = {value[0]}")
+                params.extend(value[1])
+            else:
+                clauses.append(f"{column} = {value}")
+        params.extend(where_params or [])
+        try:
+            self._session.sql(
+                f"UPDATE {table_name} SET {', '.join(clauses)} WHERE {where_sql}",
+                params=params or None,
+            ).collect()
+        except Exception as exc:
+            raise SnowflakeQueryError(f"Failed to update metadata in {table_name}: {exc}") from exc
+
     def _update_existing_columns(self, table_name: str, assignments: dict[str, str], where_sql: str) -> None:
         filtered = self._existing_column_exprs(table_name, assignments)
         if not filtered:
@@ -340,6 +433,70 @@ class ProjectService:
             ).collect()
         except Exception as exc:
             raise SnowflakeQueryError(f"Failed to update metadata in {table_name}: {exc}") from exc
+
+    def _update_sttm_draft_payload(
+        self,
+        *,
+        sttm_id: str,
+        snapshot: dict[str, Any],
+        snapshot_id: str,
+        semantic_bundle_id: str | None,
+        semantic_bundle_hash: str | None,
+        user_id: str | None,
+    ) -> None:
+        """Persist large draft values as binds while retaining legacy columns."""
+        snapshot_json = json.dumps(
+            self._normalize_json_value(snapshot), default=str, allow_nan=False
+        )
+        parsed_json = json.dumps(
+            self._normalize_json_value(snapshot.get("parsed_mapping_model") or {}),
+            default=str,
+            allow_nan=False,
+        )
+        assignments: list[str] = []
+        params: list[Any] = []
+
+        def bind(column: str, expression: str, value: Any) -> None:
+            if self._has_column(self._sttm_table, column):
+                assignments.append(f"{column} = {expression}")
+                params.append(value)
+
+        if self._has_column(self._sttm_table, "HAS_UNPUBLISHED_DRAFT"):
+            assignments.append("HAS_UNPUBLISHED_DRAFT = TRUE")
+        if self._has_column(self._sttm_table, "STATUS"):
+            assignments.append(
+                "STATUS = IFF(STATUS = 'IMPORTING', 'IMPORTING', "
+                "IFF(STATUS = 'DRAFT', 'DRAFT', 'IN_PROGRESS'))"
+            )
+        for column, expression in self._actor_column_values(
+            self._sttm_table, user_id
+        ).items():
+            assignments.append(f"{column} = {expression}")
+        if self._has_column(self._sttm_table, "LAST_MODIFIED_DATETIME"):
+            assignments.append("LAST_MODIFIED_DATETIME = CURRENT_TIMESTAMP()")
+        bind("DRAFT_PAYLOAD", "PARSE_JSON(?)", snapshot_json)
+        bind(
+            "RAW_MAPPING_SQL",
+            "?",
+            str(snapshot.get("raw_mapping_sql") or snapshot.get("mapping_sql") or ""),
+        )
+        bind("PARSED_MAPPING_MODEL", "PARSE_JSON(?)", parsed_json)
+        bind("SEMANTIC_BUNDLE_ID", "?", semantic_bundle_id or "")
+        bind("SEMANTIC_BUNDLE_HASH", "?", semantic_bundle_hash or "")
+        bind("LAST_SNAPSHOT_ID", "?", snapshot_id)
+        params.append(sttm_id)
+        try:
+            self._session.sql(
+                f"UPDATE {self._sttm_table} SET {', '.join(assignments)} "
+                "WHERE TO_VARCHAR(STTM_ID) = ?",
+                params=params,
+            ).collect()
+            increment("autosave.sttm_payload.statement")
+            observe("autosave.sttm_payload.bytes", len(snapshot_json.encode("utf-8")))
+        except Exception as exc:
+            raise SnowflakeQueryError(
+                f"Failed to update bound draft metadata in {self._sttm_table}: {exc}"
+            ) from exc
 
     @property
     def _projects_table(self) -> str:
@@ -861,7 +1018,13 @@ class ProjectService:
             "mapping_description": payload.description or "",
         }
         is_historical_import = str(payload.metadata.get("source") or "").lower() == "historical_import"
-        self._insert_existing_columns(
+        snapshot_json = json.dumps(
+            self._normalize_json_value(snapshot), default=str, allow_nan=False
+        )
+        sttm_metadata_json = json.dumps(
+            self._normalize_json_value(sttm_metadata), default=str, allow_nan=False
+        )
+        self._insert_existing_columns_bound(
             self._sttm_table,
             {
                 "PROJECT_ID": self._quote_literal(project_id),
@@ -873,10 +1036,10 @@ class ProjectService:
                 "STTM_NAME": self._quote_literal(sttm_name),
                 "DESCRIPTION": self._quote_literal(payload.description or ""),
                 "TARGET_TABLE": self._quote_literal(target_fqn),
-                "DRAFT_PAYLOAD": f"PARSE_JSON({self._json_literal(snapshot)})",
+                "DRAFT_PAYLOAD": ("PARSE_JSON(?)", [snapshot_json]),
                 "SEMANTIC_BUNDLE_ID": self._quote_literal(semantic_bundle_id or ""),
                 "SEMANTIC_BUNDLE_HASH": self._quote_literal(semantic_bundle_hash or ""),
-                "STTM_METADATA": f"PARSE_JSON({self._json_literal(sttm_metadata)})",
+                "STTM_METADATA": ("PARSE_JSON(?)", [sttm_metadata_json]),
             },
         )
         sttm_row = self._session.sql(
@@ -1209,6 +1372,7 @@ class ProjectService:
             agent_artifacts=self._list_artifacts(sttm_id),
         )
 
+    @_serialize_autosave
     def autosave_sttm(
         self,
         sttm_id: str,
@@ -1286,26 +1450,98 @@ class ProjectService:
             semantic_bundle_hash=semantic_bundle_hash,
             user_id=user_id,
         )
-        self._update_existing_columns(
-            self._sttm_table,
-            {
-                "HAS_UNPUBLISHED_DRAFT": "TRUE",
-                "STATUS": "IFF(STATUS = 'IMPORTING', 'IMPORTING', IFF(STATUS = 'DRAFT', 'DRAFT', 'IN_PROGRESS'))",
-                **self._actor_column_values(self._sttm_table, user_id),
-                "LAST_MODIFIED_DATETIME": "CURRENT_TIMESTAMP()",
-                "DRAFT_PAYLOAD": f"PARSE_JSON({self._json_literal(snapshot)})",
-                "RAW_MAPPING_SQL": self._quote_literal(
-                    str(snapshot.get("raw_mapping_sql") or snapshot.get("mapping_sql") or "")
-                ),
-                "PARSED_MAPPING_MODEL": f"PARSE_JSON({self._json_literal(snapshot.get('parsed_mapping_model') or {})})",
-                "SEMANTIC_BUNDLE_ID": self._quote_literal(semantic_bundle_id or ""),
-                "SEMANTIC_BUNDLE_HASH": self._quote_literal(semantic_bundle_hash or ""),
-                "LAST_SNAPSHOT_ID": self._quote_literal(snapshot_id),
-            },
-            f"STTM_ID = {self._quote_literal(sttm_id)}",
+        self._update_sttm_draft_payload(
+            sttm_id=sttm_id,
+            snapshot=snapshot,
+            snapshot_id=snapshot_id,
+            semantic_bundle_id=semantic_bundle_id,
+            semantic_bundle_hash=semantic_bundle_hash,
+            user_id=user_id,
+        )
+        projection_payload = {
+            "request": payload.model_dump(mode="json"),
+            "snapshot": snapshot,
+            "previous_snapshot": previous_snapshot,
+            "user_id": user_id,
+            "semantic_bundle_id": semantic_bundle_id,
+            "semantic_bundle_hash": semantic_bundle_hash,
+            "saved_mapping_row_count": saved_mapping_row_count,
+            "normalized_action": normalized_action,
+        }
+        artifact_count = 0
+        fir_count = 0
+        post_save_job_id = None
+        post_save_job_status = None
+        if self._settings.autosave_postsave_async_v1:
+            try:
+                post_save_job_id, post_save_job_status = self._async_jobs.enqueue(
+                    snapshot_id=snapshot_id,
+                    sttm_id=sttm_id,
+                    project_id=sttm.project_id,
+                    job_type="sttm_post_save_projection",
+                    payload=projection_payload,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Post-save job enqueue failed for STTM %s; executing inline: %s",
+                    sttm_id,
+                    exc,
+                )
+                increment("autosave.async_job.enqueue_failed")
+                artifact_count, fir_count = self._run_postsave_projections(
+                    project_id=sttm.project_id,
+                    sttm_id=sttm_id,
+                    projection_payload=projection_payload,
+                )
+        else:
+            artifact_count, fir_count = self._run_postsave_projections(
+                project_id=sttm.project_id,
+                sttm_id=sttm_id,
+                projection_payload=projection_payload,
+            )
+        return STTMAutosaveResponse(
+            project_id=sttm.project_id,
+            sttm_id=sttm_id,
+            snapshot_id=snapshot_id,
+            saved_source_count=saved_source_count,
+            saved_mapping_row_count=saved_mapping_row_count,
+            recorded_artifact_count=artifact_count,
+            recorded_fir_event_count=fir_count,
+            semantic_bundle_id=semantic_bundle_id,
+            semantic_bundle_hash=semantic_bundle_hash,
+            post_save_job_id=post_save_job_id,
+            post_save_job_status=post_save_job_status,
+        )
+
+    def _run_postsave_projections(
+        self,
+        *,
+        project_id: str,
+        sttm_id: str,
+        projection_payload: dict[str, Any],
+    ) -> tuple[int, int]:
+        payload = STTMAutosaveRequest.model_validate(
+            projection_payload.get("request") or {}
+        )
+        snapshot = self._coerce_json(projection_payload.get("snapshot"), {})
+        previous_snapshot = self._coerce_json(
+            projection_payload.get("previous_snapshot"), {}
+        ) or None
+        user_id = projection_payload.get("user_id")
+        semantic_bundle_id = str(
+            projection_payload.get("semantic_bundle_id") or ""
+        )
+        semantic_bundle_hash = str(
+            projection_payload.get("semantic_bundle_hash") or ""
+        )
+        normalized_action = str(
+            projection_payload.get("normalized_action") or "workspace.autosaved"
+        )
+        saved_mapping_row_count = int(
+            projection_payload.get("saved_mapping_row_count") or 0
         )
         artifact_count = self._record_agent_artifacts(
-            project_id=sttm.project_id,
+            project_id=project_id,
             sttm_id=sttm_id,
             payload=payload,
             snapshot=snapshot,
@@ -1314,7 +1550,7 @@ class ProjectService:
             semantic_bundle_hash=semantic_bundle_hash,
         )
         fir_count = self._record_autosave_fir_events(
-            project_id=sttm.project_id,
+            project_id=project_id,
             sttm_id=sttm_id,
             payload=payload,
             snapshot=snapshot,
@@ -1333,7 +1569,7 @@ class ProjectService:
             )
         ):
             self._knowledge_projector.project(
-                project_id=sttm.project_id,
+                project_id=project_id,
                 sttm_id=sttm_id,
                 snapshot=snapshot,
                 outcome="validated" if "validation_passed" in normalized_action else normalized_action,
@@ -1347,7 +1583,7 @@ class ProjectService:
                 else "accepted_mapping_row"
             )
             self._record_target_mapping_patterns(
-                project_id=sttm.project_id,
+                project_id=project_id,
                 sttm_id=sttm_id,
                 snapshot=snapshot,
                 evidence_class=evidence_class,
@@ -1374,17 +1610,44 @@ class ProjectService:
                 "semantic_bundle_hash": semantic_bundle_hash,
             },
         )
-        return STTMAutosaveResponse(
-            project_id=sttm.project_id,
-            sttm_id=sttm_id,
-            snapshot_id=snapshot_id,
-            saved_source_count=saved_source_count,
-            saved_mapping_row_count=saved_mapping_row_count,
-            recorded_artifact_count=artifact_count,
-            recorded_fir_event_count=fir_count,
-            semantic_bundle_id=semantic_bundle_id,
-            semantic_bundle_hash=semantic_bundle_hash,
-        )
+        return artifact_count, fir_count
+
+    def process_postsave_jobs(
+        self,
+        *,
+        worker_id: str,
+        max_jobs: int = 4,
+        snapshot_id: str | None = None,
+    ) -> int:
+        """Claim and project durable autosave jobs with retry-safe leases."""
+        processed = 0
+        for _ in range(max(1, min(max_jobs, 20))):
+            job = self._async_jobs.claim_next(
+                worker_id=worker_id,
+                snapshot_id=snapshot_id,
+            )
+            if not job:
+                break
+            job_id = str(job.get("JOB_ID") or "")
+            try:
+                payload = self._coerce_json(job.get("PAYLOAD"), {})
+                if str(job.get("JOB_TYPE") or "") != "sttm_post_save_projection":
+                    raise ValueError(f"Unsupported post-save job type: {job.get('JOB_TYPE')}")
+                self._run_postsave_projections(
+                    project_id=str(job.get("PROJECT_ID") or ""),
+                    sttm_id=str(job.get("STTM_ID") or ""),
+                    projection_payload=payload,
+                )
+                self._async_jobs.mark_complete(job_id, worker_id=worker_id)
+                processed += 1
+            except Exception as exc:
+                logger.exception("Post-save job %s failed", job_id)
+                self._async_jobs.mark_failed(
+                    job_id,
+                    {"type": type(exc).__name__, "message": str(exc)},
+                    worker_id=worker_id,
+                )
+        return processed
 
     def _validate_project_value_bindings(
         self,
@@ -1447,11 +1710,39 @@ class ProjectService:
                 user_id=user_id,
             )
             snapshot_id = autosave.snapshot_id
+            if (
+                self._settings.autosave_postsave_async_v1
+                and autosave.post_save_job_id
+            ):
+                self.process_postsave_jobs(
+                    worker_id=f"publish:{sttm_id}",
+                    max_jobs=20,
+                    snapshot_id=snapshot_id,
+                )
+                if self._async_jobs.incomplete_count(snapshot_id=snapshot_id):
+                    raise SnowflakeQueryError(
+                        "The current draft's learning projections are not complete. "
+                        "Retry publish after the durable post-save job succeeds."
+                    )
         semantic_bundle_id = payload.semantic_bundle_id or self._semantic_bundle_id(snapshot_payload) or sttm.semantic_bundle_id
         semantic_bundle_hash = payload.semantic_bundle_hash or self._semantic_bundle_hash(snapshot_payload) or sttm.semantic_bundle_hash
         next_version = int(sttm.current_version or 0) + 1
         artifact_ids = [item.get("artifact_id") for item in self._list_artifacts(sttm_id) if item.get("artifact_id")]
-        self._insert_existing_columns(
+        version_payload_json = json.dumps(
+            self._normalize_json_value(snapshot_payload), default=str, allow_nan=False
+        )
+        parsed_mapping_json = json.dumps(
+            self._normalize_json_value(snapshot_payload.get("parsed_mapping_model") or {}),
+            default=str,
+            allow_nan=False,
+        )
+        artifact_ids_json = json.dumps(artifact_ids, default=str, allow_nan=False)
+        raw_mapping_sql = str(
+            snapshot_payload.get("raw_mapping_sql")
+            or snapshot_payload.get("mapping_sql")
+            or ""
+        )
+        self._insert_existing_columns_bound(
             self._versions_table,
             {
                 "STTM_ID": self._quote_literal(sttm_id),
@@ -1459,15 +1750,13 @@ class ProjectService:
                 "REVISION_NOTE": self._quote_literal(payload.revision_note or ""),
                 "PUBLISHED_BY": self._quote_literal(user_id or ""),
                 "SNAPSHOT_ID": self._quote_literal(snapshot_id or sttm.last_snapshot_id or ""),
-                "VERSION_PAYLOAD": f"PARSE_JSON({self._json_literal(snapshot_payload)})",
-                "RAW_MAPPING_SQL": self._quote_literal(
-                    str(snapshot_payload.get("raw_mapping_sql") or snapshot_payload.get("mapping_sql") or "")
-                ),
-                "PARSED_MAPPING_MODEL": f"PARSE_JSON({self._json_literal(snapshot_payload.get('parsed_mapping_model') or {})})",
+                "VERSION_PAYLOAD": ("PARSE_JSON(?)", [version_payload_json]),
+                "RAW_MAPPING_SQL": ("?", [raw_mapping_sql]),
+                "PARSED_MAPPING_MODEL": ("PARSE_JSON(?)", [parsed_mapping_json]),
                 "SEMANTIC_BUNDLE_ID": self._quote_literal(semantic_bundle_id or ""),
                 "SEMANTIC_BUNDLE_HASH": self._quote_literal(semantic_bundle_hash or ""),
                 "MAPPING_VERSION": self._quote_literal(payload.mapping_version or ""),
-                "AGENT_ARTIFACT_IDS": f"PARSE_JSON({self._json_literal(artifact_ids)})",
+                "AGENT_ARTIFACT_IDS": ("PARSE_JSON(?)", [artifact_ids_json]),
             },
         )
         version_id = self._session.sql(
@@ -1479,7 +1768,7 @@ class ProjectService:
             LIMIT 1
             """
         ).collect()[0].as_dict().get("VERSION_ID")
-        self._update_existing_columns(
+        self._update_existing_columns_bound(
             self._sttm_table,
             {
                 "CURRENT_VERSION": str(next_version),
@@ -1487,16 +1776,15 @@ class ProjectService:
                 "STATUS": "'COMPLETE'",
                 "IMPORT_STATE": "IFF(IMPORT_KEY IS NULL, IMPORT_STATE, 'COMPLETE')",
                 "RUNTIME_SUPPRESSED": "FALSE",
-                "RAW_MAPPING_SQL": self._quote_literal(
-                    str(snapshot_payload.get("raw_mapping_sql") or snapshot_payload.get("mapping_sql") or "")
-                ),
-                "PARSED_MAPPING_MODEL": f"PARSE_JSON({self._json_literal(snapshot_payload.get('parsed_mapping_model') or {})})",
+                "RAW_MAPPING_SQL": ("?", [raw_mapping_sql]),
+                "PARSED_MAPPING_MODEL": ("PARSE_JSON(?)", [parsed_mapping_json]),
                 **self._actor_column_values(self._sttm_table, user_id),
                 "LAST_MODIFIED_DATETIME": "CURRENT_TIMESTAMP()",
                 "SEMANTIC_BUNDLE_ID": self._quote_literal(semantic_bundle_id or ""),
                 "SEMANTIC_BUNDLE_HASH": self._quote_literal(semantic_bundle_hash or ""),
             },
-            f"STTM_ID = {self._quote_literal(sttm_id)}",
+            "TO_VARCHAR(STTM_ID) = ?",
+            where_params=[sttm_id],
         )
         self._record_fir(
             event_type="sttm.published",
@@ -1878,6 +2166,99 @@ class ProjectService:
     def _replace_sources(self, sttm_id: str, snapshot: dict[str, Any], *, user_id: str | None) -> int:
         source_tables = self._snapshot_tables(snapshot, "source_tables")
         derived_sources = snapshot.get("derived_sources") if isinstance(snapshot.get("derived_sources"), list) else []
+        if not self._settings.sttm_source_bulk_write_v1:
+            return self._replace_sources_legacy(
+                sttm_id, source_tables, derived_sources, user_id=user_id
+            )
+        source_columns = self._table_columns(self._sources_table)
+        delete_suffix = " AND IS_DRAFT = TRUE" if source_columns and "IS_DRAFT" in source_columns else ""
+        self._session.sql(
+            f"DELETE FROM {self._sources_table} WHERE TO_VARCHAR(STTM_ID) = ?{delete_suffix}",
+            params=[sttm_id],
+        ).collect()
+        rows: list[dict[str, Any]] = []
+        for index, table in enumerate(source_tables, start=1):
+            rows.append(
+                {
+                    "sttm_id": sttm_id,
+                    "source_name": str(
+                        table.get("alias") or table.get("table") or f"source_{index}"
+                    ),
+                    "database_name": str(table.get("database") or ""),
+                    "schema_name": str(table.get("schema") or ""),
+                    "table_name": str(table.get("table") or ""),
+                    "description": self._table_ref_to_fqn(table),
+                    "is_draft": True,
+                    "actor_user_id": str(user_id or ""),
+                }
+            )
+        for index, derived in enumerate(derived_sources, start=1):
+            if isinstance(derived, dict):
+                rows.append(
+                    {
+                        "sttm_id": sttm_id,
+                        "source_name": str(
+                            derived.get("name") or derived.get("id") or f"derived_{index}"
+                        ),
+                        "database_name": "",
+                        "schema_name": "",
+                        "table_name": "",
+                        "description": "DERIVED_SOURCE:" + str(derived.get("id") or ""),
+                        "is_draft": True,
+                        "actor_user_id": str(user_id or ""),
+                    }
+                )
+        if not rows:
+            increment("autosave.sources.bulk_statement", amount=1)
+            return 0
+
+        expression_by_column = {
+            "STTM_ID": "f.value:sttm_id::STRING",
+            "SOURCE_NAME": "f.value:source_name::STRING",
+            "DATABASE_NAME": "f.value:database_name::STRING",
+            "SCHEMA_NAME": "f.value:schema_name::STRING",
+            "TABLE_NAME": "f.value:table_name::STRING",
+            "DESCRIPTION": "f.value:description::STRING",
+            "IS_DRAFT": "COALESCE(f.value:is_draft::BOOLEAN, TRUE)",
+            "ACTOR_USER_ID": "f.value:actor_user_id::STRING",
+            "CREATED_DATETIME": "CURRENT_TIMESTAMP()",
+            "LAST_MODIFIED_DATETIME": "CURRENT_TIMESTAMP()",
+        }
+        actor_type = self._column_type(self._sources_table, "LAST_MODIFIED_BY")
+        if actor_type.startswith(("NUMBER", "DECIMAL", "NUMERIC", "INT")):
+            expression_by_column["LAST_MODIFIED_BY"] = (
+                "TRY_TO_NUMBER(f.value:actor_user_id::STRING)"
+            )
+        else:
+            expression_by_column["LAST_MODIFIED_BY"] = (
+                "f.value:actor_user_id::STRING"
+            )
+        writable_columns = [
+            column
+            for column in expression_by_column
+            if not source_columns or column in source_columns
+        ]
+        payload_json = json.dumps(
+            self._normalize_json_value(rows), default=str, allow_nan=False
+        )
+        self._session.sql(
+            f"INSERT INTO {self._sources_table} ({', '.join(writable_columns)}) "
+            f"SELECT {', '.join(expression_by_column[column] for column in writable_columns)} "
+            "FROM TABLE(FLATTEN(INPUT => PARSE_JSON(?))) f",
+            params=[payload_json],
+        ).collect()
+        increment("autosave.sources.bulk_statement", amount=2)
+        observe("autosave.sources.bulk_payload.bytes", len(payload_json.encode("utf-8")))
+        return len(rows)
+
+    def _replace_sources_legacy(
+        self,
+        sttm_id: str,
+        source_tables: list[dict[str, Any]],
+        derived_sources: list[Any],
+        *,
+        user_id: str | None,
+    ) -> int:
         source_columns = self._table_columns(self._sources_table)
         if source_columns and "IS_DRAFT" in source_columns:
             self._session.sql(

@@ -353,10 +353,10 @@ function MappingPageContent() {
     !sessionHydrated ||
     openSttmStatus === 'loading' ||
     (isSavedWorkspace &&
-      (openSttmStatus !== 'success' ||
-        (!selectedTargetMetadataLoaded &&
-          loadState.attributes !== 'error' &&
-          !errorState.attributes)));
+      openSttmStatus === 'success' &&
+      !selectedTargetMetadataLoaded &&
+      loadState.attributes !== 'error' &&
+      !errorState.attributes);
 
   const totalCount = mappings.length;
   const mappedCount = mappings.filter((m) => m.status === 'MAPPED').length;

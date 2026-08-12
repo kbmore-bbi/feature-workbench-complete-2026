@@ -20,6 +20,7 @@ class WarehouseWorkload(str, Enum):
     AGENT = "agent"
     EXECUTION = "execution"
     AUTOMAP = "automap"
+    PREPARATION = "preparation"
 
 
 def resolve_warehouse(settings: Settings, workload: WarehouseWorkload) -> str:
@@ -30,11 +31,17 @@ def resolve_warehouse(settings: Settings, workload: WarehouseWorkload) -> str:
     agent = settings.snowflake_agent_warehouse.strip() or control
     execution = settings.snowflake_execution_warehouse.strip() or control
     automap = settings.auto_mapping_warehouse.strip() or agent
+    preparation = (
+        settings.snowflake_preparation_warehouse.strip()
+        if settings.preparation_warehouse_routing_v1
+        else ""
+    ) or control
     return {
         WarehouseWorkload.CONTROL: control,
         WarehouseWorkload.AGENT: agent,
         WarehouseWorkload.EXECUTION: execution,
         WarehouseWorkload.AUTOMAP: automap,
+        WarehouseWorkload.PREPARATION: preparation,
     }[workload]
 
 
@@ -49,6 +56,7 @@ def statement_timeout_seconds(
             WarehouseWorkload.AGENT: settings.snowflake_agent_statement_timeout_seconds,
             WarehouseWorkload.EXECUTION: settings.snowflake_execution_statement_timeout_seconds,
             WarehouseWorkload.AUTOMAP: settings.snowflake_automap_statement_timeout_seconds,
+            WarehouseWorkload.PREPARATION: settings.snowflake_preparation_statement_timeout_seconds,
         }[workload],
     )
 

@@ -1,4 +1,5 @@
 ARG PYTHON_BASE_IMAGE=public.ecr.aws/docker/library/python:3.12-slim
+ARG INSTALL_CORTEX_CLI=0
 FROM ${PYTHON_BASE_IMAGE} AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -16,8 +17,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
-    && curl -LsS https://ai.snowflake.com/static/cc-scripts/install.sh | sh \
-    && test -x /root/.local/bin/cortex \
+    && if [ "${INSTALL_CORTEX_CLI}" = "1" ]; then \
+         curl -LsS https://ai.snowflake.com/static/cc-scripts/install.sh | sh \
+         && test -x /root/.local/bin/cortex; \
+       fi \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml uv.lock ./

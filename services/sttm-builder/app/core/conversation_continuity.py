@@ -87,7 +87,13 @@ class ConversationContinuityService:
             logical_id,
             user_id=user_id,
         )
-        request_tokens = estimate_tokens(packed_request)
+        # Live Cortex Agent enforcement has rejected requests using a raw-ish
+        # message length near 90K, well before the former bytes/3.6 estimate.
+        # Track the conservative character count alongside the token estimate.
+        request_tokens = max(
+            estimate_tokens(packed_request),
+            len(packed_request),
+        )
 
         if active is None:
             segment_number = 1
@@ -113,7 +119,13 @@ class ConversationContinuityService:
         prior_tokens = int(self._value(active, "ESTIMATED_CONTEXT_TOKENS", 0) or 0)
         turn_count = int(self._value(active, "TURN_COUNT", 0) or 0)
         projected_tokens = prior_tokens + request_tokens
-        context_limit = max(1, int(self._settings.agent_context_limit_tokens))
+        context_limit = max(
+            1,
+            min(
+                int(self._settings.agent_context_limit_tokens),
+                int(self._settings.agent_thread_context_max_chars),
+            ),
+        )
         soft_limit = int(context_limit * self._settings.agent_thread_rollover_ratio)
         hard_limit = int(context_limit * self._settings.agent_thread_hard_ratio)
 

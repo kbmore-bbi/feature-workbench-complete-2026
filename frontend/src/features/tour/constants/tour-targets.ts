@@ -11,9 +11,48 @@ export const TOUR_TARGETS = {
   // Screen 2 — Dashboard & sidebar
   sidebar: "app-sidebar",
   sidebarDashboard: "sidebar-dashboard",
+  sidebarAdministration: "sidebar-administration",
   sidebarProjects: "sidebar-projects",
   sidebarMappings: "sidebar-mappings",
-  newMappingButton: "new-mapping-button",
+
+  // Projects screen
+  projectsHeader: "projects-header",
+  projectsNewProject: "projects-new-project",
+  projectsGrid: "projects-grid",
+  projectsCard: "projects-card",
+  projectsCardCoverage: "projects-card-coverage",
+  projectsCardStatus: "projects-card-status",
+  projectsCardHardcodedValues: "projects-card-hardcoded-values",
+  projectsCardMeta: "projects-card-meta",
+  projectsSummaryFooter: "projects-summary-footer",
+
+  // Mappings screen
+  mappingsHeader: "mappings-header",
+  mappingsNewMapping: "mappings-new-mapping",
+  mappingsStatusFilters: "mappings-status-filters",
+  mappingsSort: "mappings-sort",
+  mappingsProjectFilter: "mappings-project-filter",
+  mappingsSearch: "mappings-search",
+  mappingsTable: "mappings-table",
+  mappingsColumnMapping: "mappings-column-mapping",
+  mappingsColumnAiSummary: "mappings-column-ai-summary",
+  mappingsColumnCreatedBy: "mappings-column-created-by",
+  mappingsOpenButton: "mappings-open-button",
+  mappingsFooter: "mappings-footer",
+
+  // Administration — sidebar & User Management
+  adminSidebar: "admin-sidebar",
+  adminNavUserManagement: "admin-nav-user-management",
+  adminNavAuditLog: "admin-nav-audit-log",
+  adminNavOwnershipTransfer: "admin-nav-ownership-transfer",
+  adminNavMappingLocks: "admin-nav-mapping-locks",
+  adminNavScreenPermissions: "admin-nav-screen-permissions",
+  adminPageHeader: "admin-page-header",
+  adminAddUser: "admin-add-user",
+  adminUsersTable: "admin-users-table",
+  adminUsersColumnFilters: "admin-users-column-filters",
+  adminUsersPagination: "admin-users-pagination",
+  adminUserEditProfile: "admin-user-edit-profile",
 
   // Screen 3 — New Mapping modal
   newMappingModal: "new-mapping-modal",

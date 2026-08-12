@@ -3,6 +3,7 @@ import { AiaBox, AiaTablePagination } from '@/components/ui';
 import { AiaText } from '@/components/ui/aia-text';
 
 import { MAPPINGS_BORDER_RADIUS } from "./mappings-ui-styles";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
 
 type MappingsTableFooterProps = {
   total: number;
@@ -54,6 +55,7 @@ export default function MappingsTableFooter({
 }: MappingsTableFooterProps) {
   return (
     <AiaBox
+      data-tour={TOUR_TARGETS.mappingsFooter}
       sx={{
         display: "flex",
         flexWrap: "wrap",

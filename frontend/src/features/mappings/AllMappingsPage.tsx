@@ -43,6 +43,7 @@ import {
   mappingsFilterButtonSx,
 } from "./mappings-ui-styles";
 import { SECTION_TITLE_SX, SECONDARY_TEXT_SX } from '@/config/typography-tokens';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 
 const DEFAULT_ROWS_PER_PAGE = 5;
 const DEFAULT_PROJECT_FILTER_OPTIONS: ProjectFilterOption[] = [
@@ -281,6 +282,7 @@ export default function AllMappingsPage() {
       <AiaBox sx={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
         <AiaBox className="px-5 py-4">
           <AiaBox
+            data-tour={TOUR_TARGETS.mappingsHeader}
             sx={{
               display: "flex",
               alignItems: "flex-start",
@@ -305,6 +307,7 @@ export default function AllMappingsPage() {
             <AiaButton
               variant="contained"
               size="medium"
+              data-tour={TOUR_TARGETS.mappingsNewMapping}
               startIcon={<AddRoundedIcon sx={{ fontSize: 18 }} />}
               onClick={() => setIsNewMappingOpen(true)}
               sx={{
@@ -322,20 +325,26 @@ export default function AllMappingsPage() {
           </AiaBox>
 
           <AiaBox className="mt-4 flex flex-wrap items-center gap-2">
-            {STATUS_FILTERS.map((filter) => (
-              <AiaButton
-                key={filter.value}
-              onClick={() => {
-                setStatusFilter(filter.value);
-                setPage(0);
-              }}
-                sx={mappingsFilterButtonSx(statusFilter === filter.value)}
-              >
-                {filter.label}
-              </AiaButton>
-            ))}
+            <AiaBox
+              className="flex flex-wrap items-center gap-2"
+              data-tour={TOUR_TARGETS.mappingsStatusFilters}
+            >
+              {STATUS_FILTERS.map((filter) => (
+                <AiaButton
+                  key={filter.value}
+                  onClick={() => {
+                    setStatusFilter(filter.value);
+                    setPage(0);
+                  }}
+                  sx={mappingsFilterButtonSx(statusFilter === filter.value)}
+                >
+                  {filter.label}
+                </AiaButton>
+              ))}
+            </AiaBox>
 
             <AiaButton
+              data-tour={TOUR_TARGETS.mappingsSort}
               onClick={(event) => setSortAnchor(event.currentTarget)}
               endIcon={<KeyboardArrowDownRoundedIcon sx={{ fontSize: 14 }} />}
               sx={{
@@ -371,6 +380,7 @@ export default function AllMappingsPage() {
             </AiaMenu>
 
             <AiaButton
+              data-tour={TOUR_TARGETS.mappingsProjectFilter}
               onClick={(event) => setProjectAnchor(event.currentTarget)}
               endIcon={<KeyboardArrowDownRoundedIcon sx={{ fontSize: 14 }} />}
               sx={{
@@ -401,7 +411,10 @@ export default function AllMappingsPage() {
               ))}
             </AiaMenu>
 
-            <AiaBox sx={{ width: { xs: "100%", sm: 220 } }}>
+            <AiaBox
+              data-tour={TOUR_TARGETS.mappingsSearch}
+              sx={{ width: { xs: "100%", sm: 220 } }}
+            >
               <AiaSearchbox
                 value={searchQuery}
                 onChange={(value) => {
@@ -428,6 +441,7 @@ export default function AllMappingsPage() {
         <AiaBox className="min-w-0 px-5 pb-5">
           <AiaPaper
             elevation={0}
+            data-tour={TOUR_TARGETS.mappingsTable}
             sx={{
               border: "1px solid #E5E7EB",
               borderRadius: MAPPINGS_BORDER_RADIUS,

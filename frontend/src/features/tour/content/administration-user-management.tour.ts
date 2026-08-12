@@ -1,0 +1,112 @@
+import type { TourDefinition } from "../types/tour.types";
+import { TOUR_TARGETS, tourSelector } from "../constants/tour-targets";
+
+const ROUTE = "/administration/user-management";
+
+export const administrationUserManagementTour: TourDefinition = {
+  id: "administration-user-management",
+  label: "Administration User Management",
+  description:
+    "Administration menus and the User Management screen: creating users, roles, account status, and filtering.",
+  routes: [ROUTE, "/administration"],
+  steps: [
+    {
+      id: "admin-overview",
+      screen: "Administration",
+      title: "Administration",
+      body: "The Administration area is where an Admin governs the workbench: who can sign in, what they are allowed to do, and what has been changed. It opens on User Management by default.",
+      placement: "center",
+      route: ROUTE,
+    },
+    {
+      id: "admin-sidebar",
+      screen: "Administration",
+      title: "Administration Menu",
+      body: "The Administration menu lists the five admin areas. It sits beside the main application sidebar, so you can move between admin screens without leaving Administration. Use the collapse control at the bottom to widen the working area.",
+      target: tourSelector(TOUR_TARGETS.adminSidebar),
+      placement: "right",
+      route: ROUTE,
+    },
+    {
+      id: "admin-nav-user-management",
+      screen: "Administration",
+      title: "User Management",
+      body: "Create users, update their roles, and control account access. This is the default Administration screen and the one shown here.",
+      target: tourSelector(TOUR_TARGETS.adminNavUserManagement),
+      placement: "right",
+      route: ROUTE,
+    },
+    {
+      id: "admin-nav-audit-log",
+      screen: "Administration",
+      title: "Audit Log",
+      body: "A record of actions taken across the workbench who changed what, and when. Use it to trace mapping and account changes.",
+      target: tourSelector(TOUR_TARGETS.adminNavAuditLog),
+      placement: "right",
+      route: ROUTE,
+    },
+    {
+      id: "admin-nav-ownership-transfer",
+      screen: "Administration",
+      title: "Ownership Transfer",
+      body: "Reassign ownership of mappings from one user to another for example when someone changes team or leaves.",
+      target: tourSelector(TOUR_TARGETS.adminNavOwnershipTransfer),
+      placement: "right",
+      route: ROUTE,
+    },
+    {
+      id: "admin-nav-mapping-locks",
+      screen: "Administration",
+      title: "Mapping Locks",
+      body: "View mappings currently locked for editing and release a lock when a mapping is stuck with an unavailable user.",
+      target: tourSelector(TOUR_TARGETS.adminNavMappingLocks),
+      placement: "right",
+      route: ROUTE,
+    },
+    {
+      id: "admin-nav-screen-permissions",
+      screen: "Administration",
+      title: "Screen Permissions",
+      body: "Control which roles can reach which screens, so each role sees only the parts of the workbench it needs.",
+      target: tourSelector(TOUR_TARGETS.adminNavScreenPermissions),
+      placement: "right",
+      route: ROUTE,
+    },
+    {
+      id: "admin-add-user",
+      screen: "Administration",
+      title: "Add User",
+      body: "Opens the new-user form, where you enter the person's name and email and assign their role and initial status.",
+      target: tourSelector(TOUR_TARGETS.adminAddUser),
+      placement: "left",
+      route: ROUTE,
+    },
+    {
+      id: "admin-users-table",
+      screen: "Administration",
+      title: "Users List",
+      body: "Each row is one account. 'Role' sets what the user may do Admin, Publisher, Editor, or Viewer. 'Mappings' shows how many mappings they own, which is what you check before transferring ownership. 'Status' shows Active for a usable account and Locked for one that cannot sign in. Click any column heading to sort.",
+      target: tourSelector(TOUR_TARGETS.adminUsersTable),
+      placement: "top",
+      route: ROUTE,
+    },
+    {
+      id: "admin-users-column-filters",
+      screen: "Administration",
+      title: "Column Filters",
+      body: "Narrow the list without leaving the page: type to match on user, email, last login, or mapping count, and pick from the dropdowns to filter by Role or Status. Filters combine, so you can isolate, for example, every Locked Publisher.",
+      target: tourSelector(TOUR_TARGETS.adminUsersColumnFilters),
+      placement: "bottom",
+      route: ROUTE,
+    },
+    {
+      id: "admin-user-edit-profile",
+      screen: "Administration",
+      title: "Edit Profile",
+      body: "Opens the account for editing change the user's role, or switch their status between Active and Locked to grant or withdraw access. The primary Admin account has no Edit action, so the workbench cannot be left without an administrator.",
+      target: tourSelector(TOUR_TARGETS.adminUserEditProfile),
+      placement: "left",
+      route: ROUTE,
+    }
+  ],
+};

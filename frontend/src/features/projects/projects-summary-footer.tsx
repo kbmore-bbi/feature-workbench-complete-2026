@@ -1,6 +1,7 @@
 "use client";
 import { AiaBox } from '@/components/ui';
 import { AiaText } from '@/components/ui/aia-text';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 
 type ProjectsSummaryFooterProps = {
   projectCount: number;
@@ -41,6 +42,7 @@ export default function ProjectsSummaryFooter({
 }: ProjectsSummaryFooterProps) {
   return (
     <AiaBox
+      data-tour={TOUR_TARGETS.projectsSummaryFooter}
       sx={{
         mt: "auto",
         px: { xs: 2.5, md: 3.5 },

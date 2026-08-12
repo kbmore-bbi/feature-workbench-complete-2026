@@ -13,6 +13,7 @@ import type { AdminUserListItem } from './user-management-data';
 import UserFormModal from './user-form-modal';
 import UserManagementTable from './user-management-table';
 import type { UserProfileInput } from '../shared/administration-utils';
+import { TOUR_TARGETS } from '@/features/tour/constants/tour-targets';
 
 export default function UserManagementPage() {
   const { users, createUser, updateUser } = useAdministration();
@@ -35,24 +36,28 @@ export default function UserManagementPage() {
     <AiaBox sx={adminPageShellSx}>
       <AiaBox sx={adminContentScrollSx}>
         <AiaBox className="px-5 py-4">
-          <AdminPageHeader
-            title="User Management"
-            subtitle="Create users, update roles, and control account access"
-            actions={
-              <AiaButton
-                variant="contained"
-                color="primary"
-                size="medium"
-                startIcon={<AddRoundedIcon sx={{ fontSize: 18 }} />}
-                onClick={() => setIsCreateOpen(true)}
-              >
-                Add User
-              </AiaButton>
-            }
-          />
+          <AiaBox data-tour={TOUR_TARGETS.adminPageHeader}>
+            <AdminPageHeader
+              title="User Management"
+              subtitle="Create users, update roles, and control account access"
+              actions={
+                <AiaButton
+                  variant="contained"
+                  color="primary"
+                  size="medium"
+                  data-tour={TOUR_TARGETS.adminAddUser}
+                  startIcon={<AddRoundedIcon sx={{ fontSize: 18 }} />}
+                  onClick={() => setIsCreateOpen(true)}
+                >
+                  Add User
+                </AiaButton>
+              }
+            />
+          </AiaBox>
 
           <AiaPaper
             elevation={0}
+            data-tour={TOUR_TARGETS.adminUsersTable}
             sx={{
               mt: 3,
               borderRadius: '12px',

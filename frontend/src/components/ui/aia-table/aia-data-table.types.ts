@@ -51,4 +51,8 @@ export type AiaDataTableProps<TRow, TSortKey extends string = string> = {
   emptyMessage?: string;
   rowsPerPageOptions?: number[];
   defaultRowsPerPage?: number;
+  tourTargets?: {
+    columnFilters?: string;
+    pagination?: string;
+  };
 };

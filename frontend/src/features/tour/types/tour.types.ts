@@ -3,6 +3,7 @@ export type TourId =
   | "dashboard"
   | "projects"
   | "mappings"
+  | "administration-user-management"
   | "new-mapping"
   | "sttm-table-selection"
   | "sttm-tables-selected"

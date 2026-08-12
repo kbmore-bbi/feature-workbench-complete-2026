@@ -21,6 +21,7 @@ import {
 
 import type { AllMappingListItem } from "./all-mappings-data";
 import MappingStatusBadge from "./mapping-status-badge";
+import { TOUR_TARGETS } from "@/features/tour/constants/tour-targets";
 import {
   MAPPINGS_BORDER_RADIUS,
   mappingsBodyCellSx,
@@ -33,9 +34,9 @@ import {
 
 const TABLE_COLUMNS = [
   { key: "index", label: "#", align: "left" as const },
-  { key: "mapping", label: "MAPPING", align: "left" as const },
-  { key: "aiSummary", label: "AI SUMMARY", align: "left" as const },
-  { key: "createdBy", label: "CREATED BY", align: "left" as const },
+  { key: "mapping", label: "MAPPING", align: "left" as const, tourTarget: TOUR_TARGETS.mappingsColumnMapping },
+  { key: "aiSummary", label: "AI SUMMARY", align: "left" as const, tourTarget: TOUR_TARGETS.mappingsColumnAiSummary },
+  { key: "createdBy", label: "CREATED BY", align: "left" as const, tourTarget: TOUR_TARGETS.mappingsColumnCreatedBy },
   { key: "dateTime", label: "DATE & TIME", align: "left" as const },
   { key: "open", label: "OPEN", align: "right" as const },
 ];
@@ -77,7 +78,11 @@ export default function AllMappingsTable({ rows, onOpen, isLoading = false }: Al
         <AiaTableHead>
           <AiaTableRowPrimitive>
             {TABLE_COLUMNS.map((column) => (
-              <AiaTableCellPrimitive key={column.key} align={column.align}>
+              <AiaTableCellPrimitive
+                key={column.key}
+                align={column.align}
+                data-tour={column.tourTarget}
+              >
                 {column.label}
               </AiaTableCellPrimitive>
             ))}
@@ -113,7 +118,7 @@ export default function AllMappingsTable({ rows, onOpen, isLoading = false }: Al
               </AiaTableCellPrimitive>
             </AiaTableRowPrimitive>
           ) : (
-            rows.map((item) => (
+            rows.map((item, rowIndex) => (
             <AiaTableRowPrimitive key={item.id} hover>
               <AiaTableCellPrimitive sx={{ width: 40, ...mappingsMutedTextSx }}>
                 {item.index}
@@ -188,6 +193,7 @@ export default function AllMappingsTable({ rows, onOpen, isLoading = false }: Al
                   variant="outlined"
                   size="small"
                   color="primary"
+                  data-tour={rowIndex === 0 ? TOUR_TARGETS.mappingsOpenButton : undefined}
                   customColor="var(--aia-button-color)"
                   customBorderColor="var(--aia-button-color)"
                   endIcon={<EastRoundedIcon />}

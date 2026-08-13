@@ -67,6 +67,46 @@ function projectRecordToPublishOption(project: ProjectRecord): PublishProjectIte
   };
 }
 
+type BuilderRouteState = {
+  basePath: string;
+  isBuilder: boolean;
+  isMapping: boolean;
+  isSummary: boolean;
+};
+
+function resolveBuilderRoute(pathname: string, activeSttmId?: string | null): BuilderRouteState {
+  const normalizedPath = pathname.replace(/\/+$/, "") || "/";
+  const match = normalizedPath.match(
+    /^\/sttm\/builder\/([^/]+)(?:\/(mapping|validate|summary))?$/,
+  );
+
+  if (!match) {
+    return {
+      basePath: "/sttm/builder/new",
+      isBuilder: false,
+      isMapping: false,
+      isSummary: false,
+    };
+  }
+
+  const routeIdentity = match[1];
+  const routeStep = match[2];
+  const durableRoutesEnabled = process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== "false";
+  const resolvedIdentity =
+    routeIdentity !== "new"
+      ? routeIdentity
+      : durableRoutesEnabled && activeSttmId
+        ? encodeURIComponent(activeSttmId)
+        : "new";
+
+  return {
+    basePath: `/sttm/builder/${resolvedIdentity}`,
+    isBuilder: true,
+    isMapping: routeStep === "mapping" || routeStep === "validate",
+    isSummary: routeStep === "summary",
+  };
+}
+
 export default function AppHeader({
   userName = "Shane Watson",
   role = "Publisher",
@@ -111,10 +151,8 @@ export default function AppHeader({
     activeProjectName,
     activeSttmId,
   } = useAppSelector((state) => state.sttmBuilder);
-  const builderRouteBase =
-    process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== "false" && activeSttmId
-      ? `/sttm/builder/${encodeURIComponent(activeSttmId)}`
-      : "/sttm/builder/new";
+  const builderRoute = resolveBuilderRoute(pathname, activeSttmId);
+  const builderRouteBase = builderRoute.basePath;
   const { resolvedSourceTables, selectedTargetTable, canProceedToMapping } =
     resolveBuilderSelectionState({
       sourceDatabases,
@@ -183,8 +221,8 @@ export default function AppHeader({
     .slice(0, 2)
     .toUpperCase();
 
-  const isMappingPage = pathname === "/sttm/builder/new/mapping";
-  const isSummaryPage = pathname === "/sttm/builder/new/summary";
+  const isMappingPage = builderRoute.isMapping;
+  const isSummaryPage = builderRoute.isSummary;
   const currentAssistantPage: "builder" | "mapping" | "summary" = isSummaryPage
     ? "summary"
     : isMappingPage
@@ -192,8 +230,7 @@ export default function AppHeader({
       : "builder";
   const currentAssistantSurface: "SOURCE_SELECTION" | "MAPPING" =
     currentAssistantPage === "mapping" ? "MAPPING" : "SOURCE_SELECTION";
-  const isSttmBuilderHeader =
-    pathname === "/sttm/builder/new" || isMappingPage || isSummaryPage;
+  const isSttmBuilderHeader = builderRoute.isBuilder;
   const currentStep: 1 | 2 | 3 = isSummaryPage ? 3 : isMappingPage ? 2 : 1;
   const sourceTableCount =
     resolvedSourceTables.length +

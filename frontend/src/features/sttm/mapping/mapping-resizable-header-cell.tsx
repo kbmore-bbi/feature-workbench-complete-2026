@@ -80,15 +80,14 @@ export function MappingResizableHeaderCell({
       padding={padding}
       data-tour={dataTour}
       sx={[
-        sx,
         {
           width,
           minWidth,
           maxWidth: width,
           overflow: 'visible',
-          boxSizing: 'border-box',
           ...mappingColumnDividerSx,
         },
+        ...(Array.isArray(sx) ? sx : sx ? [sx] : []),
       ]}
     >
       <AiaBox

@@ -76,6 +76,7 @@ export const TOUR_TARGETS = {
   sttmSelectedSourceTable: "sttm-selected-source-table",
   sttmClearAllSource: "sttm-clear-all-source",
   sttmClearAllTarget: "sttm-clear-all-target",
+  sttmClearAllDerived: "sttm-clear-all-derived",
 
   // Screen 6 — Add Derived Table modal
   derivedSourceName: "derived-source-name",

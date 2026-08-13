@@ -403,6 +403,7 @@ export type SttmBuilderContextValue = {
   selectAllSources: () => void;
   clearSources: () => void;
   clearTargets: () => void;
+  clearDerivedSources: () => void;
 
   // Actions — AI
   runAutoMap: () => void;

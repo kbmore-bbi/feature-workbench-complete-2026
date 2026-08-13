@@ -3950,10 +3950,6 @@ export const sttmBuilderSlice = createSlice({
       state.sourceGroupBySql = "";
       state.sourceOrderBySql = "";
       state.pendingAiMappingReviews = [];
-      state.derivedSources = state.derivedSources.map((source) => ({
-        ...source,
-        isSelected: false,
-      }));
     },
 
     setSourceFilterConditions: (
@@ -4079,6 +4075,12 @@ export const sttmBuilderSlice = createSlice({
       state.sourceGroupBySql = "";
       state.sourceOrderBySql = "";
       state.pendingAiMappingReviews = [];
+    },
+    clearDerivedSources: (state) => {
+      state.derivedSources = state.derivedSources.map((source) => ({
+        ...source,
+        isSelected: false,
+      }));
     },
     openPendingDerivedSourceDraft: (state) => {
       if (state.pendingDerivedSourceDraft) {
@@ -5462,6 +5464,7 @@ export const {
   updateDerivedSource,
   removeDerivedSource,
   toggleDerivedSource,
+  clearDerivedSources,
   openPendingDerivedSourceDraft,
   acknowledgePendingDerivedSourceDraft,
   dismissPendingDerivedSourceDraft,

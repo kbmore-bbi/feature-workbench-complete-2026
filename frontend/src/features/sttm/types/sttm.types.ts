@@ -335,6 +335,7 @@ export type SttmBuilderContextValue = {
   mappingLoading: boolean;
   autoMapStatusMessage: string | null;
   autoMapProcessingIds: string[];
+  autoMapGroupingEnabled: boolean;
 
   // Chat
   chatMessages: ChatMessage[];
@@ -402,6 +403,7 @@ export type SttmBuilderContextValue = {
   selectAllSources: () => void;
   clearSources: () => void;
   clearTargets: () => void;
+  clearDerivedSources: () => void;
 
   // Actions — AI
   runAutoMap: () => void;

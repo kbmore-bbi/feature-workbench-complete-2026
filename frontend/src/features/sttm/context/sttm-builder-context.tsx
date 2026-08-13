@@ -34,6 +34,7 @@ import {
   updateDerivedSource as updateDerivedSourceAction,
   removeDerivedSource as removeDerivedSourceAction,
   toggleDerivedSource as toggleDerivedSourceAction,
+  clearDerivedSources as clearDerivedSourcesAction,
   openPendingDerivedSourceDraft as openPendingDerivedSourceDraftAction,
   acknowledgePendingDerivedSourceDraft as acknowledgePendingDerivedSourceDraftAction,
   dismissPendingDerivedSourceDraft as dismissPendingDerivedSourceDraftAction,
@@ -1310,6 +1311,7 @@ export function SttmBuilderProvider({
       mappingLoading: state.mappingLoading,
       autoMapStatusMessage: state.autoMapStatusMessage,
       autoMapProcessingIds: state.autoMapProcessingIds,
+      autoMapGroupingEnabled: state.autoMapGroupingEnabled,
 
       // Chat
       chatMessages: state.chatMessages,
@@ -1677,6 +1679,7 @@ export function SttmBuilderProvider({
         dispatch(removeDerivedSourceAction({ id })),
       toggleDerivedSource: (id: string) =>
         dispatch(toggleDerivedSourceAction({ id })),
+      clearDerivedSources: () => dispatch(clearDerivedSourcesAction()),
 
       sourceFilterSql: state.sourceFilterSql,
       sourceFilterGroups: state.sourceFilterGroups,

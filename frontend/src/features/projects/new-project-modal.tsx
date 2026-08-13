@@ -20,7 +20,7 @@ import { createProjectItem } from "./project-utils";
 type NewProjectModalProps = {
   open: boolean;
   onClose: () => void;
-  onCreate: (project: ProjectItem) => void;
+  onCreate: (project: ProjectItem) => void | Promise<void>;
   availableProjects?: ProjectItem[];
 };
 
@@ -64,6 +64,7 @@ export default function NewProjectModal({ open, onClose, onCreate, availableProj
   const [owner, setOwner] = useState("");
   const [linkedProjectIds, setLinkedProjectIds] = useState<string[]>([]);
   const [selectedColorId, setSelectedColorId] = useState(DEFAULT_PROJECT_COLOR_ID);
+  const [isCreating, setIsCreating] = useState(false);
 
   const resetForm = () => {
     setProjectName("");
@@ -96,25 +97,30 @@ export default function NewProjectModal({ open, onClose, onCreate, availableProj
     resetForm();
   };
 
-  const handleCreate = () => {
+  const handleCreate = async () => {
     if (!canCreate) {
       return;
     }
 
-    onCreate(
-      createProjectItem({
-        name: projectName,
-        description,
-        color: selectedColor,
-        domain,
-        intendedOutcome,
-        businessProcess,
-        owner,
-        linkedProjectIds,
-      }),
-    );
-    onClose();
-    resetForm();
+    setIsCreating(true);
+    try {
+      await onCreate(
+        createProjectItem({
+          name: projectName,
+          description,
+          color: selectedColor,
+          domain,
+          intendedOutcome,
+          businessProcess,
+          owner,
+          linkedProjectIds,
+        }),
+      );
+      onClose();
+      resetForm();
+    } finally {
+      setIsCreating(false);
+    }
   };
 
   if (!open) {
@@ -420,7 +426,7 @@ export default function NewProjectModal({ open, onClose, onCreate, availableProj
           </AiaButton>
           <AiaButton
             variant="contained"
-            disabled={!canCreate}
+            disabled={!canCreate || isCreating}
             onClick={handleCreate}
             sx={{
               minWidth: 132,
@@ -430,11 +436,11 @@ export default function NewProjectModal({ open, onClose, onCreate, availableProj
               fontSize: 13,
               fontWeight: 700,
               boxShadow: "none",
-              bgcolor: canCreate ? "#111827" : "#E5E7EB",
-              color: canCreate ? "#FFFFFF" : "#94A3B8",
-              border: canCreate ? "1px solid #111827" : "1px solid #E5E7EB",
+              bgcolor: canCreate && !isCreating ? "#111827" : "#E5E7EB",
+              color: canCreate && !isCreating ? "#FFFFFF" : "#94A3B8",
+              border: canCreate && !isCreating ? "1px solid #111827" : "1px solid #E5E7EB",
               "&:hover": {
-                bgcolor: canCreate ? "#1F2937" : "#E5E7EB",
+                bgcolor: canCreate && !isCreating ? "#1F2937" : "#E5E7EB",
                 boxShadow: "none",
               },
               "&.Mui-disabled": {
@@ -444,7 +450,7 @@ export default function NewProjectModal({ open, onClose, onCreate, availableProj
               },
             }}
           >
-            Create Project
+            {isCreating ? "Creating..." : "Create Project"}
           </AiaButton>
         </AiaBox>
       </AiaBox>

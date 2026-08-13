@@ -1601,7 +1601,8 @@ type SttmBuilderState = {
   autoMapStatusMessage: string | null;
   autoMapProcessingIds: string[];
 
-  // Active STTM context — which saved STTM is currently loaded in the builder.
+  /** When true, mapping grid is sorted and grouped by auto-map confidence bands. */
+  autoMapGroupingEnabled: boolean;
   activeSttmId: string | null;
   activeProjectId: string | null;
   activeSttmName: string | null;
@@ -2147,6 +2148,7 @@ const initialState: SttmBuilderState = {
   pendingAiMappingReviews: [],
   autoMapStatusMessage: null,
   autoMapProcessingIds: [],
+  autoMapGroupingEnabled: false,
 
   activeSttmId: null,
   activeProjectId: null,
@@ -3948,10 +3950,6 @@ export const sttmBuilderSlice = createSlice({
       state.sourceGroupBySql = "";
       state.sourceOrderBySql = "";
       state.pendingAiMappingReviews = [];
-      state.derivedSources = state.derivedSources.map((source) => ({
-        ...source,
-        isSelected: false,
-      }));
     },
 
     setSourceFilterConditions: (
@@ -4078,6 +4076,12 @@ export const sttmBuilderSlice = createSlice({
       state.sourceOrderBySql = "";
       state.pendingAiMappingReviews = [];
     },
+    clearDerivedSources: (state) => {
+      state.derivedSources = state.derivedSources.map((source) => ({
+        ...source,
+        isSelected: false,
+      }));
+    },
     openPendingDerivedSourceDraft: (state) => {
       if (state.pendingDerivedSourceDraft) {
         state.derivedSourceDraftRequested = true;
@@ -4192,6 +4196,7 @@ export const sttmBuilderSlice = createSlice({
       state.chatLoading = false;
       state.autoMapStatusMessage = null;
       state.autoMapProcessingIds = [];
+      state.autoMapGroupingEnabled = false;
     },
 
     resetBuilderForNewMapping: (state) => {
@@ -4250,6 +4255,7 @@ export const sttmBuilderSlice = createSlice({
       state.selectedMappingIds = [];
       state.pendingAiMappingReviews = [];
       state.mappingSuggestions = [];
+      state.autoMapGroupingEnabled = false;
       state.loadState.attributes = "success";
       state.activeSttmId = null;
       state.activeProjectId = null;
@@ -4789,6 +4795,9 @@ export const sttmBuilderSlice = createSlice({
           (id) => !action.payload.completedMappingIds.includes(id),
         );
         applyAutoMapResponseToState(state, action.payload.response);
+        // Enable grouping as soon as auto-map results land, even if the thunk
+        // later rejects during post-processing.
+        state.autoMapGroupingEnabled = true;
         state.autoMapStatusMessage =
           action.payload.processedCount < action.payload.totalCount
             ? `Auto-mapped ${action.payload.processedCount}/${action.payload.totalCount} target columns...`
@@ -4813,11 +4822,17 @@ export const sttmBuilderSlice = createSlice({
         state.mappingLoading = true;
         state.autoMapStatusMessage = "Preparing mapping-ready semantic context.";
         state.autoMapProcessingIds = [];
+        state.autoMapGroupingEnabled = false;
         state.errorState.autoMap = undefined;
       })
       .addCase(runAutoMap.fulfilled, (state, action) => {
         state.mappingLoading = false;
         state.autoMapProcessingIds = [];
+        // Keep grouping on whenever auto-map produced confidence scores, even if
+        // the thunk returned an empty payload after streaming batch updates.
+        state.autoMapGroupingEnabled =
+          Boolean(action.payload)
+          || state.mappings.some((mapping) => typeof mapping.confidenceScore === "number");
         if (!action.payload) return;
         state.autoMapStatusMessage =
           action.payload.autoMappingReview?.headline ??
@@ -4847,6 +4862,10 @@ export const sttmBuilderSlice = createSlice({
         state.mappingLoading = false;
         state.autoMapProcessingIds = [];
         state.autoMapStatusMessage = null;
+        // Partial batch success may already have confidence scores applied.
+        state.autoMapGroupingEnabled = state.mappings.some(
+          (mapping) => typeof mapping.confidenceScore === "number",
+        );
         state.errorState.autoMap =
           (action.payload as string | undefined) ?? "Auto-map failed.";
       });
@@ -5445,6 +5464,7 @@ export const {
   updateDerivedSource,
   removeDerivedSource,
   toggleDerivedSource,
+  clearDerivedSources,
   openPendingDerivedSourceDraft,
   acknowledgePendingDerivedSourceDraft,
   dismissPendingDerivedSourceDraft,

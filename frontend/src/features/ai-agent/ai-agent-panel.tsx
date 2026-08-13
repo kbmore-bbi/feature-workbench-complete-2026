@@ -8,6 +8,7 @@ import {
   CheckRoundedIcon,
   CloseFullscreenIcon,
   CloseRoundedIcon,
+  ContentCopyRoundedIcon,
   HelpOutlineOutlinedIcon,
   KeyboardArrowDownIcon,
   KeyboardArrowRightIcon,
@@ -2627,6 +2628,43 @@ export default function AIAgentPanel({
                     </AiaStack>
                   ) : null}
                 </AiaPaper>
+                {isAssistant && !isWelcome && !message.isStreaming ? (
+                  <AiaStack direction="row" spacing={0.75} sx={{ mt: 0.75, pl: 4.5 }}>
+                    <AiaIconButton
+                      size="small"
+                      onClick={() => {
+                        navigator.clipboard.writeText(message.content);
+                      }}
+                      sx={{ color: "#94a3b8", "&:hover": { color: "#64748b" } }}
+                      title="Copy response"
+                    >
+                      <ContentCopyRoundedIcon sx={{ fontSize: 16 }} />
+                    </AiaIconButton>
+                    <AiaIconButton
+                      size="small"
+                      sx={{ color: "#94a3b8", "&:hover": { color: "#16a34a" } }}
+                      title="This was helpful"
+                    >
+                      <ThumbUpAltOutlinedIcon sx={{ fontSize: 16 }} />
+                    </AiaIconButton>
+                    <AiaIconButton
+                      size="small"
+                      sx={{ color: "#94a3b8", "&:hover": { color: "#dc2626" } }}
+                      title="This wasn't helpful"
+                    >
+                      <ThumbDownAltOutlinedIcon sx={{ fontSize: 16 }} />
+                    </AiaIconButton>
+                    <AiaIconButton
+                      size="small"
+                      onClick={() => sendChatMessage("Can you provide an alternative response?")}
+                      disabled={chatLoading}
+                      sx={{ color: "#94a3b8", "&:hover": { color: "#2563eb" } }}
+                      title="Regenerate response"
+                    >
+                      <BoltIcon sx={{ fontSize: 16 }} />
+                    </AiaIconButton>
+                  </AiaStack>
+                ) : null}
               </AiaStack>
             );
           })

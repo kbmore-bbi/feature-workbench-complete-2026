@@ -23,10 +23,29 @@ import {
   resolveSelectedTargetTable,
 } from "@/features/sttm/shared/sttm-selection-utils";
 
+const HEADER_TEXT_BUTTON_SX = {
+  minWidth: 0,
+  px: 0.75,
+  py: 0.25,
+  fontSize: "var(--aia-caption-font-size)",
+  fontWeight: 600,
+  textTransform: "none",
+  color: "var(--aia-button-color)",
+  backgroundColor: "transparent",
+  boxShadow: "none",
+  "&:hover": {
+    backgroundColor: "color-mix(in srgb, var(--aia-button-color) 6%, transparent)",
+    color: "var(--aia-button-color)",
+    boxShadow: "none",
+  },
+} as const;
+
 export default function SourceTargetPanel({ type }: { type: "source" | "target" | "derived" }) {
   const {
     selectAllSources,
     clearSources,
+    clearTargets,
+    clearDerivedSources,
     fullData,
     drivingTableId,
     addDerivedSource,
@@ -103,12 +122,22 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
     return { dbName, schemaName, tableName: table.tableName };
   }, [fullData, drivingTableId, sources, type]);
 
+  const showClearAll = selectedCount > 0;
+  const clearAllTourTarget =
+    type === "source"
+      ? TOUR_TARGETS.sttmClearAllSource
+      : type === "target"
+        ? TOUR_TARGETS.sttmClearAllTarget
+        : TOUR_TARGETS.sttmClearAllDerived;
+
   const onSelectAll = () => {
     if (type === "source") selectAllSources();
   };
 
   const onClear = () => {
     if (type === "source") clearSources();
+    else if (type === "target") clearTargets();
+    else clearDerivedSources();
   };
 
   const resolveDraggedTableIds = React.useCallback(
@@ -260,55 +289,22 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
             {selectedCount} selected
           </AiaText>
           {type === "source" ? (
-            <>
-              <AiaButton
-                variant="text"
-                size="small"
-                onClick={onSelectAll}
-                sx={{
-                  minWidth: 0,
-                  px: 0.75,
-                  py: 0.25,
-                  fontSize: "var(--aia-caption-font-size)",
-                  fontWeight: 600,
-                  textTransform: "none",
-                  color: "var(--aia-button-color)",
-                  backgroundColor: "transparent",
-                  boxShadow: "none",
-                  "&:hover": {
-                    backgroundColor: "color-mix(in srgb, var(--aia-button-color) 6%, transparent)",
-                    color: "var(--aia-button-color)",
-                    boxShadow: "none",
-                  },
-                }}
-              >
-                Select all
-              </AiaButton>
-              <AiaButton
-                variant="text"
-                size="small"
-                onClick={onClear}
-                sx={{
-                  minWidth: 0,
-                  px: 0.75,
-                  py: 0.25,
-                  fontSize: "var(--aia-caption-font-size)",
-                  fontWeight: 600,
-                  textTransform: "none",
-                  color: "var(--aia-button-color)",
-                  backgroundColor: "transparent",
-                  boxShadow: "none",
-                  "&:hover": {
-                    backgroundColor: "color-mix(in srgb, var(--aia-button-color) 6%, transparent)",
-                    color: "var(--aia-button-color)",
-                    boxShadow: "none",
-                  },
-                }}
-              >
-                Clear all
-              </AiaButton>
-            </>
-          ) : type === "derived" ? (
+            <AiaButton variant="text" size="small" onClick={onSelectAll} sx={HEADER_TEXT_BUTTON_SX}>
+              Select all
+            </AiaButton>
+          ) : null}
+          {showClearAll ? (
+            <AiaButton
+              data-tour={clearAllTourTarget}
+              variant="text"
+              size="small"
+              onClick={onClear}
+              sx={HEADER_TEXT_BUTTON_SX}
+            >
+              Clear All
+            </AiaButton>
+          ) : null}
+          {type === "derived" ? (
             <AiaButton
               data-tour={TOUR_TARGETS.sttmAddDerived}
               size="small"
@@ -320,7 +316,7 @@ export default function SourceTargetPanel({ type }: { type: "source" | "target" 
               customColor="var(--aia-state-success-color)"
               customHoverBackgroundColor="var(--aia-state-success-hover-bg)"
             >
-              Add Derived
+              Create CTE
             </AiaButton>
           ) : null}
         </AiaBox>

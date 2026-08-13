@@ -12,6 +12,7 @@ class ErrorCode(str, Enum):
 
     # --- Validation ---
     VALIDATION_ERROR = "VALIDATION_ERROR"
+    AGENT_PAYLOAD_REQUIRED_CONTEXT_TOO_LARGE = "AGENT_PAYLOAD_REQUIRED_CONTEXT_TOO_LARGE"
 
     # --- Resource ---
     NOT_FOUND = "NOT_FOUND"

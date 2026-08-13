@@ -20,6 +20,7 @@ export const API_ROUTES = {
     tables: '/v1/table-selection/tables',
     attributes: '/v1/table-selection/attributes',
     relationships: '/v1/table-selection/relationships',
+    relationshipReview: '/v1/table-selection/relationships/review',
   },
   derivedSources: {
     list: '/v1/derived-sources',

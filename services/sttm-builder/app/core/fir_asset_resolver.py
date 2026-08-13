@@ -59,7 +59,8 @@ class FIRAssetTableResolver:
         except Exception:
             return "", ""
 
-    def _catalog(self, identifiers: list[str]) -> list[dict[str, Any]]:
+    def _catalog(self, identifiers: list[str] | None = None) -> list[dict[str, Any]]:
+        identifiers = identifiers or []
         semantic: list[dict[str, Any]] = []
         try:
             semantic_rows = self._session.sql(

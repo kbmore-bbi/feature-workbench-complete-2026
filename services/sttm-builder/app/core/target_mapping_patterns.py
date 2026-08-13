@@ -120,7 +120,7 @@ class TargetMappingPatternService:
 
     @staticmethod
     def _quote(value: Any) -> str:
-        return "'" + str(value).replace("'", "''") + "'"
+        return "'" + str(value).replace("\\", "\\\\").replace("'", "''") + "'"
 
     def extract_document_patterns(
         self,

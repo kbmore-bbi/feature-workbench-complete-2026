@@ -977,11 +977,18 @@ export function FilterConditions({
       schema: table?.schema ?? "",
       table: table?.name ?? "",
     });
+    // DERIVED.DERIVED is a canvas identity, not a physical Snowflake object.
+    // Derived SQL is already represented by its physical view or inline CTE.
+    const isSyntheticDerived = (table: TableMeta) =>
+      table.tag === "Derived" ||
+      (table.database ?? "").toUpperCase() === "DERIVED";
     const sourceTables = tables
+      .filter((table) => !isSyntheticDerived(table))
       .map((table) => toTableRef(table))
       .filter((table) => table.database && table.schema && table.table);
+    const drivingTableMeta = drivingTableId ? tableById.get(drivingTableId) : undefined;
     const drivingTable = toTableRef(
-      drivingTableId ? tableById.get(drivingTableId) : undefined,
+      drivingTableMeta && !isSyntheticDerived(drivingTableMeta) ? drivingTableMeta : undefined,
     );
 
     try {

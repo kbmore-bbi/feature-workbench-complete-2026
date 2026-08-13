@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 from typing import Annotated, Any, Literal
 
@@ -12,6 +13,7 @@ from app.api.deps import get_snowflake_client
 from app.auth.dependencies import get_current_principal
 from app.core.config import Settings, get_settings
 from app.core.conversation_memory import ConversationMemoryService
+from app.core.read_cache import invalidate_read_cache, read_through
 from app.core.snowflake import SnowflakeClient
 from app.schema.workspace_context import WorkbenchContextSnapshotV2
 
@@ -599,61 +601,75 @@ async def evaluate_recommendations(
         schema_fqn = (
             f"{snapshot.browsing_context.database}.{snapshot.browsing_context.schema}".upper()
         )
-    memory = ConversationMemoryService(client.session, settings)
-    recommendations = memory.find_fir_recommendations_for_context(
-        selected_tables=selected_tables,
-        target_table=target_fqn,
-        project_id=project_id,
-        sttm_id=snapshot.sttm_id,
-        user_id=user_id,
-        context_key=snapshot.context_key,
-        source_set_hash=snapshot.source_set_hash,
-        derived_set_hash=snapshot.derived_set_hash,
-        milestone=checkpoint,
-        scope_key=snapshot.scope_key,
-        scope_type=snapshot.scope_type,
-        schema_fqn=schema_fqn,
-        candidate_tables=(
-            snapshot.browsing_context.visible_candidate_tables
-            if snapshot.browsing_context
-            else []
-        ),
-        allow_search_fallback=body.include_search_fallback,
-        limit=body.limit,
+    def load_response() -> dict[str, Any]:
+        memory = ConversationMemoryService(client.session, settings)
+        recommendations = memory.find_fir_recommendations_for_context(
+            selected_tables=selected_tables,
+            target_table=target_fqn,
+            project_id=project_id,
+            sttm_id=snapshot.sttm_id,
+            user_id=user_id,
+            context_key=snapshot.context_key,
+            source_set_hash=snapshot.source_set_hash,
+            derived_set_hash=snapshot.derived_set_hash,
+            milestone=checkpoint,
+            scope_key=snapshot.scope_key,
+            scope_type=snapshot.scope_type,
+            schema_fqn=schema_fqn,
+            candidate_tables=(
+                snapshot.browsing_context.visible_candidate_tables
+                if snapshot.browsing_context
+                else []
+            ),
+            allow_search_fallback=body.include_search_fallback,
+            limit=body.limit,
+        )
+        rec_ids = [
+            str(item.get("recommendation_id"))
+            for item in recommendations
+            if item.get("recommendation_id")
+        ]
+        items = _format_recommendations(
+            recommendations,
+            _load_evidence(client, settings, rec_ids) if body.include_evidence else {},
+        )
+        checkpoint_definition = (
+            recommendations[0].get("checkpoint_definition")
+            if recommendations
+            else None
+        ) or _load_checkpoint_definition(client, settings, checkpoint)
+        items, questions = _apply_checkpoint_policy(items, checkpoint_definition, body.limit)
+        return {
+            "checkpoint": checkpoint,
+            "checkpoint_definition": checkpoint_definition,
+            "context_key": snapshot.context_key,
+            "scope_key": snapshot.scope_key,
+            "primary_question": questions[0] if questions else None,
+            "items": items,
+            "total": len(items),
+            "retrieval_mode": items[0].get("retrieval_mode") if items else "none",
+        }
+
+    cache_material = json.dumps(
+        {
+            "user": user_id,
+            "role": principal.snowflake_role,
+            "body": body.model_dump(mode="json"),
+            "checkpoint": checkpoint,
+        },
+        sort_keys=True,
+        default=str,
     )
-    rec_ids = [
-        str(item.get("recommendation_id"))
-        for item in recommendations
-        if item.get("recommendation_id")
-    ]
-    items = _format_recommendations(
-        recommendations,
-        (
-            _load_evidence(client, settings, rec_ids)
-            if body.include_evidence
-            else {}
-        ),
+    cache_key = "recommendations:evaluate:" + hashlib.sha256(cache_material.encode()).hexdigest()
+    return (
+        read_through(
+            cache_key,
+            ttl_seconds=settings.backend_recommendation_cache_seconds,
+            loader=load_response,
+        )
+        if settings.backend_read_cache_v1
+        else load_response()
     )
-    checkpoint_definition = (
-        recommendations[0].get("checkpoint_definition")
-        if recommendations
-        else None
-    ) or _load_checkpoint_definition(client, settings, checkpoint)
-    items, questions = _apply_checkpoint_policy(
-        items,
-        checkpoint_definition,
-        body.limit,
-    )
-    return {
-        "checkpoint": checkpoint,
-        "checkpoint_definition": checkpoint_definition,
-        "context_key": snapshot.context_key,
-        "scope_key": snapshot.scope_key,
-        "primary_question": questions[0] if questions else None,
-        "items": items,
-        "total": len(items),
-        "retrieval_mode": items[0].get("retrieval_mode") if items else "none",
-    }
 
 
 @router.get("/recommendations")
@@ -677,34 +693,47 @@ async def list_recommendations(
         client, settings, project_id=project_id, sttm_id=sttm_id
     ):
         return {"checkpoint_definition": {}, "items": [], "total": 0}
-    memory = ConversationMemoryService(client.session, settings)
-    items = memory.find_fir_recommendations_for_context(
-        selected_tables=[],
-        project_id=project_id,
-        sttm_id=sttm_id,
-        user_id=user_id,
-        context_key=context_key,
-        scope_key=scope_key,
-        milestone=checkpoint,
-        limit=limit,
+    def load_response() -> dict[str, Any]:
+        memory = ConversationMemoryService(client.session, settings)
+        items = memory.find_fir_recommendations_for_context(
+            selected_tables=[],
+            project_id=project_id,
+            sttm_id=sttm_id,
+            user_id=user_id,
+            context_key=context_key,
+            scope_key=scope_key,
+            milestone=checkpoint,
+            limit=limit,
+        )
+        rec_ids = [str(item.get("recommendation_id")) for item in items if item.get("recommendation_id")]
+        formatted = _format_recommendations(items, _load_evidence(client, settings, rec_ids))
+        checkpoint_definition = _load_checkpoint_definition(client, settings, checkpoint)
+        formatted, _ = _apply_checkpoint_policy(
+            formatted,
+            checkpoint_definition,
+            limit,
+            respect_inline_limit=False,
+        )
+        return {
+            "checkpoint_definition": checkpoint_definition,
+            "items": formatted,
+            "total": len(formatted),
+        }
+
+    cache_material = json.dumps(
+        [user_id, principal.snowflake_role, context_key, scope_key, project_id, sttm_id, checkpoint, limit],
+        default=str,
     )
-    rec_ids = [str(item.get("recommendation_id")) for item in items if item.get("recommendation_id")]
-    formatted = _format_recommendations(
-        items,
-        _load_evidence(client, settings, rec_ids),
+    cache_key = "recommendations:list:" + hashlib.sha256(cache_material.encode()).hexdigest()
+    return (
+        read_through(
+            cache_key,
+            ttl_seconds=settings.backend_recommendation_cache_seconds,
+            loader=load_response,
+        )
+        if settings.backend_read_cache_v1
+        else load_response()
     )
-    checkpoint_definition = _load_checkpoint_definition(client, settings, checkpoint)
-    formatted, _ = _apply_checkpoint_policy(
-        formatted,
-        checkpoint_definition,
-        limit,
-        respect_inline_limit=False,
-    )
-    return {
-        "checkpoint_definition": checkpoint_definition,
-        "items": formatted,
-        "total": len(formatted),
-    }
 
 
 @router.get("/recommendations/{recommendation_id}")
@@ -773,6 +802,7 @@ async def record_recommendation_outcome(
         ),
         payload=body.payload,
     )
+    invalidate_read_cache("recommendations:")
     return {"status": "recorded", "recommendation_id": recommendation_id}
 
 
@@ -790,6 +820,7 @@ async def record_recommendation_outcomes_batch(
         {**item.model_dump(mode="python"), "user_id": user_id}
         for item in body.items
     ])
+    invalidate_read_cache("recommendations:")
     return {"status": "recorded", "recorded": len(outcome_ids)}
 
 

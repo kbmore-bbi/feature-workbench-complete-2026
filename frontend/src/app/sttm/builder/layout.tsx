@@ -139,7 +139,11 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
       });
       window.setTimeout(() => {
         setSemanticPrepState(initialSemanticPrepState);
-        router.push('/sttm/builder/new/mapping');
+        const routeBase =
+          process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== 'false' && activeSttmId
+            ? `/sttm/builder/${encodeURIComponent(activeSttmId)}`
+            : '/sttm/builder/new';
+        router.push(`${routeBase}/mapping`);
       }, 250);
     }, 150);
   };

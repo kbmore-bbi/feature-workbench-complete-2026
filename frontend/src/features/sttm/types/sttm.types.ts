@@ -52,8 +52,13 @@ export interface JoinConfig {
   leftTableId?: string;
   rightTableId?: string;
   constraintName?: string;
-  source?: "FOREIGN_KEY" | "USER_DEFINED";
+  source?: "FOREIGN_KEY" | "USER_DEFINED" | "SEMANTIC_VIEW";
   locked?: boolean;
+  /** Candidate semantic join. It must not participate in SQL until approved. */
+  reviewRequired?: boolean;
+  confidence?: number | null;
+  reviewReason?: string | null;
+  evidence?: Record<string, unknown> | null;
   conditions?: {
     leftColumn?: string;
     operator?: string;
@@ -438,6 +443,9 @@ export type SttmBuilderContextValue = {
   setDrivingTable: (tableId: string | null) => void;
   relationships: JoinConfig[];
   setRelationships: (joins: JoinConfig[]) => void;
+  relationshipCandidates: JoinConfig[];
+  approveRelationshipCandidate: (id: string) => void;
+  rejectRelationshipCandidate: (id: string) => void;
   derivedSources: DerivedSource[];
   addDerivedSource: (source: DerivedSource) => void;
   updateDerivedSource: (source: DerivedSource) => void;

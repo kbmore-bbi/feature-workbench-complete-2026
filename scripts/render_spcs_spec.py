@@ -16,6 +16,25 @@ _OPTIONAL_TEMPLATE_DEFAULTS = {
     # empty string. Same-origin SPCS deployments intentionally leave this blank,
     # so preserve the empty value during template substitution.
     "CORS_ALLOWED_ORIGINS": "",
+    "SNOWFLAKE_PREPARATION_WAREHOUSE": "",
+    "SNOWFLAKE_PREPARATION_STATEMENT_TIMEOUT_SECONDS": "300",
+    "PERF_DIAGNOSTICS_V1": "true",
+    "PREPARED_CONTEXT_CACHE_V2": "true",
+    "CONTEXT_SINGLEFLIGHT_V1": "true",
+    "FIR_QUERY_PRUNING_V1": "true",
+    "TARGET_SCOPED_CACHE_INVALIDATION_V1": "true",
+    "RELATIONSHIP_CAPABILITY_CACHE_V1": "true",
+    "RELATIONSHIP_PROC_FAST_GUARDS_V1": "true",
+    "LOW_CONFIDENCE_JOIN_REVIEW_V1": "true",
+    "CONVERSATION_MEMORY_V2": "true",
+    "SNOWFLAKE_SESSION_LEASE_POOL_V1": "false",
+    "LEARNING_PARALLEL_V1": "false",
+    "PREPARE_PARALLEL_V1": "false",
+    "AUTOSAVE_SINGLEFLIGHT_V1": "true",
+    "AUTOSAVE_POSTSAVE_ASYNC_V1": "false",
+    "PREPARATION_WAREHOUSE_ROUTING_V1": "false",
+    "DURABLE_STTM_ROUTE_V1": "true",
+    "AGENT_STREAM_BATCHING_V1": "true",
 }
 
 
@@ -38,6 +57,35 @@ def _validate_spcs_oauth_config(template_path: Path) -> None:
         )
 
 
+def render_template(raw_template: str, environment: dict[str, str]) -> str:
+    if environment.get("COCO_SIDECAR_ENABLED", "false").strip().lower() not in {
+        "1",
+        "true",
+        "yes",
+    }:
+        raw_template = re.sub(
+            r"(?ms)^\s*# BEGIN COCO_SIDECAR\n.*?^\s*# END COCO_SIDECAR\n?",
+            "",
+            raw_template,
+        )
+    else:
+        raw_template = raw_template.replace(
+            "    # BEGIN COCO_SIDECAR\n", ""
+        ).replace("    # END COCO_SIDECAR\n", "")
+    template_values = dict(_OPTIONAL_TEMPLATE_DEFAULTS)
+    template_values.update(environment)
+    rendered = Template(raw_template).safe_substitute(template_values)
+    unresolved = sorted(
+        set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", rendered))
+    )
+    if unresolved:
+        raise SystemExit(
+            "SPCS template contains unresolved environment variables: "
+            + ", ".join(unresolved)
+        )
+    return rendered
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--template", required=True)
@@ -46,16 +94,8 @@ def main() -> int:
 
     template_path = Path(args.template)
     _validate_spcs_oauth_config(template_path)
-    template = Template(template_path.read_text(encoding="utf-8"))
-    template_values = dict(_OPTIONAL_TEMPLATE_DEFAULTS)
-    template_values.update(os.environ)
-    rendered = template.safe_substitute(template_values)
-    unresolved = sorted(set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", rendered)))
-    if unresolved:
-        raise SystemExit(
-            "SPCS template contains unresolved environment variables: "
-            + ", ".join(unresolved)
-        )
+    raw_template = template_path.read_text(encoding="utf-8")
+    rendered = render_template(raw_template, dict(os.environ))
     Path(args.output).write_text(rendered, encoding="utf-8")
     return 0
 

@@ -291,6 +291,9 @@ function buildRelationGraph(
       keys: source.keys ?? [],
       dependency_hash: source.sourceDependencyHash ?? source.upstreamHash ?? null,
       parent_relation_ids: source.parentDerivedSourceIds ?? source.derivedSourceIds ?? [],
+      base_relation_ids: (source.baseSourceTables ?? []).map((table) =>
+        `${table.database}.${table.schema}.${table.table}`.replace(/\.+/g, "."),
+      ),
     })),
   ];
   const nodeIds = new Set(nodes.map((node) => node.relation_id));
@@ -1575,6 +1578,7 @@ type SttmBuilderState = {
 
   drivingTableId: string | null;
   relationships: JoinConfig[];
+  relationshipCandidates: JoinConfig[];
   derivedSources: DerivedSource[];
 
   sourceFilterSql: string;
@@ -2122,6 +2126,7 @@ const initialState: SttmBuilderState = {
 
   drivingTableId: null,
   relationships: [],
+  relationshipCandidates: [],
   derivedSources: [],
 
   sourceFilterSql: "",
@@ -2490,8 +2495,12 @@ export const fetchRelationships = createAsyncThunk(
           right_table: TableRef;
           constraint_name?: string | null;
           join_type?: "INNER" | "LEFT" | "RIGHT" | "FULL";
-          source?: "FOREIGN_KEY" | "USER_DEFINED" | null;
+          source?: "FOREIGN_KEY" | "USER_DEFINED" | "SEMANTIC_VIEW" | null;
           locked?: boolean;
+          review_required?: boolean;
+          confidence?: number | null;
+          review_reason?: string | null;
+          evidence?: Record<string, unknown> | null;
           conditions?: Array<{
             left_column?: string;
             right_column?: string;
@@ -2512,6 +2521,10 @@ export const fetchRelationships = createAsyncThunk(
             constraintName: item.constraint_name ?? undefined,
             source: item.source ?? "FOREIGN_KEY",
             locked: item.locked ?? true,
+            reviewRequired: item.review_required ?? false,
+            confidence: item.confidence ?? null,
+            reviewReason: item.review_reason ?? null,
+            evidence: item.evidence ?? null,
           conditions: (item.conditions ?? [])
               .filter(
                 (condition) =>
@@ -3032,6 +3045,31 @@ export const sendChatMessage = createAsyncThunk(
     const workspaceContextHash = state.workspaceContextHash;
     const threadId = state.agentThreadId;
     const parentMessageId = state.agentParentMessageId;
+    const streamBatchingEnabled = process.env.NEXT_PUBLIC_AGENT_STREAM_BATCHING_V1 !== "false";
+    let answerRenderBuffer = "";
+    let sqlRenderBuffer = "";
+    let lastRenderFlush = Date.now();
+    const flushRenderBuffers = () => {
+      if (answerRenderBuffer) {
+        dispatch(assistantStreamDelta({ messageId, text: answerRenderBuffer }));
+        answerRenderBuffer = "";
+      }
+      if (sqlRenderBuffer) {
+        dispatch(assistantStreamSqlDelta({ messageId, text: sqlRenderBuffer }));
+        sqlRenderBuffer = "";
+      }
+      lastRenderFlush = Date.now();
+    };
+    const queueRenderDelta = (kind: "answer" | "sql", text: string) => {
+      if (!streamBatchingEnabled) {
+        if (kind === "answer") dispatch(assistantStreamDelta({ messageId, text }));
+        else dispatch(assistantStreamSqlDelta({ messageId, text }));
+        return;
+      }
+      if (kind === "answer") answerRenderBuffer += text;
+      else sqlRenderBuffer += text;
+      if (Date.now() - lastRenderFlush >= 50) flushRenderBuffers();
+    };
     try {
       const pushStatus = (
         text: string,
@@ -3271,7 +3309,7 @@ export const sendChatMessage = createAsyncThunk(
         ) {
           const visible = visibleAnswerDelta(event.data.text);
           if (visible) {
-            dispatch(assistantStreamDelta({ messageId, text: visible }));
+            queueRenderDelta("answer", visible);
           }
           continue;
         }
@@ -3279,7 +3317,7 @@ export const sendChatMessage = createAsyncThunk(
           event.event === "response.sql.delta" &&
           typeof event.data.text === "string"
         ) {
-          dispatch(assistantStreamSqlDelta({ messageId, text: event.data.text }));
+          queueRenderDelta("sql", event.data.text);
           continue;
         }
         if (
@@ -3295,6 +3333,7 @@ export const sendChatMessage = createAsyncThunk(
           continue;
         }
         if (event.event === "error" || event.event === "response.failed") {
+          flushRenderBuffers();
           const nested = "error" in event.data ? event.data.error : null;
           throw new Error(
             event.data.message ||
@@ -3304,9 +3343,11 @@ export const sendChatMessage = createAsyncThunk(
           );
         }
         if (event.event === "final" || event.event === "response.completed") {
+          flushRenderBuffers();
           response = event.data as AssistantEnvelopeResponse;
         }
       }
+      flushRenderBuffers();
       if (!response) {
         throw new Error("The assistant stream ended without a final response.");
       }
@@ -3323,6 +3364,7 @@ export const sendChatMessage = createAsyncThunk(
         messageId,
       };
     } catch (err) {
+      flushRenderBuffers();
       const errorMessage = getErrorMessage(
         err,
         "I could not reach the assistant just now. Please try again."
@@ -3525,12 +3567,16 @@ export const respondToAssistantSignal = createAsyncThunk(
 export const openSttmFromBackend = createAsyncThunk(
   'sttmBuilder/openSttmFromBackend',
   async (
-    { sttmId, projectId }: { sttmId: string; projectId: string },
+    { sttmId, projectId }: { sttmId: string; projectId?: string },
     { rejectWithValue },
   ) => {
     try {
       const detail = await getSttm(sttmId);
-      return { sttmId, projectId, detail };
+      return {
+        sttmId,
+        projectId: projectId || String(detail.project?.project_id ?? detail.sttm.project_id ?? ""),
+        detail,
+      };
     } catch (err) {
       return rejectWithValue(getErrorMessage(err, 'Failed to load STTM from Snowflake.'));
     }
@@ -3964,6 +4010,27 @@ export const sttmBuilderSlice = createSlice({
       state.relationships = action.payload.joins;
       state.sourceQuerySql = "";
       state.pendingAiMappingReviews = [];
+    },
+
+    approveRelationshipCandidate: (state, action: PayloadAction<{ id: string }>) => {
+      const candidate = state.relationshipCandidates.find((item) => item.id === action.payload.id);
+      if (!candidate) return;
+      state.relationshipCandidates = state.relationshipCandidates.filter(
+        (item) => item.id !== action.payload.id,
+      );
+      state.relationships.push({
+        ...candidate,
+        reviewRequired: false,
+        locked: false,
+        source: "USER_DEFINED",
+      });
+      state.sourceQuerySql = "";
+    },
+
+    rejectRelationshipCandidate: (state, action: PayloadAction<{ id: string }>) => {
+      state.relationshipCandidates = state.relationshipCandidates.filter(
+        (item) => item.id !== action.payload.id,
+      );
     },
 
     addDerivedSource: (state, action: PayloadAction<DerivedSource>) => {
@@ -4662,8 +4729,10 @@ export const sttmBuilderSlice = createSlice({
               .flatMap((source) => [source.id, `DERIVED.${source.sourceName}`]),
           ].map((relationId) => relationId.toUpperCase()),
         );
+        const activePayload = action.payload.filter((item) => !item.reviewRequired);
+        const reviewPayload = action.payload.filter((item) => item.reviewRequired);
         const merged = new Map<string, JoinConfig>();
-        for (const relationship of [...state.relationships, ...action.payload].filter(
+        for (const relationship of [...state.relationships, ...activePayload].filter(
           (item) =>
             Boolean(item.leftTableId) &&
             Boolean(item.rightTableId) &&
@@ -4685,6 +4754,13 @@ export const sttmBuilderSlice = createSlice({
           }
         }
         state.relationships = [...merged.values()];
+        state.relationshipCandidates = reviewPayload.filter(
+          (item) =>
+            Boolean(item.leftTableId) &&
+            Boolean(item.rightTableId) &&
+            selectedTableIds.has(String(item.leftTableId).toUpperCase()) &&
+            selectedTableIds.has(String(item.rightTableId).toUpperCase()),
+        );
       })
       .addCase(fetchRelationships.rejected, (state, action) => {
         if (state.relationshipRequestId !== action.meta.requestId) return;
@@ -5332,11 +5408,15 @@ export const sttmBuilderSlice = createSlice({
         // 'summary' → summary step, 'mapping' → mapping step, anything else (incl.
         // 'builder' or absent snapshot) → source/target selection step.
         const page = typeof snapshot?.page === 'string' ? snapshot.page : '';
+        const durableRouteEnabled = process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== "false";
+        const routeBase = durableRouteEnabled
+          ? `/sttm/builder/${encodeURIComponent(sttmId)}`
+          : "/sttm/builder/new";
         const targetPage =
-          page === 'summary' ? '/sttm/builder/new/summary' :
+          page === 'summary' ? `${routeBase}/summary` :
           page === 'mapping' || state.mappings.length > 0
-            ? '/sttm/builder/new/mapping'
-            : '/sttm/builder/new';
+            ? `${routeBase}/mapping`
+            : routeBase;
 
         state.openSttmStatus = 'success';
         state.openSttmTargetPage = targetPage;
@@ -5375,6 +5455,8 @@ export const {
   clearTargets,
   setDrivingTable,
   setRelationships,
+  approveRelationshipCandidate,
+  rejectRelationshipCandidate,
   setSourceFilterConditions,
   addDerivedSource,
   updateDerivedSource,

@@ -21,6 +21,7 @@ from fastapi import (
 from app.api.deps import get_semantic_context_service, get_snowflake_client
 from app.core.config import Settings, get_settings
 from app.core.bundle_curation import BundleCurationService
+from app.core.cortex_completion import CortexCompletionUnavailable, complete_text
 from app.core.fir_document_ingestion import (
     enqueue_fir_document_event,
     merge_table_hints,
@@ -734,16 +735,10 @@ def explain_sql_upload(
         + json.dumps(compact_evidence, default=str)
     )
     try:
-        completion_rows = client.session.sql(
-            """
-            SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS RESPONSE
-            """,
-            [settings.fir_upload_explanation_model, prompt],
-        ).collect()
-        response = (
-            completion_rows[0].as_dict(recursive=True).get("RESPONSE")
-            if completion_rows and hasattr(completion_rows[0], "as_dict")
-            else completion_rows[0][0] if completion_rows else None
+        response = complete_text(
+            client.session,
+            model=settings.fir_upload_explanation_model,
+            prompt=prompt,
         )
         parsed = _parse_llm_json(response)
         if parsed:
@@ -758,6 +753,12 @@ def explain_sql_upload(
             parsed["source"] = "small_model"
             parsed["model"] = settings.fir_upload_explanation_model
             return parsed
+    except CortexCompletionUnavailable as exc:
+        logger.warning(
+            "Small-model SQL explanation unavailable for asset %s: %s",
+            asset_id,
+            exc,
+        )
     except Exception:
         logger.exception("Small-model SQL explanation failed for asset %s", asset_id)
     fallback["warning"] = (

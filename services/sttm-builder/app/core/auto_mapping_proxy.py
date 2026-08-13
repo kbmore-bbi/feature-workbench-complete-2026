@@ -13,6 +13,7 @@ import httpx
 from fastapi import HTTPException, Request
 
 from app.auth.models import AppPersona
+from app.core.agent_payload_budget import budget_agent_payload
 from app.core.config import Settings
 from app.core.exceptions import SnowflakeAgentError
 from app.core.snowflake import SnowflakeClient
@@ -977,8 +978,15 @@ class AutoMappingProxyClient:
                     )
                 )
 
-        merged_result = SourceMappingResult(mappings=merged_mappings)
-        review_message, mapping_review = self._build_mapping_review(merged_mappings)
+        ordered_mappings: dict[str, AttributeMapping] = {}
+        for attribute in attributes:
+            target = str(attribute.target_attribute)
+            if target in merged_mappings:
+                ordered_mappings[target] = merged_mappings[target]
+        for target, mapping in merged_mappings.items():
+            ordered_mappings.setdefault(target, mapping)
+        merged_result = SourceMappingResult(mappings=ordered_mappings)
+        review_message, mapping_review = self._build_mapping_review(ordered_mappings)
         merged_data = first.data.model_copy(
             update={
                 "result": merged_result,
@@ -1047,27 +1055,55 @@ class AutoMappingProxyClient:
         ordered = sorted(attributes, key=rank)
         batches: list[list[Any]] = []
         current: list[Any] = []
-        current_chars = 0
         current_complexity = 0
         for attribute in ordered:
-            complexity, payload_chars, _target = rank(attribute)
+            complexity, _payload_chars, _target = rank(attribute)
             max_items = min(self._batch_size, 6 if complexity >= 3 else 16)
-            token_budget_chars = 24000 if complexity >= 3 else 48000
+            candidate = [*current, attribute]
+            candidate_req = req.model_copy(
+                update={"data": req.data.model_copy(update={"attributes": candidate})}
+            )
+            candidate_fits = True
+            try:
+                _budgeted, diagnostics = self._budget_batch_request(candidate_req)
+                candidate_fits = (
+                    diagnostics["final_chars"] <= self._settings.agent_outbound_message_max_chars
+                    and diagnostics["final_bytes"] <= self._settings.agent_outbound_message_max_bytes
+                )
+            except Exception:
+                candidate_fits = False
             must_flush = bool(current) and (
                 len(current) >= max_items
-                or current_chars + payload_chars > token_budget_chars
+                or not candidate_fits
                 or (current_complexity < 3 <= complexity)
             )
             if must_flush:
                 batches.append(current)
                 current = []
-                current_chars = 0
             current.append(attribute)
-            current_chars += payload_chars
             current_complexity = complexity
+            if len(current) == 1:
+                single_req = req.model_copy(
+                    update={"data": req.data.model_copy(update={"attributes": current})}
+                )
+                self._budget_batch_request(single_req)
         if current:
             batches.append(current)
         return batches
+
+    def _budget_batch_request(
+        self,
+        req: STTMBuilderEnvelopeRequest,
+    ) -> tuple[STTMBuilderEnvelopeRequest, dict[str, Any]]:
+        raw = req.model_dump(mode="json", exclude_none=True)
+        result = budget_agent_payload(
+            raw,
+            max_chars=self._settings.agent_outbound_message_max_chars,
+            max_bytes=self._settings.agent_outbound_message_max_bytes,
+            enabled=self._settings.auto_mapping_payload_budget_v1,
+        )
+        budgeted = STTMBuilderEnvelopeRequest.model_validate(result.payload)
+        return budgeted, result.diagnostics
 
     @staticmethod
     def _exact_precedent(req: STTMBuilderEnvelopeRequest) -> Any | None:
@@ -1239,7 +1275,18 @@ class AutoMappingProxyClient:
         headers: dict[str, str],
         batch_index: int,
     ) -> STTMBuilderResponse:
-        payload = req.model_dump(mode="json")
+        req, budget_diagnostics = self._budget_batch_request(req)
+        payload = req.model_dump(mode="json", exclude_none=True)
+        logger.info(
+            "Auto-map batch payload request_id=%s batch=%s original_chars=%s "
+            "final_chars=%s final_bytes=%s compacted=%s",
+            req.request_id,
+            batch_index + 1,
+            budget_diagnostics["original_chars"],
+            budget_diagnostics["final_chars"],
+            budget_diagnostics["final_bytes"],
+            budget_diagnostics["compacted"],
+        )
         last_error: Exception | None = None
         if self._base_url == "inprocess":
             # Local/integration compatibility adapter: exercise the private worker

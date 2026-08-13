@@ -7,8 +7,12 @@ import { SummaryWorkspace } from "@/features/sttm/summary/summary-workspace";
 
 export default function SummaryPage() {
   const router = useRouter();
-  const { sources, targets, derivedSources, mappings, loadState, targetAttributeGroup } =
+  const { sources, targets, derivedSources, mappings, loadState, targetAttributeGroup, activeSttmId } =
     useSttmBuilderContext();
+  const routeBase =
+    process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== "false" && activeSttmId
+      ? `/sttm/builder/${encodeURIComponent(activeSttmId)}`
+      : "/sttm/builder/new";
 
   const hasSelectedInputs =
     sources.some((table) => table.isSelected) || derivedSources.some((source) => source.isSelected);
@@ -17,7 +21,7 @@ export default function SummaryPage() {
 
   useEffect(() => {
     if (!hasSelectedInputs || !hasSelectedTarget) {
-      router.replace("/sttm/builder/new");
+      router.replace(routeBase);
       return;
     }
 
@@ -26,7 +30,7 @@ export default function SummaryPage() {
     }
 
     if (!hasTargetColumns || mappings.length === 0) {
-      router.replace("/sttm/builder/new/mapping");
+      router.replace(`${routeBase}/mapping`);
     }
   }, [
     hasSelectedInputs,
@@ -35,6 +39,7 @@ export default function SummaryPage() {
     loadState.attributes,
     mappings.length,
     router,
+    routeBase,
   ]);
 
   return (

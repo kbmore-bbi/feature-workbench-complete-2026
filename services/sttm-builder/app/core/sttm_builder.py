@@ -15,6 +15,11 @@ from pydantic import ValidationError
 from snowflake.snowpark import Session
 
 from app.core.config import Settings
+from app.core.agent_payload_budget import (
+    AgentPayloadBudgetError,
+    budget_agent_payload,
+)
+from app.core.performance import increment, observe
 from app.core.agent_execution_context import attach_agent_execution_context
 from app.core.conversation_memory import ConversationMemoryService
 from app.core.conversation_continuity import (
@@ -351,26 +356,57 @@ class STTMBuilderService:
                 parent_message_id=parent_message_id_to_use,
             )
         except SnowflakeAgentError as exc:
-            if not self._should_retry_without_thread(exc, thread_id_to_use):
+            if (
+                self._settings.agent_oversize_retry_v1
+                and self._is_agent_oversize_error(exc)
+            ):
+                emergency_text = self._build_agent_payload(req, emergency=True)
+                if emergency_text == user_text:
+                    raise AgentPayloadBudgetError(
+                        "AGENT_PAYLOAD_REQUIRED_CONTEXT_TOO_LARGE: Cortex rejected "
+                        "the already-compacted mandatory request context"
+                    ) from exc
+                increment("agent.payload.oversize_retry")
+                logger.warning(
+                    "Retrying Cortex Agent once with emergency payload compaction: "
+                    "request_id=%s original_chars=%s retry_chars=%s",
+                    req.request_id,
+                    len(user_text),
+                    len(emergency_text),
+                )
+                continuity = self._prepare_conversation_continuity(
+                    req,
+                    emergency_text,
+                    force_rollover_reason="remote_payload_limit",
+                )
+                messages = self._messages_with_continuity(emergency_text, continuity)
+                raw_text, thread_id, raw_payload = self._agent.run_detailed(
+                    messages,
+                    agent=self._resolved_agent_name(req),
+                    thread_id=None,
+                    parent_message_id=None,
+                )
+            elif not self._should_retry_without_thread(exc, thread_id_to_use):
                 raise
-            logger.warning(
-                "Checkpointing logical conversation after expired Cortex thread: "
-                "request_id=%s thread_id=%s",
-                req.request_id,
-                thread_id_to_use,
-            )
-            continuity = self._prepare_conversation_continuity(
-                req,
-                user_text,
-                force_rollover_reason="expired_cortex_thread",
-            )
-            messages = self._messages_with_continuity(user_text, continuity)
-            raw_text, thread_id, raw_payload = self._agent.run_detailed(
-                messages,
-                agent=self._resolved_agent_name(req),
-                thread_id=None,
-                parent_message_id=None,
-            )
+            else:
+                logger.warning(
+                    "Checkpointing logical conversation after expired Cortex thread: "
+                    "request_id=%s thread_id=%s",
+                    req.request_id,
+                    thread_id_to_use,
+                )
+                continuity = self._prepare_conversation_continuity(
+                    req,
+                    user_text,
+                    force_rollover_reason="expired_cortex_thread",
+                )
+                messages = self._messages_with_continuity(user_text, continuity)
+                raw_text, thread_id, raw_payload = self._agent.run_detailed(
+                    messages,
+                    agent=self._resolved_agent_name(req),
+                    thread_id=None,
+                    parent_message_id=None,
+                )
         agent_ms = (time.perf_counter() - agent_started_at) * 1000
         parent_message_id = _extract_assistant_message_id(raw_payload)
         response_thread_id = local_thread_id or thread_id
@@ -1613,19 +1649,37 @@ class STTMBuilderService:
                         if response_payload is not None:
                             final_payload = response_payload
                 except SnowflakeAgentError as exc:
-                    if not self._should_retry_without_thread(exc, thread_id_to_use):
+                    rollover_reason = "expired_cortex_thread"
+                    retry_text = user_text
+                    if (
+                        self._settings.agent_oversize_retry_v1
+                        and self._is_agent_oversize_error(exc)
+                    ):
+                        retry_text = self._build_agent_payload(
+                            req_with_context, emergency=True
+                        )
+                        if retry_text == user_text:
+                            raise AgentPayloadBudgetError(
+                                "AGENT_PAYLOAD_REQUIRED_CONTEXT_TOO_LARGE: Cortex "
+                                "rejected the already-compacted mandatory request context"
+                            ) from exc
+                        rollover_reason = "remote_payload_limit"
+                        increment("agent.payload.oversize_stream_retry")
+                    elif not self._should_retry_without_thread(exc, thread_id_to_use):
                         raise
                     logger.warning(
-                        "Retrying Cortex Agent stream without thread after HTTP 400: request_id=%s thread_id=%s",
+                        "Retrying Cortex Agent stream without thread: request_id=%s "
+                        "thread_id=%s reason=%s",
                         req_with_context.request_id,
                         thread_id_to_use,
+                        rollover_reason,
                     )
                     continuity = self._prepare_conversation_continuity(
                         req_with_context,
-                        user_text,
-                        force_rollover_reason="expired_cortex_thread",
+                        retry_text,
+                        force_rollover_reason=rollover_reason,
                     )
-                    messages = self._messages_with_continuity(user_text, continuity)
+                    messages = self._messages_with_continuity(retry_text, continuity)
                     resolved_thread_id = None
                     resolved_parent_message_id = None
                     text_parts = []
@@ -1640,10 +1694,10 @@ class STTMBuilderService:
                                 else req_with_context.context.logical_conversation_id
                             ),
                             "segment": continuity.segment_number if continuity else None,
-                            "reason": "expired_cortex_thread",
+                            "reason": rollover_reason,
                             "message": (
-                                "The prior Cortex thread expired; the logical "
-                                "conversation was checkpointed and continued."
+                                "The Cortex conversation was checkpointed and "
+                                "continued with safe request context."
                             ),
                         },
                     )
@@ -2654,7 +2708,20 @@ class STTMBuilderService:
         if not thread_id:
             return False
         message = str(exc)
-        return "Cortex Agent returned HTTP 400" in message
+        return (
+            "Cortex Agent returned HTTP 400" in message
+            and not STTMBuilderService._is_agent_oversize_error(exc)
+        )
+
+    @staticmethod
+    def _is_agent_oversize_error(exc: SnowflakeAgentError) -> bool:
+        message = str(exc).lower()
+        return (
+            "token limit" in message
+            or "exceeds token" in message
+            or "message length" in message
+            or "user messages (len" in message
+        )
 
     @staticmethod
     def _semantic_refresh_status_message(semantic_refresh: Any) -> str:
@@ -3438,7 +3505,7 @@ class STTMBuilderService:
         ]
 
     @classmethod
-    def _build_agent_payload(cls, req: STTMBuilderEnvelopeRequest) -> str:
+    def _build_agent_payload_unbounded(cls, req: STTMBuilderEnvelopeRequest) -> str:
         payload = STTMAgentRequestEnvelope.from_builder_request(req)
         payload_dict = payload.model_dump(mode="json", exclude_none=True)
         context = payload_dict.get("context")
@@ -3486,6 +3553,49 @@ class STTMBuilderService:
             )
         compact_payload = _prune_empty(payload_dict)
         return json.dumps(compact_payload, separators=(",", ":"))
+
+    def _build_agent_payload(
+        self,
+        req: STTMBuilderEnvelopeRequest,
+        *,
+        emergency: bool = False,
+    ) -> str:
+        raw_text = self._build_agent_payload_unbounded(req)
+        raw_payload = json.loads(raw_text)
+        started = time.perf_counter()
+        result = budget_agent_payload(
+            raw_payload,
+            max_chars=self._settings.agent_outbound_message_max_chars,
+            max_bytes=self._settings.agent_outbound_message_max_bytes,
+            enabled=self._settings.agent_payload_budget_v1,
+            emergency=emergency,
+        )
+        diagnostics = result.diagnostics
+        observe("agent.payload.original_chars", diagnostics["original_chars"])
+        observe("agent.payload.final_chars", diagnostics["final_chars"])
+        observe("agent.payload.budget_ms", (time.perf_counter() - started) * 1000)
+        increment(
+            "agent.payload.compacted"
+            if diagnostics["compacted"]
+            else "agent.payload.under_budget"
+        )
+        if diagnostics["emergency_compaction"]:
+            increment("agent.payload.emergency_compaction")
+        logger.info(
+            "Agent payload budget request_id=%s original_chars=%s final_chars=%s "
+            "original_bytes=%s final_bytes=%s compacted=%s emergency=%s "
+            "artifact_bodies_removed=%s largest_sections=%s",
+            req.request_id,
+            diagnostics["original_chars"],
+            diagnostics["final_chars"],
+            diagnostics["original_bytes"],
+            diagnostics["final_bytes"],
+            diagnostics["compacted"],
+            diagnostics["emergency_compaction"],
+            diagnostics["artifact_bodies_removed"],
+            diagnostics["largest_context_sections"],
+        )
+        return result.text
 
     @classmethod
     def _precedent_selected_columns(

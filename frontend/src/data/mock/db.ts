@@ -218,7 +218,7 @@ type RelationshipItem = {
   right_table: TableRef;
   join_type?: "INNER" | "LEFT" | "RIGHT" | "FULL";
   constraint_name?: string | null;
-  source?: "FOREIGN_KEY" | "USER_DEFINED" | null;
+  source?: "FOREIGN_KEY" | "USER_DEFINED" | "SEMANTIC_VIEW" | null;
   locked?: boolean;
   conditions?: Array<{
     left_column: string;

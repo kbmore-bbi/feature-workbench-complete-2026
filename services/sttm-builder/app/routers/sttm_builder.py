@@ -23,6 +23,7 @@ from app.guardrails.contracts.decisions import GovernanceDecision
 from app.guardrails.runtime.preflight import PreflightGuard
 from app.schema.contracts import ApiResponseEnvelope, build_response_envelope, resolve_request_id
 from app.schema.workbench import WorkbenchInfoResponse
+from app.schema.workspace_context import WorkbenchContextSnapshotV1
 from app.schema.sttm_builder import (
     STTMBuilderEnvelopeRequest,
     STTMBuilderRequest,
@@ -50,11 +51,13 @@ def _hydrate_prepared_workspace(
         and body.context.workspace_context_hash != prepared.workspace_context_hash
     ):
         return body
+    merged_workspace = merge_workspace_overlay(
+        hydrated["workspace"],
+        body.context.workspace_context,
+    )
+    typed_workspace = WorkbenchContextSnapshotV1.model_validate(merged_workspace)
     updates = {
-        "workspace_context": merge_workspace_overlay(
-            hydrated["workspace"],
-            body.context.workspace_context,
-        ),
+        "workspace_context": typed_workspace,
         "semantic_bundle_id": prepared.semantic_bundle_id,
         "semantic_bundle_hash": prepared.semantic_bundle_hash,
         "learning_context_id": prepared.learning_context_id,

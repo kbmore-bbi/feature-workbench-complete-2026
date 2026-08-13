@@ -20,6 +20,9 @@ dependencies = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+filterwarnings = [
+    "error:.*PydanticSerializationUnexpectedValue.*",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]

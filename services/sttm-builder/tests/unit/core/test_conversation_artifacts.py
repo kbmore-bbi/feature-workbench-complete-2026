@@ -22,8 +22,11 @@ class _Query:
 class _Files:
     def __init__(self) -> None:
         self.puts: list[tuple[str, str]] = []
+        self.fail_put = False
 
     def put(self, source: str, destination: str, **_kwargs):
+        if self.fail_put:
+            raise RuntimeError("stage is unavailable")
         assert source.startswith("file://")
         assert Path(source.removeprefix("file://")).exists()
         self.puts.append((source, destination))
@@ -40,6 +43,7 @@ class _Session:
         self.last_artifact_id: str | None = None
         self.artifact_row: dict | None = None
         self.authorized_fingerprint = "owner-1"
+        self.last_insert_sql = ""
 
     def sql(self, sql: str) -> _Query:
         return _Query(self, sql)
@@ -59,11 +63,18 @@ class _Session:
             assert match
             self.last_artifact_id = match.group(1)
             self.insert_count += 1
+            self.last_insert_sql = normalized
             return []
         return []
 
 
-def _service(session: _Session, *, inline_limit: int = 32768) -> ConversationMemoryService:
+def _service(
+    session: _Session,
+    *,
+    inline_limit: int = 32768,
+    caller_runtime: bool = False,
+    fallback_limit: int = 1048576,
+) -> ConversationMemoryService:
     settings = Settings(
         _env_file=None,
         snowflake_database="DB",
@@ -71,6 +82,9 @@ def _service(session: _Session, *, inline_limit: int = 32768) -> ConversationMem
         snowflake_agent_artifacts_table="TBL_AGENT_ARTIFACTS",
         snowflake_agent_artifact_stage="DB.SCHEMA.AI_WORKBENCH_ARTIFACTS",
         agent_inline_artifact_limit_bytes=inline_limit,
+        agent_caller_inline_fallback_limit_bytes=fallback_limit,
+        auth_mode="custom_oauth" if caller_runtime else "ingress_headers",
+        spcs_execute_as_caller_enabled=caller_runtime,
     )
     service = ConversationMemoryService(session, settings)
     service.ensure_storage_exists = lambda: None  # type: ignore[method-assign]
@@ -128,6 +142,29 @@ def test_large_artifact_is_compressed_to_content_addressed_stage() -> None:
     assert len(session.file.puts) == 1
     _source, destination = session.file.puts[0]
     assert destination.startswith('@"DB"."SCHEMA"."AI_WORKBENCH_ARTIFACTS"/sha256/')
+
+
+def test_caller_runtime_keeps_bounded_artifact_inline_without_stage_retry() -> None:
+    session = _Session()
+    service = _service(session, inline_limit=32, caller_runtime=True)
+
+    _record(service, {"sql": "SELECT " + ("x" * 2000)})
+
+    assert session.file.puts == []
+    assert "stage_upload_disabled_for_caller_rights_runtime" not in session.last_insert_sql
+    assert "SELECT" in session.last_insert_sql
+
+
+def test_stage_failure_falls_back_to_metadata_for_oversized_artifact() -> None:
+    session = _Session()
+    session.file.fail_put = True
+    service = _service(session, inline_limit=32, fallback_limit=64)
+
+    _record(service, {"sql": "SELECT " + ("x" * 2000)})
+
+    assert session.insert_count == 1
+    assert "metadata_only" in session.last_insert_sql
+    assert "stage_upload_failed" in session.last_insert_sql
 
 
 def test_artifact_hydration_requires_owner_and_supports_bounded_section() -> None:

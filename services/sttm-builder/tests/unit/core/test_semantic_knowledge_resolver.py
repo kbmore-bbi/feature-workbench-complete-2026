@@ -56,7 +56,7 @@ def test_relationships_are_resolved_for_all_tables_in_one_query() -> None:
     )
 
 
-def test_unconfirmed_and_medium_registry_relationships_are_not_auto_applied() -> None:
+def test_unconfirmed_and_medium_registry_relationships_require_review() -> None:
     settings = MagicMock()
     settings.resolved_semantic_views_table = "REGISTRY.DB.LATEST_TABLE_REGISTRY_V"
     settings.qualify_metadata_object_name.return_value = "APP.META.TBL_SEMANTIC_VIEW_VERSIONS"
@@ -108,7 +108,10 @@ def test_unconfirmed_and_medium_registry_relationships_are_not_auto_applied() ->
         ],
     )
 
-    assert result == {}
+    assert result["DB.CRM.CONTACT"]["outgoing"] == []
+    candidates = result["DB.CRM.CONTACT"]["review_outgoing"]
+    assert len(candidates) == 2
+    assert all(item.get("review_reason") for item in candidates)
 
 
 def test_high_confidence_registry_relationship_is_auto_applied() -> None:
@@ -185,7 +188,7 @@ relationships:
     assert incoming["table"] == "CONTACT"
 
 
-def test_flagged_native_yaml_relationships_are_not_auto_applied() -> None:
+def test_flagged_native_yaml_relationships_require_review() -> None:
     settings = MagicMock()
     settings.resolved_semantic_views_table = "REGISTRY.DB.LATEST_TABLE_REGISTRY_V"
     settings.resolved_semantic_native_views_table = "APP.META.SEM_NATIVE_VIEWS"
@@ -232,4 +235,7 @@ relationships:
         ],
     )
 
-    assert result == {}
+    assert result["DB.CRM.CONTACT"]["outgoing"] == []
+    candidates = result["DB.CRM.CONTACT"]["review_outgoing"]
+    assert len(candidates) == 1
+    assert candidates[0]["review_reason"]

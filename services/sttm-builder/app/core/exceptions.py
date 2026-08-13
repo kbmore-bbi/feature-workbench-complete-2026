@@ -114,6 +114,12 @@ class AppValidationError(AppError):
     status_code = 422
 
 
+class AgentPayloadRequiredContextTooLargeError(AppValidationError):
+    """The mandatory model-facing request cannot fit the governed payload limit."""
+
+    code = ErrorCode.AGENT_PAYLOAD_REQUIRED_CONTEXT_TOO_LARGE
+
+
 class SemanticRelationshipInvalidError(AppValidationError):
     """A selected join cannot be represented safely in Cortex Analyst."""
 

@@ -1,3 +1,4 @@
+import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -33,7 +34,12 @@ def prepare_workspace_context(
     ],
 ) -> ApiResponseEnvelope[PreparedWorkspaceContextResponse]:
     payload = body if isinstance(body, PreparedWorkspaceContextRequest) else body.data
+    started = time.perf_counter()
     result = service.prepare(payload)
+    request.state.workbench_timings_ms["prepared_context"] = (
+        time.perf_counter() - started
+    ) * 1000
+    request.state.workbench_timings_ms["cache_hit"] = result.cache_status
     return build_response_envelope(
         operation="workbench.context.prepare",
         request=request,

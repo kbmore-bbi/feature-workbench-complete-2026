@@ -4,7 +4,7 @@
 -- Called by other agents to get FIR recommendations for learning_context.
 -- ============================================================
 
-CREATE OR REPLACE PROCEDURE __STTM_METADATA_NAMESPACE__.SP_FIR_GET_AGENT_RECOMMENDATIONS(
+CREATE OR REPLACE PROCEDURE __STTM_METADATA_NAMESPACE__.SP_FIR_GET_AGENT_RECOMMENDATIONS_V2(
     "AGENT_NAME" VARCHAR,
     "TRIGGER_TYPE" VARCHAR,
     "CONTEXT" VARIANT
@@ -123,6 +123,14 @@ def _build_query(agent_name: str, trigger_type: str, filters: dict, *, exact_onl
             base_query += (
                 " AND (COALESCE(ARRAY_SIZE(r.APPLICABLE_PROJECTS), 0) = 0"
                 f" OR ARRAY_CONTAINS({_quote(filters['project_id'])}::VARIANT, r.APPLICABLE_PROJECTS))"
+            )
+        if filters.get('table_names'):
+            tables_array = "ARRAY_CONSTRUCT(" + ",".join(
+                _quote(str(table).upper()) for table in filters['table_names']
+            ) + ")"
+            base_query += (
+                " AND (COALESCE(ARRAY_SIZE(r.APPLICABLE_TABLES), 0) = 0 OR "
+                f"ARRAYS_OVERLAP(ARRAY_TRANSFORM(r.APPLICABLE_TABLES, value -> UPPER(value::STRING)), {tables_array}))"
             )
         if filters.get('column_names'):
             columns_array = "ARRAY_CONSTRUCT(" + ",".join(

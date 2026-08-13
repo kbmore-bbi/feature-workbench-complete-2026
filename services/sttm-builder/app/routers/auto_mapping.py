@@ -27,6 +27,7 @@ from app.api.deps import (
 )
 from app.auth.dependencies import get_current_principal
 from app.core.config import Settings, get_settings
+from app.core.agent_payload_budget import budget_agent_payload
 from app.core.agent_execution_context import attach_agent_execution_context
 from app.core.conversation_memory import ConversationMemoryService
 from app.core.learning_retrieval import LearningRetrievalService
@@ -286,6 +287,7 @@ def _enrich_with_learning_context(
 
 def _build_agent_payload(
     envelope: STTMBuilderEnvelopeRequest,
+    settings: Settings,
     reading_instructions: dict[str, Any] | None = None,
 ) -> str:
     """Build the JSON payload for AGT_SOURCE_MAPPING."""
@@ -299,7 +301,12 @@ def _build_agent_payload(
     # Add reading instructions if available
     if reading_instructions:
         agent_dict["context"]["reading_instructions"] = reading_instructions
-    return json.dumps(agent_dict, separators=(",", ":"))
+    return budget_agent_payload(
+        agent_dict,
+        max_chars=settings.agent_outbound_message_max_chars,
+        max_bytes=settings.agent_outbound_message_max_bytes,
+        enabled=settings.agent_payload_budget_v1,
+    ).text
 
 
 def _parse_mapping_response(
@@ -489,7 +496,11 @@ async def direct_auto_map(
     envelope = attach_agent_execution_context(envelope, memory)
 
     # Build agent payload with reading instructions
-    user_text = _build_agent_payload(envelope, reading_instructions=reading_instructions)
+    user_text = _build_agent_payload(
+        envelope,
+        settings,
+        reading_instructions=reading_instructions,
+    )
     messages = [{"role": "user", "content": [{"type": "text", "text": user_text}]}]
 
     # Resolve the source mapping agent name
@@ -762,7 +773,11 @@ async def direct_auto_map_stream(
         envelope = attach_agent_execution_context(envelope, memory)
 
         # Build agent payload with reading instructions
-        user_text = _build_agent_payload(envelope, reading_instructions=reading_instructions)
+        user_text = _build_agent_payload(
+            envelope,
+            settings,
+            reading_instructions=reading_instructions,
+        )
         messages = [{"role": "user", "content": [{"type": "text", "text": user_text}]}]
 
         source_mapping_agent = settings.resolved_source_mapping_agent.strip()

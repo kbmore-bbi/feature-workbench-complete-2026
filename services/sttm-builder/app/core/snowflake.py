@@ -3,7 +3,7 @@ import hashlib
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
-from threading import Lock
+from threading import BoundedSemaphore, Lock
 from typing import Any, Optional
 
 import snowflake.connector
@@ -617,6 +617,59 @@ class SnowflakeClient:
 
     def close(self) -> None:
         self._session.close()
+
+
+class SnowflakeSessionLeasePool:
+    """Bound independent Snowpark sessions; a session is never shared concurrently."""
+
+    def __init__(
+        self,
+        *,
+        settings: Settings,
+        user_token: str | None,
+        role: str | None,
+        workload: WarehouseWorkload,
+        maximum: int,
+    ) -> None:
+        self._settings = settings
+        self._user_token = user_token
+        self._role = role
+        self._workload = workload
+        self._limit = BoundedSemaphore(max(1, maximum))
+        self._idle: list[SnowflakeClient] = []
+        self._lock = Lock()
+
+    @contextmanager
+    def lease(self):
+        acquired = self._limit.acquire(timeout=5)
+        if not acquired:
+            raise SnowflakeConnectionError("Snowflake session lease capacity is exhausted")
+        client: SnowflakeClient | None = None
+        try:
+            with self._lock:
+                if self._idle:
+                    client = self._idle.pop()
+            if client is None:
+                client = SnowflakeClient(
+                    settings=self._settings,
+                    user_token=self._user_token,
+                    role=self._role,
+                    workload=self._workload,
+                )
+            yield client
+            with self._lock:
+                self._idle.append(client)
+            client = None
+        finally:
+            if client is not None:
+                client.close()
+            self._limit.release()
+
+    def close(self) -> None:
+        with self._lock:
+            clients, self._idle = self._idle, []
+        for client in clients:
+            client.close()
 
 
 def _oauth_connection_kwargs(

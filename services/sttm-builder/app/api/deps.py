@@ -13,6 +13,7 @@ from app.core.bundle_curation import BundleCurationService
 from app.core.datahub import DataHubAdapter
 from app.core.snowflake import (
     SnowflakeClient,
+    SnowflakeSessionLeasePool,
     get_oauth_cached_client,
     get_local_cached_client,
     using_local_dev_auth,
@@ -42,6 +43,29 @@ logger = logging.getLogger(__name__)
 
 _SPCS_USER_TOKEN_HEADER = "sf-context-current-user-token"
 _FORWARDED_CALLER_ROLE_HEADER = "x-workbench-caller-role"
+
+
+def _learning_session_lease(request: Request, settings: Settings):
+    if not (
+        settings.snowflake_session_lease_pool_v1
+        and (settings.learning_parallel_v1 or settings.prepare_parallel_v1)
+    ):
+        return None
+    pool = getattr(request.state, "snowflake_learning_lease_pool", None)
+    if pool is None:
+        user_token = _request_user_token(request, settings)
+        pool = SnowflakeSessionLeasePool(
+            settings=settings,
+            user_token=user_token,
+            role=_default_role_for_principal(request, settings),
+            workload=WarehouseWorkload.PREPARATION,
+            maximum=min(
+                settings.snowflake_session_lease_limit_per_instance,
+                settings.learning_parallel_workers,
+            ),
+        )
+        request.state.snowflake_learning_lease_pool = pool
+    return pool.lease
 
 
 def _role_for_persona(persona: AppPersona, settings: Settings) -> str | None:
@@ -218,6 +242,19 @@ def get_automap_snowflake_client(
     )
 
 
+def get_preparation_snowflake_client(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> Generator[SnowflakeClient, None, None]:
+    """A separately tagged preparation session; it remains on XS unless enabled."""
+    yield from _get_snowflake_client_for_workload(
+        request,
+        settings,
+        role=None,
+        workload=WarehouseWorkload.PREPARATION,
+    )
+
+
 def get_snowflake_agent_client(
     request: Request,
     client: Annotated[SnowflakeClient, Depends(get_agent_snowflake_client)],
@@ -354,6 +391,30 @@ def get_prepared_workspace_context_service(
     ],
 ) -> PreparedWorkspaceContextService:
     access_scope = _access_scope_for_request(request)
+    session_lease = _learning_session_lease(request, settings)
+
+    def refresh_semantic_on_lease(refresh_request):
+        if session_lease is None:
+            return semantic_context_service.refresh_bundle(refresh_request)
+        with session_lease() as leased_client:
+            leased_service = SemanticContextService(
+                session=leased_client.session,
+                settings=settings,
+                semantic_model_service=SemanticModelService(settings),
+                table_selection_service=TableSelectionService(
+                    leased_client,
+                    settings,
+                    access_scope,
+                ),
+                derived_source_service=DerivedSourceService(
+                    leased_client.session,
+                    settings,
+                ),
+                datahub_adapter=DataHubAdapter(settings),
+                access_scope=access_scope,
+            )
+            return leased_service.refresh_bundle(refresh_request)
+
     return PreparedWorkspaceContextService(
         session=client.session,
         settings=settings,
@@ -362,8 +423,15 @@ def get_prepared_workspace_context_service(
             client.session,
             settings,
             access_scope,
+            session_lease=session_lease,
         ),
         access_scope=access_scope,
+        semantic_refresh=(
+            refresh_semantic_on_lease
+            if settings.snowflake_session_lease_pool_v1
+            and settings.prepare_parallel_v1
+            else None
+        ),
     )
 
 

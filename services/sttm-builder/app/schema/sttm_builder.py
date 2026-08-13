@@ -114,6 +114,7 @@ class RelationNode(BaseModel):
     keys: list[str] = Field(default_factory=list)
     dependency_hash: str | None = None
     parent_relation_ids: list[str] = Field(default_factory=list)
+    base_relation_ids: list[str] = Field(default_factory=list)
 
 
 class RelationEdge(BaseModel):

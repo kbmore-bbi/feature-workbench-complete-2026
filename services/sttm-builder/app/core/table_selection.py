@@ -11,6 +11,7 @@ from snowflake.snowpark.functions import col
 
 from app.core.config import Settings
 from app.core.exceptions import SnowflakeQueryError
+from app.core.performance import increment, observe
 from app.core.snowflake import SnowflakeClient
 from app.core.semantic_knowledge_resolver import SemanticKnowledgeResolver
 from app.schema.common import TableRef
@@ -305,6 +306,7 @@ class TableSelectionService:
         return _cached(self._cache_key(key), lambda: self._list_relationships_for_tables_uncached(tables))
 
     def _list_relationships_for_tables_uncached(self, tables: list[TableRef]) -> list[RelationshipItem]:
+        started = time.perf_counter()
         selected = {table.qualified_name.upper(): table for table in tables}
         relationships: dict[str, RelationshipItem] = {}
         logger.info("Relationship lookup for %d tables: %s", len(tables), list(selected.keys()))
@@ -324,8 +326,13 @@ class TableSelectionService:
                 logger.info("  outgoing=%d incoming=%d", len(payload.get("outgoing", [])), len(payload.get("incoming", [])))
             # The legacy relationship procedure is table-at-a-time. Keep it for
             # compact selections, but never fan it out across a large workspace.
-            if not payload and len(tables) <= 3:
+            if (
+                not payload
+                and len(tables) <= 3
+                and self._schema_may_have_foreign_keys(table)
+            ):
                 try:
+                    increment("relationships.legacy_procedure_call")
                     payload = self._get_relationship_payload(table)
                 except Exception:
                     continue
@@ -335,11 +342,16 @@ class TableSelectionService:
                 continue
 
             # Process both outgoing and incoming relationships
-            for direction in ["outgoing", "incoming"]:
+            directions = ["outgoing", "incoming"]
+            if self._settings.low_confidence_join_review_v1:
+                directions.extend(["review_outgoing", "review_incoming"])
+            for direction in directions:
                 for item in payload.get(direction, []) or []:
                     # For outgoing: table is left, target is right
                     # For incoming: target is left, table is right
-                    if direction == "outgoing":
+                    normalized_direction = direction.removeprefix("review_")
+                    review_required = direction.startswith("review_")
+                    if normalized_direction == "outgoing":
                         left_table = table
                         right_table = TableRef(
                             database=table.database,
@@ -388,9 +400,86 @@ class TableSelectionService:
                             right_table=right_table,
                             constraint_name=constraint_name,
                             conditions=conditions,
+                            source=str(item.get("source") or "SEMANTIC_VIEW"),
+                            locked=not review_required,
+                            review_required=review_required,
+                            confidence=(
+                                (
+                                    {"HIGH": 0.9, "MEDIUM": 0.6, "LOW": 0.3}.get(
+                                        str(item.get("confidence")).upper(),
+                                        0.3,
+                                    )
+                                    if isinstance(item.get("confidence"), str)
+                                    else float(item.get("confidence"))
+                                )
+                                if item.get("confidence") is not None
+                                else None
+                            ),
+                            review_reason=(
+                                str(item.get("review_reason"))
+                                if item.get("review_reason")
+                                else None
+                            ),
+                            evidence=(
+                                item.get("evidence")
+                                if isinstance(item.get("evidence"), dict)
+                                else None
+                            ),
                         )
 
+        observe(
+            "relationships.resolve.total",
+            (time.perf_counter() - started) * 1000,
+        )
         return list(relationships.values())
+
+    def _schema_may_have_foreign_keys(self, table: TableRef) -> bool:
+        """Return a cached capability decision without calling ACCOUNT_USAGE."""
+
+        if not self._settings.relationship_capability_cache_v1:
+            return True
+        cache_key = self._cache_key(
+            f"fk-capability:{table.database.upper()}.{table.schema.upper()}"
+        )
+
+        def load() -> bool:
+            started = time.perf_counter()
+            try:
+                rows = self._session.sql(
+                    f"""
+                    SELECT COUNT(*) AS FK_COUNT
+                    FROM {self._quote_identifier(table.database)}.INFORMATION_SCHEMA.TABLE_CONSTRAINTS
+                    WHERE UPPER(CONSTRAINT_SCHEMA) = {self._quote_literal(table.schema.upper())}
+                      AND CONSTRAINT_TYPE = 'FOREIGN KEY'
+                    """
+                ).collect()
+                count = int(self._row_value(rows[0], "FK_COUNT") or 0) if rows else 0
+                increment(
+                    "relationships.fk_capability.present"
+                    if count > 0
+                    else "relationships.fk_capability.absent"
+                )
+                return count > 0
+            except Exception as exc:
+                logger.warning(
+                    "Foreign-key capability lookup failed for %s.%s; preserving legacy fallback: %s",
+                    table.database,
+                    table.schema,
+                    exc,
+                )
+                increment("relationships.fk_capability.error")
+                return True
+            finally:
+                observe(
+                    "relationships.fk_capability.lookup",
+                    (time.perf_counter() - started) * 1000,
+                )
+
+        return _cached(
+            cache_key,
+            load,
+            ttl_seconds=float(self._settings.relationship_capability_cache_seconds),
+        )
 
     def _get_relationships_from_semantic_views(
         self,
@@ -607,22 +696,31 @@ class TableSelectionService:
                 "SNOWFLAKE_DATABASE/SNOWFLAKE_SCHEMA."
             )
 
-        proc_parts = proc_name.split(".", 2)
-        quoted_proc_name = ".".join(
-            self._quote_identifier(part) for part in proc_parts if part
-        )
-        try:
-            rows = self._session.sql(
-                "CALL "
-                f"{quoted_proc_name}("
-                f"{self._quote_literal(table.database)}, "
-                f"{self._quote_literal(table.schema)}, "
-                f"{self._quote_literal(table.table)})"
-            ).collect()
-        except Exception as e:
-            raise SnowflakeQueryError(
-                f"Failed to fetch table relationships for {table.qualified_name!r}: {e}"
-            ) from e
+        procedures = [proc_name]
+        if proc_name.upper().endswith(".SP_GET_TABLE_RELATIONSHIPS_V2"):
+            procedures.append(proc_name[:-3])
+        rows = None
+        for candidate in procedures:
+            proc_parts = candidate.split(".", 2)
+            quoted_proc_name = ".".join(
+                self._quote_identifier(part) for part in proc_parts if part
+            )
+            try:
+                rows = self._session.sql(
+                    "CALL "
+                    f"{quoted_proc_name}("
+                    f"{self._quote_literal(table.database)}, "
+                    f"{self._quote_literal(table.schema)}, "
+                    f"{self._quote_literal(table.table)})"
+                ).collect()
+                if candidate != proc_name:
+                    increment("relationships.fast_proc.compatibility_fallback")
+                break
+            except Exception as exc:
+                if candidate == procedures[-1]:
+                    raise SnowflakeQueryError(
+                        f"Failed to fetch table relationships for {table.qualified_name!r}: {exc}"
+                    ) from exc
 
         if not rows:
             return {}

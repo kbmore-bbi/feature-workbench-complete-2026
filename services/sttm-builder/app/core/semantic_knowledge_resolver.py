@@ -134,7 +134,15 @@ class SemanticKnowledgeResolver:
         ).collect()
 
         selected = {table.qualified_name.upper(): table for table in tables}
-        payloads = {fqn: {"outgoing": [], "incoming": []} for fqn in selected}
+        payloads = {
+            fqn: {
+                "outgoing": [],
+                "incoming": [],
+                "review_outgoing": [],
+                "review_incoming": [],
+            }
+            for fqn in selected
+        }
         for row in rows:
             data = row.as_dict() if hasattr(row, "as_dict") else dict(row)
             fqn = str(data.get("FQN") or "").upper()
@@ -147,39 +155,55 @@ class SemanticKnowledgeResolver:
                 isinstance(relationships.get("outgoing"), list)
                 or isinstance(relationships.get("incoming"), list)
             ):
-                payloads[fqn]["outgoing"].extend(
-                    item
-                    for item in (relationships.get("outgoing") or [])
-                    if isinstance(item, dict)
-                    and self._relationship_is_confirmed(
-                        item,
-                        curated=relationship_source == "VALIDATED_CURATED",
-                    )
-                )
-                payloads[fqn]["incoming"].extend(
-                    item
-                    for item in (relationships.get("incoming") or [])
-                    if isinstance(item, dict)
-                    and self._relationship_is_confirmed(
-                        item,
-                        curated=relationship_source == "VALIDATED_CURATED",
-                    )
-                )
+                for direction in ("outgoing", "incoming"):
+                    for item in relationships.get(direction) or []:
+                        if not isinstance(item, dict):
+                            continue
+                        confirmed = self._relationship_is_confirmed(
+                            item,
+                            curated=relationship_source == "VALIDATED_CURATED",
+                        )
+                        target_key = direction if confirmed else f"review_{direction}"
+                        payloads[fqn][target_key].append(
+                            item
+                            if confirmed
+                            else self._review_candidate(
+                                item,
+                                reason="Semantic relationship confidence is below the active-join threshold.",
+                            )
+                        )
             else:
                 for relationship in self._relationship_list(relationships):
-                    if not self._relationship_is_confirmed(
+                    confirmed = self._relationship_is_confirmed(
                         relationship,
                         curated=relationship_source == "VALIDATED_CURATED",
-                    ):
-                        continue
+                    )
                     normalized = self._normalize_relationship(owner, relationship)
                     if normalized is None:
                         continue
                     left_fqn, right_fqn, outgoing, incoming = normalized
                     if left_fqn in payloads:
-                        payloads[left_fqn]["outgoing"].append(outgoing)
+                        payloads[left_fqn][
+                            "outgoing" if confirmed else "review_outgoing"
+                        ].append(
+                            outgoing
+                            if confirmed
+                            else self._review_candidate(
+                                outgoing,
+                                reason="Semantic relationship confidence is below the active-join threshold.",
+                            )
+                        )
                     if right_fqn in payloads:
-                        payloads[right_fqn]["incoming"].append(incoming)
+                        payloads[right_fqn][
+                            "incoming" if confirmed else "review_incoming"
+                        ].append(
+                            incoming
+                            if confirmed
+                            else self._review_candidate(
+                                incoming,
+                                reason="Semantic relationship confidence is below the active-join threshold.",
+                            )
+                        )
 
             if not payloads[fqn]["outgoing"] and not payloads[fqn]["incoming"]:
                 attributes = self._json_value(data.get("ATTRIBUTES"))
@@ -193,14 +217,13 @@ class SemanticKnowledgeResolver:
                             continue
                         confidence = str(constraint.get("confidence") or "LOW").upper()
                         references = constraint.get("references") or {}
-                        if confidence != "HIGH" or not isinstance(references, dict):
+                        if not isinstance(references, dict):
                             continue
                         related_table = references.get("table")
                         related_column = references.get("column")
                         column_name = attribute.get("name")
                         if related_table and related_column and column_name:
-                            payloads[fqn]["outgoing"].append(
-                                {
+                            candidate = {
                                     "schema": owner.schema,
                                     "table": str(related_table),
                                     "constraint_name": f"FK_{column_name}_{related_table}_{related_column}",
@@ -211,27 +234,84 @@ class SemanticKnowledgeResolver:
                                         }
                                     ],
                                     "source": "semantic_knowledge_resolver",
+                                    "confidence": self._confidence_value(confidence),
                                 }
-                            )
+                            if confidence == "HIGH":
+                                payloads[fqn]["outgoing"].append(candidate)
+                            else:
+                                payloads[fqn]["review_outgoing"].append(
+                                    self._review_candidate(
+                                        candidate,
+                                        reason=f"Semantic column constraint confidence is {confidence}.",
+                                    )
+                                )
 
             native_yaml = data.get("CA_YAML_MODEL")
-            native_is_confirmed = not bool(data.get("HAS_LOW_CONFIDENCE_JOINS")) and not bool(
-                data.get("HAS_FLAGGED_EXCLUDED")
-            )
-            if native_yaml and native_is_confirmed:
+            native_is_confirmed = not bool(data.get("HAS_LOW_CONFIDENCE_JOINS"))
+            native_is_excluded = bool(data.get("HAS_FLAGGED_EXCLUDED"))
+            if native_yaml and not native_is_excluded:
                 for relationship in self._relationships_from_native_yaml(native_yaml, owner):
                     normalized = self._normalize_relationship(owner, relationship)
                     if normalized is None:
                         continue
                     left_fqn, right_fqn, outgoing, incoming = normalized
                     if left_fqn in payloads:
-                        self._append_unique(payloads[left_fqn]["outgoing"], outgoing)
+                        key = "outgoing" if native_is_confirmed else "review_outgoing"
+                        self._append_unique(
+                            payloads[left_fqn][key],
+                            outgoing
+                            if native_is_confirmed
+                            else self._review_candidate(
+                                outgoing,
+                                reason="Native semantic view flagged this join as low confidence.",
+                            ),
+                        )
                     if right_fqn in payloads:
-                        self._append_unique(payloads[right_fqn]["incoming"], incoming)
+                        key = "incoming" if native_is_confirmed else "review_incoming"
+                        self._append_unique(
+                            payloads[right_fqn][key],
+                            incoming
+                            if native_is_confirmed
+                            else self._review_candidate(
+                                incoming,
+                                reason="Native semantic view flagged this join as low confidence.",
+                            ),
+                        )
         return {
             fqn: payload
             for fqn, payload in payloads.items()
-            if payload["outgoing"] or payload["incoming"]
+            if any(payload.values())
+        }
+
+    @staticmethod
+    def _confidence_value(value: Any) -> float:
+        if isinstance(value, (int, float)):
+            return max(0.0, min(1.0, float(value)))
+        return {"HIGH": 0.9, "MEDIUM": 0.6, "LOW": 0.3}.get(
+            str(value or "LOW").upper(),
+            0.3,
+        )
+
+    @classmethod
+    def _review_candidate(
+        cls,
+        relationship: dict[str, Any],
+        *,
+        reason: str,
+    ) -> dict[str, Any]:
+        confidence = cls._confidence_value(
+            relationship.get("confidence")
+            or relationship.get("confidence_score")
+            or relationship.get("validation_confidence")
+        )
+        return {
+            **relationship,
+            "confidence": confidence,
+            "review_reason": reason,
+            "evidence": {
+                "source": relationship.get("source") or "semantic_view",
+                "validation_status": relationship.get("validation_status"),
+            },
         }
 
     def _relationship_payloads_from_records(
@@ -240,33 +320,56 @@ class SemanticKnowledgeResolver:
         tables: list[TableRef],
     ) -> dict[str, dict[str, list[dict[str, Any]]]]:
         selected = {table.qualified_name.upper(): table for table in tables}
-        payloads = {fqn: {"outgoing": [], "incoming": []} for fqn in selected}
+        payloads = {
+            fqn: {
+                "outgoing": [],
+                "incoming": [],
+                "review_outgoing": [],
+                "review_incoming": [],
+            }
+            for fqn in selected
+        }
         for record in self.resolve(session, tables):
             owner_fqn = str(record.get("fqn") or "").upper()
             owner = selected.get(owner_fqn)
             if owner is None:
                 continue
             for relationship in record.get("relationships") or []:
-                if not self._relationship_is_confirmed(
+                confirmed = self._relationship_is_confirmed(
                     relationship,
                     curated=str(record.get("source") or "").lower() == "validated_curated",
-                ):
-                    continue
+                )
                 normalized = self._normalize_relationship(owner, relationship)
                 if normalized is None:
                     continue
                 left_fqn, right_fqn, outgoing, incoming = normalized
                 if left_fqn in payloads:
-                    payloads[left_fqn]["outgoing"].append(outgoing)
+                    payloads[left_fqn][
+                        "outgoing" if confirmed else "review_outgoing"
+                    ].append(
+                        outgoing
+                        if confirmed
+                        else self._review_candidate(
+                            outgoing,
+                            reason="Semantic relationship confidence is below the active-join threshold.",
+                        )
+                    )
                 if right_fqn in payloads:
-                    payloads[right_fqn]["incoming"].append(incoming)
+                    payloads[right_fqn][
+                        "incoming" if confirmed else "review_incoming"
+                    ].append(
+                        incoming
+                        if confirmed
+                        else self._review_candidate(
+                            incoming,
+                            reason="Semantic relationship confidence is below the active-join threshold.",
+                        )
+                    )
             native_view = record.get("native_view")
             if not isinstance(native_view, dict):
                 continue
-            native_is_confirmed = not bool(native_view.get("has_low_confidence_joins")) and not bool(
-                native_view.get("has_flagged_excluded")
-            )
-            if not native_is_confirmed:
+            native_is_confirmed = not bool(native_view.get("has_low_confidence_joins"))
+            if bool(native_view.get("has_flagged_excluded")):
                 continue
             for relationship in self._relationships_from_native_yaml(
                 native_view.get("ca_yaml_model"),
@@ -277,13 +380,31 @@ class SemanticKnowledgeResolver:
                     continue
                 left_fqn, right_fqn, outgoing, incoming = normalized
                 if left_fqn in payloads:
-                    self._append_unique(payloads[left_fqn]["outgoing"], outgoing)
+                    key = "outgoing" if native_is_confirmed else "review_outgoing"
+                    self._append_unique(
+                        payloads[left_fqn][key],
+                        outgoing
+                        if native_is_confirmed
+                        else self._review_candidate(
+                            outgoing,
+                            reason="Native semantic view flagged this join as low confidence.",
+                        ),
+                    )
                 if right_fqn in payloads:
-                    self._append_unique(payloads[right_fqn]["incoming"], incoming)
+                    key = "incoming" if native_is_confirmed else "review_incoming"
+                    self._append_unique(
+                        payloads[right_fqn][key],
+                        incoming
+                        if native_is_confirmed
+                        else self._review_candidate(
+                            incoming,
+                            reason="Native semantic view flagged this join as low confidence.",
+                        ),
+                    )
         return {
             fqn: payload
             for fqn, payload in payloads.items()
-            if payload["outgoing"] or payload["incoming"]
+            if any(payload.values())
         }
 
     @staticmethod

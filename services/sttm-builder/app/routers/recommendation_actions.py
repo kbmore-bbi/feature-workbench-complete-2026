@@ -12,6 +12,7 @@ from app.api.deps import (
 from app.auth.dependencies import get_current_principal
 from app.core.conversation_memory import ConversationMemoryService
 from app.core.project_service import ProjectService
+from app.core.read_cache import invalidate_read_cache
 from app.core.recommendation_actions import (
     RecommendationActionService,
     RecommendationBlockedError,
@@ -277,7 +278,7 @@ def apply_recommendation(
 ) -> RecommendationApplyResponse:
     _require_edit(request)
     try:
-        return actions.apply(
+        result = actions.apply(
             recommendation_id,
             actor_id=_actor_id(request),
             sttm_id=body.sttm_id,
@@ -287,6 +288,8 @@ def apply_recommendation(
             action_id=body.action_id,
             confirmed=body.confirmed,
         )
+        invalidate_read_cache("recommendations:", "projects:")
+        return result
     except (
         RecommendationNotFoundError,
         RecommendationStaleError,
@@ -310,7 +313,7 @@ def undo_recommendation(
 ) -> RecommendationUndoResponse:
     _require_edit(request)
     try:
-        return actions.undo(
+        result = actions.undo(
             recommendation_id=recommendation_id,
             actor_id=_actor_id(request),
             sttm_id=body.sttm_id,
@@ -318,6 +321,8 @@ def undo_recommendation(
             expected_workspace_hash=body.expected_workspace_hash,
             idempotency_key=body.idempotency_key,
         )
+        invalidate_read_cache("recommendations:", "projects:")
+        return result
     except (
         RecommendationNotFoundError,
         RecommendationStaleError,
@@ -355,6 +360,7 @@ def record_recommendation_feedback(
         RecommendationBlockedError,
     ) as exc:
         raise _translate_action_error(exc) from exc
+    invalidate_read_cache("recommendations:")
     return {
         "status": "recorded",
         "recommendation_id": recommendation_id,

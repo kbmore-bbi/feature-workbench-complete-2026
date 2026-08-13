@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+import threading
+import time
 
 from app.core import prepared_context as prepared_context_module
 from app.core.prepared_context import (
@@ -135,3 +137,64 @@ def test_live_workspace_overlay_wins_during_background_revalidation() -> None:
     assert merged.relationships == []
     # Prepared sections omitted by the live overlay remain available.
     assert merged.semantic.bundle_id == "sem_prepared"
+
+
+def test_build_runs_semantic_and_learning_in_parallel_when_enabled() -> None:
+    barrier = threading.Barrier(2)
+
+    class _Semantic:
+        def refresh_bundle(self, _request):
+            raise AssertionError("leased semantic refresh should be used")
+
+    class _Learning:
+        def get_comprehensive_learning_context(self, **_kwargs):
+            barrier.wait(timeout=1)
+            time.sleep(0.01)
+            return SimpleNamespace(
+                learning_context_id="learning_1",
+                learning_context_hash="learning_hash",
+            )
+
+    service = PreparedWorkspaceContextService.__new__(
+        PreparedWorkspaceContextService
+    )
+    service._settings = SimpleNamespace(prepare_parallel_v1=True)
+    service._semantic_service = _Semantic()
+    service._learning_service = _Learning()
+
+    def semantic_refresh(_request):
+        barrier.wait(timeout=1)
+        time.sleep(0.01)
+        return SimpleNamespace(
+            bundle_id="bundle_1",
+            bundle_hash="bundle_hash",
+            registry_version="registry_1",
+        )
+
+    service._semantic_refresh = semantic_refresh
+    request = PreparedWorkspaceContextRequest.model_validate(
+        {
+            "workspace": {
+                "project_id": "project_1",
+                "sttm_id": "sttm_1",
+                "source_tables": [
+                    {"database": "DB", "schema": "SCH", "table": "SOURCE"}
+                ],
+                "target_table": {
+                    "database": "DB",
+                    "schema": "SCH",
+                    "table": "TARGET",
+                },
+            }
+        }
+    )
+
+    result = service._build(
+        request,
+        workspace_context_id="wctx_1",
+        workspace_context_hash="hash_1",
+    )
+
+    assert result.status == "ready"
+    assert result.semantic_bundle_id == "bundle_1"
+    assert result.learning_context_id == "learning_1"

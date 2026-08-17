@@ -2471,27 +2471,36 @@ export default function AIAgentPanel({
             return (
               <AiaStack
                 key={messageId}
-                direction="row"
-                spacing={1.5}
+                direction="column"
+                spacing={0.5}
                 sx={{
-                  justifyContent: isAssistant ? "flex-start" : "flex-end",
+                  alignItems: isAssistant ? "flex-start" : "flex-end",
                   ...(isWelcome
                     ? {
                         width: "100%",
                         flex: 1,
                         minHeight: "calc(100vh - 340px)",
                         alignItems: "center",
+                        justifyContent: "center",
                       }
                     : {}),
                 }}
               >
-                {isAssistant && !isWelcome ? (
-                  <AiaAvatar sx={{ bgcolor: 'var(--aia-assitant-header-color)', width: 28, height: 28 }}>
-                    <SmartToyIcon sx={{ fontSize: 16 }} />
-                  </AiaAvatar>
-                ) : null}
+                <AiaStack
+                  direction="row"
+                  spacing={1.5}
+                  sx={{
+                    justifyContent: isAssistant ? "flex-start" : "flex-end",
+                    width: "100%",
+                  }}
+                >
+                  {isAssistant && !isWelcome ? (
+                    <AiaAvatar sx={{ bgcolor: 'var(--aia-assitant-header-color)', width: 28, height: 28 }}>
+                      <SmartToyIcon sx={{ fontSize: 16 }} />
+                    </AiaAvatar>
+                  ) : null}
 
-                <AiaPaper
+                  <AiaPaper
                   elevation={0}
                   sx={{
                     p: 1.5,
@@ -2628,8 +2637,9 @@ export default function AIAgentPanel({
                     </AiaStack>
                   ) : null}
                 </AiaPaper>
+                </AiaStack>
                 {isAssistant && !isWelcome && !message.isStreaming ? (
-                  <AiaStack direction="row" spacing={0.75} sx={{ mt: 0.75, pl: 4.5 }}>
+                  <AiaStack direction="row" spacing={0.75} sx={{ mt: 0.5, ml: 3.5 }}>
                     <AiaIconButton
                       size="small"
                       onClick={() => {

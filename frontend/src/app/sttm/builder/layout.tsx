@@ -28,6 +28,11 @@ const initialSemanticPrepState: SemanticPrepState = {
   error: null,
 };
 
+// Time for the blocking dialog to paint before the route change, then how long
+// it is held afterwards. Together they give the ~1s freeze between wizard steps.
+const STEP_TRANSITION_PAINT_MS = 150;
+const STEP_TRANSITION_HOLD_MS = 850;
+
 const MIN_SIDEBAR_WIDTH = 248;
 const MAX_SIDEBAR_WIDTH = 420;
 const COLLAPSED_SIDEBAR_WIDTH = 70;
@@ -39,6 +44,8 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
   const { content, collapsed, setCollapsed, width, setWidth } = useSidebarSlot();
   const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const proceedToMappingRef = useRef<() => void>(() => {});
+  const proceedToSummaryRef = useRef<() => void>(() => {});
+  const navigateToStepRef = useRef<(step: number) => void>(() => {});
   const {
     fullData,
     sources,
@@ -148,9 +155,81 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
     }, 150);
   };
 
+  const resolveRouteBase = () =>
+    process.env.NEXT_PUBLIC_DURABLE_STTM_ROUTE_V1 !== 'false' && activeSttmId
+      ? `/sttm/builder/${encodeURIComponent(activeSttmId)}`
+      : '/sttm/builder/new';
+
+  // Blocking step transition: the modal backdrop stops interaction while the
+  // destination mounts. The hold is a fixed duration rather than waiting on the
+  // route, so a redirect on arrival can never strand the user behind a dialog
+  // that no longer has anything to close it.
+  const beginStepTransition = async (destination: string, title: string, detail: string) => {
+    setSemanticPrepState({
+      open: true,
+      loading: true,
+      progress: 20,
+      title,
+      detail,
+      error: null,
+    });
+
+    // Let the dialog paint before the route change so the next screen never
+    // renders half-built behind it.
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, STEP_TRANSITION_PAINT_MS);
+    });
+
+    setSemanticPrepState((current) => ({ ...current, progress: 70 }));
+    router.push(destination);
+
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, STEP_TRANSITION_HOLD_MS);
+    });
+    setSemanticPrepState(initialSemanticPrepState);
+  };
+
+  const proceedToSummary = async () => {
+    if (!canProceedToMapping) {
+      return;
+    }
+    await beginStepTransition(
+      `${resolveRouteBase()}/summary`,
+      'Opening final mapping & summary',
+      'Collecting mappings, joins, and validation results.',
+    );
+  };
+
+  // Backward navigation (3 -> 2, 3 -> 1, 2 -> 1). Forward moves keep their own
+  // handlers because they carry semantic-context messaging.
+  const navigateToStep = async (step: number) => {
+    const routeBase = resolveRouteBase();
+    if (step === 1) {
+      await beginStepTransition(
+        routeBase,
+        'Opening table selection',
+        'Restoring your source and target selection.',
+      );
+      return;
+    }
+    if (step === 2) {
+      await beginStepTransition(
+        `${routeBase}/mapping`,
+        'Opening mapping workspace',
+        'Restoring your mappings and transformations.',
+      );
+    }
+  };
+
   useEffect(() => {
     proceedToMappingRef.current = () => {
       void proceedToMapping();
+    };
+    proceedToSummaryRef.current = () => {
+      void proceedToSummary();
+    };
+    navigateToStepRef.current = (step: number) => {
+      void navigateToStep(step);
     };
   });
 
@@ -162,9 +241,28 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
       proceedToMappingRef.current();
     };
 
+    const handleProceedToSummary = () => {
+      if (pathname.includes('/summary')) {
+        return;
+      }
+      proceedToSummaryRef.current();
+    };
+
+    const handleNavigateStep = (event: Event) => {
+      const step = (event as CustomEvent<{ step?: number }>).detail?.step;
+      if (typeof step !== 'number') {
+        return;
+      }
+      navigateToStepRef.current(step);
+    };
+
     window.addEventListener('sttm:proceed-to-mapping', handleProceedToMapping);
+    window.addEventListener('sttm:proceed-to-summary', handleProceedToSummary);
+    window.addEventListener('sttm:navigate-step', handleNavigateStep);
     return () => {
       window.removeEventListener('sttm:proceed-to-mapping', handleProceedToMapping);
+      window.removeEventListener('sttm:proceed-to-summary', handleProceedToSummary);
+      window.removeEventListener('sttm:navigate-step', handleNavigateStep);
     };
   }, [pathname]);
 
@@ -271,6 +369,8 @@ function BuilderLayoutShell({ children }: { children: ReactNode }) {
       <AiaDialog
         open={semanticPrepState.open}
         onClose={() => {
+          // While loading, swallow backdrop clicks and Escape so the transition
+          // stays blocking until navigation completes.
           if (!semanticPrepState.loading) {
             setSemanticPrepState(initialSemanticPrepState);
           }

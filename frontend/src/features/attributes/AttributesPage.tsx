@@ -3,7 +3,7 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { AiaBox, AiaButton } from "@/components/ui";
+import { AiaBox, AiaButton, AiaCircularProgress } from "@/components/ui";
 
 import AttributesHeader from "./attributes-header";
 import AttributesTable from "./attributes-table";
@@ -48,6 +48,7 @@ function AttributesPageContent() {
   const [editingAttribute, setEditingAttribute] = useState<HardcodedAttribute | null>(null);
   const [deletingAttribute, setDeletingAttribute] = useState<HardcodedAttribute | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
 
   const loadAttributes = useCallback(async () => {
@@ -56,6 +57,7 @@ function AttributesPageContent() {
       return;
     }
     setLoadError(null);
+    setIsLoading(true);
     try {
       const records = await listProjectAttributes(projectId);
       setAttributes(records.map(toHardcodedAttribute));
@@ -66,6 +68,8 @@ function AttributesPageContent() {
           ? error.message
           : "Unable to load Project Values from the metadata service.",
       );
+    } finally {
+      setIsLoading(false);
     }
   }, [projectId]);
 
@@ -247,12 +251,18 @@ function AttributesPageContent() {
           ) : null}
 
           <AiaBox sx={{ mt: 2.5 }}>
-            <AttributesTable
-              variant="landing"
-              rows={filteredAttributes}
-              onEdit={handleOpenEdit}
-              onDelete={setDeletingAttribute}
-            />
+            {isLoading ? (
+              <AiaBox sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', py: 4 }}>
+                <AiaCircularProgress />
+              </AiaBox>
+            ) : (
+              <AttributesTable
+                variant="landing"
+                rows={filteredAttributes}
+                onEdit={handleOpenEdit}
+                onDelete={setDeletingAttribute}
+              />
+            )}
           </AiaBox>
         </AiaBox>
       </AiaBox>

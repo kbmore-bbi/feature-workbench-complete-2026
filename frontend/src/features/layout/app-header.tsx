@@ -258,6 +258,17 @@ export default function AppHeader({
     window.dispatchEvent(new CustomEvent("sttm:proceed-to-mapping"));
   };
 
+  const requestProceedToSummary = () => {
+    if (!canProceedToMapping || isSummaryPage) {
+      return;
+    }
+    window.dispatchEvent(new CustomEvent("sttm:proceed-to-summary"));
+  };
+
+  const requestStepNavigation = (step: number) => {
+    window.dispatchEvent(new CustomEvent("sttm:navigate-step", { detail: { step } }));
+  };
+
   const handleOpenAssistantSettings = () => {
     const anchor = menuAnchorEl;
     setMenuAnchorEl(null);
@@ -462,7 +473,7 @@ export default function AppHeader({
                 return;
               }
               if (currentStep === 2) {
-                router.push(`${builderRouteBase}/summary`);
+                requestProceedToSummary();
               }
             }}
             onPublish={() => {
@@ -479,7 +490,9 @@ export default function AppHeader({
             }}
             onStepChange={(step) => {
               if (step === 1) {
-                router.push(builderRouteBase);
+                // Backward move (2 -> 1 or 3 -> 1): same blocking transition as
+                // forward moves, so the wizard behaves consistently either way.
+                requestStepNavigation(1);
                 return;
               }
               if (step === 2) {
@@ -487,7 +500,7 @@ export default function AppHeader({
                   return;
                 }
                 if (isSummaryPage) {
-                  router.push(`${builderRouteBase}/mapping`);
+                  requestStepNavigation(2);
                   return;
                 }
                 requestProceedToMapping();
@@ -496,7 +509,7 @@ export default function AppHeader({
               if (!canProceedToMapping) {
                 return;
               }
-              router.push(`${builderRouteBase}/summary`);
+              requestProceedToSummary();
             }}
             nextDisabled={currentStep === 1 ? !canProceedToMapping : false}
           />

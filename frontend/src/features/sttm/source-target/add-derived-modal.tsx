@@ -1,5 +1,5 @@
 "use client";
-import { AiaBox, AiaCheckbox, AiaDialog, AiaIconButton, AiaInput, AiaMenu, AiaMenuItem, AiaResizeHandle } from '@/components/ui';
+import { AiaBox, AiaCheckbox, AiaCircularProgress, AiaDialog, AiaIconButton, AiaInput, AiaMenu, AiaMenuItem, AiaResizeHandle } from '@/components/ui';
 import { AiaText } from '@/components/ui/aia-text';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import AddCircleIcon from '@mui/icons-material/AddCircle';
@@ -1952,6 +1952,7 @@ export function AddDerivedModal({
             color="primary"
             onClick={handleValidateSql}
             disabled={!selectedTableIds.length || isValidating}
+            startIcon={isValidating ? <AiaCircularProgress size={16} color="inherit" /> : undefined}
             data-tour={TOUR_TARGETS.derivedValidateSql}
             {...derivedPrimaryButtonColors}
           >

@@ -262,6 +262,10 @@ function MappingPageContent() {
   const [validatedPreviewData, setValidatedPreviewData] = useState<MappingSqlPreviewResponse | null>(null);
   const [editableSql, setEditableSql] = useState('');
   const [sqlParseLoading, setSqlParseLoading] = useState(false);
+  // Recompilation runs in the background whenever mappings change (applying a
+  // pre-processing rule, auto-map, editing a row). Tracked so the user gets
+  // feedback instead of the SQL silently going stale for a few seconds.
+  const [isCompilingSql, setIsCompilingSql] = useState(false);
   const [sqlParseResult, setSqlParseResult] = useState<MappingSqlParseResponse | null>(null);
   const [sqlParseDialogOpen, setSqlParseDialogOpen] = useState(false);
   const [selectedPreviewRowIndex, setSelectedPreviewRowIndex] = useState(0);
@@ -295,6 +299,7 @@ function MappingPageContent() {
     sessionHydrated,
     activeProjectId,
     activeSttmId,
+    isPreProcessModalOpen,
     applySemanticRefresh,
     refreshAssistantSignals,
     setMappingPreviewSql,
@@ -732,6 +737,7 @@ function MappingPageContent() {
     }
     let cancelled = false;
     const timer = window.setTimeout(async () => {
+      setIsCompilingSql(true);
       try {
         const response = await dbService.compileMappingSql({
           relation_graph: compilerRelationGraph,
@@ -780,11 +786,16 @@ function MappingPageContent() {
         if (!cancelled) {
           setCompilerError(error instanceof Error ? error.message : 'The relation graph could not be compiled.');
         }
+      } finally {
+        setIsCompilingSql(false);
       }
     }, 250);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      // The debounced call may never have started; clear the flag either way so
+      // a superseded compile cannot leave the indicator spinning.
+      setIsCompilingSql(false);
     };
   }, [
     compilerRelationGraph,
@@ -1703,6 +1714,15 @@ function MappingPageContent() {
         trailing={progressTrailing}
       />
 
+      <AiaDialog open={isCompilingSql && !isPreProcessModalOpen}>
+        <AiaDialogContent sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, minWidth: 320, py: 3 }}>
+          <AiaCircularProgress size={48} />
+          <AiaText sx={{ fontSize: '1rem', fontWeight: 500, textAlign: 'center', color: '#1f2937' }}>
+            Recompiling mapping SQL…
+          </AiaText>
+        </AiaDialogContent>
+      </AiaDialog>
+
       <AiaBox
         sx={{
           display: 'flex',
@@ -1882,8 +1902,11 @@ function MappingPageContent() {
                 </AiaBox>
               ) : null}
               {previewLoading ? (
-                <AiaBox sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
-                  <AiaCircularProgress size={28} />
+                <AiaBox sx={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center', py: 8, gap: 1.5 }}>
+                  <AiaCircularProgress size={32} />
+                  <AiaText sx={{ fontSize: '0.88rem', color: '#475569', fontWeight: 500 }}>
+                    Running preview in Snowflake…
+                  </AiaText>
                 </AiaBox>
               ) : previewError ? (
                 <AiaBox sx={{ p: 2.5 }}>

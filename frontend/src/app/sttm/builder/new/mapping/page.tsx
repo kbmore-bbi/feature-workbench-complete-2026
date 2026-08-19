@@ -736,8 +736,9 @@ function MappingPageContent() {
       return;
     }
     let cancelled = false;
+    let showModalTimer: NodeJS.Timeout | null = null;
+    const startTime = Date.now();
     const timer = window.setTimeout(async () => {
-      setIsCompilingSql(true);
       try {
         const response = await dbService.compileMappingSql({
           relation_graph: compilerRelationGraph,
@@ -773,6 +774,7 @@ function MappingPageContent() {
           // from the current relation graph and current mapping expressions.
           accepted_precedent_sttm_id: null,
         });
+        const elapsedTime = Date.now() - startTime;
         if (!cancelled) {
           setCompiledSql(response);
           setCompilerError(null);
@@ -781,18 +783,28 @@ function MappingPageContent() {
             previewSql: response.preview_sql,
             contextHash: compilerContextHash,
           });
+          // Show modal only if compilation took > 500ms, hide immediately when done
+          if (elapsedTime > 500) {
+            setIsCompilingSql(true);
+            // Schedule hide after a brief moment so user sees the completion
+            setTimeout(() => {
+              if (!cancelled) setIsCompilingSql(false);
+            }, 200);
+          }
         }
       } catch (error) {
         if (!cancelled) {
           setCompilerError(error instanceof Error ? error.message : 'The relation graph could not be compiled.');
+          setIsCompilingSql(false);
         }
       } finally {
-        setIsCompilingSql(false);
+        if (showModalTimer) clearTimeout(showModalTimer);
       }
     }, 250);
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
+      if (showModalTimer) clearTimeout(showModalTimer);
       // The debounced call may never have started; clear the flag either way so
       // a superseded compile cannot leave the indicator spinning.
       setIsCompilingSql(false);
